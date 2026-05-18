@@ -1,0 +1,80 @@
+// Saitama — Config.h
+// Copyright 2026 Saitama — MIT License
+
+#pragma once
+
+#include <Arduino.h>
+#include <time.h>
+
+namespace ops {
+
+struct ChannelCfg {
+    char name[32];      // room/group name; empty = disabled
+    char shortname[6];  // tab label (≤5 chars); empty = use first 4 chars of name
+    char psk[28];       // base64 PSK override; empty = auto-derive from "#name"
+    bool notify;        // play notification sound on incoming messages
+    char scope[16];     // flood scope tag (e.g. "AU"); empty = no scoping
+};
+
+struct Config {
+    char       callsign[16];      // device name shown on mesh
+    char       radioRegion[8];    // "EU868", "US915", etc
+    ChannelCfg channels[10];      // ten channel slots
+    int        activeChannel;     // 0-9
+    bool       bluetoothEnabled;
+    bool       speakerEnabled;
+    bool       gpsEnabled;
+    uint8_t    kbBrightness;     // keyboard backlight 0=off, 1-255=brightness
+    uint8_t    kbLayout;         // keyboard layout: 0=EN, 1=FR AZERTY, 2=DE QWERTZ
+    bool       autoAddClient;    // auto-add client nodes to contacts
+    bool       autoAddRepeater;  // auto-add repeater nodes to contacts
+    bool       saveMsgs;          // persist received messages to flash
+    bool       showHops;          // display hop count on incoming messages
+    bool       showRssi;          // display RSSI on incoming messages
+    bool       locationSharing;   // broadcast GPS coords on mesh
+    bool       mobileRepeater;    // act as a relay/repeater node
+    bool       notifyPopup;       // show on-screen popup for new messages
+    // screenTimeoutSec == 0 means always-on display
+    int        brightness;        // 0-255 backlight
+    int        screenTimeoutSec;  // seconds before screen sleeps
+    bool       notifySound;
+    uint8_t    notifySoundChoice; // 0=default ping, 1=pluck, 2=clear, 3=whoosh
+    char       mapTileDir[32];
+    int        theme;             // 0 = dark
+    uint8_t    radioProfile;      // 0=NAR 1=MED 2=LON
+    bool       showAdverts;       // print incoming advert packets in terminal
+    // Radio parameter overrides — applied after profile when radioCustom is true
+    bool       radioCustom;       // true = use individual overrides below
+    float      freqMHz;           // MHz; 0 = use profile default
+    uint8_t    radioSF;           // spreading factor 7-12; 0 = use profile default
+    uint8_t    radioBW;           // 1=62.5kHz, 2=125kHz, 3=250kHz; 0 = use profile default
+    uint8_t    radioCR;           // coding rate 5-8; 0 = use profile default
+    int8_t     radioTX;           // TX power dBm; 0 = use profile default
+    // Manual GPS coordinates for location sharing without a fix
+    float      manualLat;         // decimal degrees; 0.0 = not set
+    float      manualLon;
+    // Packet forwarding and path preferences
+    bool       autoForward;       // forward received mesh packets (default true)
+    uint8_t    pathHashSz;        // preferred path hash size: 0/1 = 1-byte, 2 = 2-byte
+    // Timezone: whole-hour UTC offset applied to all time displays (-11 to +11)
+    int8_t     timezoneOffsetHours;
+    // Scope / region tag for flood-scoped transmissions (empty = no scope)
+    char       scopeTag[16];
+};
+
+namespace config {
+    void init();
+    void save();
+    const Config& get();
+
+    void setCallsign(const char* cs);
+    void setRegion(const char* reg);
+    void setChannel(int idx, const char* name, const char* psk, const char* shortname, const char* scope = "");
+    void setChannelNotify(int idx, bool notify);
+
+    // Returns time(nullptr) adjusted by timezoneOffsetHours.
+    // Use with gmtime_r() wherever local time needs to be displayed.
+    time_t localEpoch();
+}
+
+}  // namespace oms

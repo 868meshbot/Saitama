@@ -1,0 +1,3 @@
+[submodule "lib/MeshCore"]
+	path = lib/MeshCore
+	url = https://github.com/ripplebiz/MeshCore.git

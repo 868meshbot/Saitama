@@ -1,0 +1,32 @@
+# PlatformIO build artefacts
+.pio/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Secrets / credentials
+*.pem
+*.key
+secrets.*
+
+# Firmware binaries (built by CI)
+firmware/
+*.bin
+*.elf
+*.hex
+*.map
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# SD card tile cache (local only)
+map-tiles/
+tiles/

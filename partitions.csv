@@ -1,0 +1,11 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Matches the LilyGo T-Deck launcher partition layout.
+# coredump address confirmed from launcher serial: 0x00FD0000
+# spiffs partition is mounted as LittleFS by MeshCore and the launcher —
+# do NOT call SPIFFS.begin() on it; use Preferences (NVS) for our config.
+nvs,      data, nvs,     0x9000,  0x4000,
+otadata,  data, ota,     0xd000,  0x2000,
+ota_0,    app,  ota_0,  0x10000,  0x640000,
+ota_1,    app,  ota_1,  0x650000, 0x640000,
+spiffs,   data, spiffs, 0xC90000, 0x340000,
+coredump, data, coredump,0xFD0000,0x30000,
