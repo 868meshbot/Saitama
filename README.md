@@ -79,7 +79,7 @@ Map tiles go on a FAT32-formatted SD card:
 
 Example: `/ops/maps/10/529/340.png`
 
-Use the included downloader to fetch tiles from OpenStreetMap:
+**Option 1 — included CLI script:**
 
 ```bash
 python3 scripts/download_tiles.py \
@@ -88,6 +88,14 @@ python3 scripts/download_tiles.py \
 ```
 
 See `scripts/download_tiles.py --help` for full options. Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — rate-limited to 2 req/s.
+
+**Option 2 — GUI tool ([map-tiles-downloader](https://github.com/tekk/map-tiles-downloader)):**
+
+A graphical downloader with a map preview. Draw a bounding box, pick zoom levels, and it exports tiles in the correct `{z}/{x}/{y}.png` layout.
+
+```
+Output path: /Volumes/SD/ops/maps
+```
 
 ## Project Structure
 
