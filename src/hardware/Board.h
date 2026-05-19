@@ -6,19 +6,13 @@
 
 #pragma once
 
-// Board.cpp uses OMS_HAS_BUILTIN_GPS (hardware-stable — do not modify Board.cpp).
-// Bridge from the ops build flag so both Board.h and Board.cpp agree.
-#ifdef OPS_HAS_BUILTIN_GPS
-#  define OMS_HAS_BUILTIN_GPS 1
-#endif
-
 #include <Arduino.h>
 #include <Wire.h>
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
 #include <TinyGPSPlus.h>
 #endif
 
-namespace oms {
+namespace ops {
 
 class Board {
 public:
@@ -54,8 +48,18 @@ public:
     bool gpsDateTime(uint16_t& year, uint8_t& month,  uint8_t& day,
                      uint8_t&  hour, uint8_t& minute, uint8_t& sec) const;
 
-    // Screen backlight on GPIO42 (BOARD_BL_PIN)
-    void setBacklight(bool on) { digitalWrite(42, on ? HIGH : LOW); }
+    // Screen backlight PWM on GPIO 42 via ledc (channel 0, 5 kHz, 8-bit).
+    // Call initBacklightPWM() once after Board::init(); then setDisplayBrightness()
+    // anytime. Range: 0 = off/blank, 128 = 50%, 255 = full.
+    static constexpr uint8_t  BL_LEDC_CH   = 0;
+    static constexpr uint32_t BL_LEDC_FREQ = 5000;
+    static constexpr uint8_t  BL_LEDC_BITS = 8;
+
+    void initBacklightPWM() {
+        ledcSetup(BL_LEDC_CH, BL_LEDC_FREQ, BL_LEDC_BITS);
+        ledcAttachPin(42, BL_LEDC_CH);
+    }
+    void setDisplayBrightness(uint8_t val) { ledcWrite(BL_LEDC_CH, val); }
 
     // Keyboard backlight via keyboard MCU (I2C 0x55).
     // Sends all three protocols — A (single byte), B (reg 0x05 + val), C (reg 0x09 + val) —
@@ -91,15 +95,11 @@ private:
     bool    _trackballPrevDown   = false;  // for falling-edge debounce
     uint32_t _trackballPressMs   = 0;      // millis() of last accepted press
 
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     HardwareSerial      _gpsSerial{1};
     mutable TinyGPSPlus _gps;  // accessors clear internal flags so can't be const
     uint32_t       _gpsLastSync = 0;  // millis() of last RTC sync from GPS
 #endif
 };
 
-}  // namespace oms
-
-// ops::Board is an alias for oms::Board.
-// Board.cpp must remain in namespace oms (hardware-stable — do not modify Board.cpp).
-namespace ops { using Board = oms::Board; }
+}  // namespace ops

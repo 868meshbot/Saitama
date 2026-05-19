@@ -65,4 +65,4 @@ private:
     bool   _sdPresent = false;
 };
 
-}  // namespace oms
+}  // namespace ops

@@ -17,7 +17,7 @@ void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
 {
     if (!_bleInited) {
         char name[32];
-        strncpy(name, deviceName ? deviceName : "OPS-NODE", sizeof(name) - 1);
+        strncpy(name, deviceName ? deviceName : "OMS-NODE", sizeof(name) - 1);
         name[sizeof(name) - 1] = '\0';
         _ble.begin("OMS", name, pinCode);
         _bleInited = true;
@@ -56,4 +56,4 @@ bool BTCompanionService::isConnected() const
     return _running && _ble.isConnected();
 }
 
-}  // namespace oms
+}  // namespace ops

@@ -32,7 +32,6 @@ struct Config {
     bool       showHops;          // display hop count on incoming messages
     bool       showRssi;          // display RSSI on incoming messages
     bool       locationSharing;   // broadcast GPS coords on mesh
-    bool       mobileRepeater;    // act as a relay/repeater node
     bool       notifyPopup;       // show on-screen popup for new messages
     // screenTimeoutSec == 0 means always-on display
     int        brightness;        // 0-255 backlight
@@ -77,4 +76,4 @@ namespace config {
     time_t localEpoch();
 }
 
-}  // namespace oms
+}  // namespace ops

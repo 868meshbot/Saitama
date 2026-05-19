@@ -4,6 +4,7 @@
 // Initialises hardware, MeshCore, and the UI task loop.
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include "version.h"
 #include "hardware/Board.h"
 #include "mesh/MeshService.h"
@@ -22,6 +23,10 @@ void setup() {
     delay(500);   // Short settle; ARDUINO_USB_CDC_ON_BOOT=1 means CDC is up at boot
 
     OPS_LOG("main", "Saitama v" OPS_VERSION_STRING " starting");
+
+    // 0) Kill WiFi modem — this build uses SX1262 LoRa, not ESP-NOW/WiFi.
+    //    Without this, the WiFi radio idles powered-on and wastes ~1-2 mA.
+    WiFi.mode(WIFI_OFF);
 
     // 1) Initialise board-level hardware (power rail, GPIO, I2C, GPS serial)
     ops::Board::instance().init();

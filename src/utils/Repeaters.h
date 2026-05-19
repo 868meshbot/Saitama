@@ -26,7 +26,7 @@ namespace repeaters {
     static constexpr int CAPACITY = 50;
 
     void init();   // loads from SD; no-op if SD not mounted
-    void save();   // writes /oms/repeaters.json
+    void save();   // writes /ops/repeaters.json
     // Reload from SD JSON and resave to NVS. Returns count loaded, or -1 on failure.
     int  reloadFromSD();
     int  count();
@@ -45,4 +45,4 @@ namespace repeaters {
     void setPosition(int idx, int32_t lat, int32_t lon);
 }
 
-}  // namespace oms
+}  // namespace ops

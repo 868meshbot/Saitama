@@ -3,10 +3,10 @@
 //
 // Export/import config + identity to/from SD card.
 // MeshCore-compatible format on SD card:
-//   /oms/config.json    -- Saitama settings (JSON, same format as SPIFFS)
-//   /oms/identity.id    -- MeshCore local identity (binary, IdentityStore format)
-//   /oms/regions.bin    -- MeshCore region map (binary, SimpleMeshTables format)
-//   /oms/contacts/      -- Exported contacts as binary advert packets
+//   /ops/config.json    -- Saitama settings (JSON, same format as SPIFFS)
+//   /ops/identity.id    -- MeshCore local identity (binary, IdentityStore format)
+//   /ops/regions.bin    -- MeshCore region map (binary, SimpleMeshTables format)
+//   /ops/contacts/      -- Exported contacts as binary advert packets
 
 #include "ConfigExport.h"
 #include "Config.h"
@@ -24,7 +24,7 @@ static const char* OPS_CONTACTS = "/ops/contacts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-static bool ensureOMSDir() {
+static bool ensureOPSDir() {
     if (!SD.exists(OPS_DIR)) {
         if (!SD.mkdir(OPS_DIR)) {
             OPS_LOG("ConfigExport", "Failed to create %s on SD", OPS_DIR);
@@ -66,7 +66,7 @@ bool hasSDConfig() {
 bool configExportToSD() {
     OPS_LOG("ConfigExport", "Exporting config to SD card");
 
-    if (!ensureOMSDir()) return false;
+    if (!ensureOPSDir()) return false;
 
     bool ok = true;
 
@@ -138,7 +138,7 @@ bool configImportFromSD() {
     OPS_LOG("ConfigExport", "Importing config from SD card");
 
     if (!SD.exists(OPS_DIR)) {
-        OPS_LOG("ConfigExport", "No /oms directory on SD");
+        OPS_LOG("ConfigExport", "No /ops directory on SD");
         return false;
     }
 
@@ -207,7 +207,7 @@ bool configImportFromSD() {
 // ── Identity-only export/import ──────────────────────────────────────
 
 bool exportIdentityToSD(const char* filename) {
-    if (!ensureOMSDir()) return false;
+    if (!ensureOPSDir()) return false;
 
     const char* destPath;
     char pathBuf[64];
@@ -250,4 +250,4 @@ bool importIdentityFromSD(const char* filename) {
     return copyFile(SD, srcPath, SPIFFS, "/identity.id");
 }
 
-}  // namespace oms
+}  // namespace ops

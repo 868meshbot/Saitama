@@ -385,4 +385,4 @@ void contacts::save()
     _saveToSD();
 }
 
-}  // namespace oms
+}  // namespace ops

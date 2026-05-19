@@ -32,6 +32,13 @@ void sdcard::init() {
             SD.exists("/ops/repeaters.json")? 1 : 0);
 }
 
+void sdcard::unmount() {
+    if (!s_mounted) return;
+    SD.end();
+    s_mounted = false;
+    OPS_LOG("SD", "Unmounted");
+}
+
 bool sdcard::tryMount()
 {
     if (s_mounted) return true;
@@ -183,4 +190,4 @@ bool sdcard::hasCompleteBackup()
         && SD.exists("/ops/repeaters.json");
 }
 
-}  // namespace oms
+}  // namespace ops

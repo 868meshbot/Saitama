@@ -188,6 +188,7 @@ public:
     bool setContactPath(const uint8_t* prefix4, const uint8_t* pathBytes,
                         uint8_t numHops, uint8_t hashSz);
     void  getSelfPubKeyPrefix(uint8_t out[4]) const;
+    void  getSelfPubKey(uint8_t out[32]) const;
 
     // Path introspection / reset
     bool getContactPath(const uint8_t* prefix4, PathInfo& out) const;
@@ -219,4 +220,4 @@ private:
     bool _initialized = false;
 };
 
-}  // namespace oms
+}  // namespace ops

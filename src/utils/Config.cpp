@@ -40,7 +40,6 @@ static void setDefaults(Config& c) {
     c.showHops          = true;
     c.showRssi          = false;
     c.locationSharing   = false;
-    c.mobileRepeater    = false;
     c.notifyPopup       = true;
     c.brightness       = 200;
     c.screenTimeoutSec = 30;
@@ -84,7 +83,6 @@ static void _saveToSD() {
     doc["showHops"]     = s_cfg.showHops;
     doc["showRssi"]     = s_cfg.showRssi;
     doc["locShare"]     = s_cfg.locationSharing;
-    doc["mobRepeater"]  = s_cfg.mobileRepeater;
     doc["notifyPopup"]  = s_cfg.notifyPopup;
     doc["brightness"]   = s_cfg.brightness;
     doc["screenTimeout"]= s_cfg.screenTimeoutSec;
@@ -144,7 +142,6 @@ static bool _loadFromSD() {
     s_cfg.showHops          = doc["showHops"]     | s_cfg.showHops;
     s_cfg.showRssi          = doc["showRssi"]     | s_cfg.showRssi;
     s_cfg.locationSharing   = doc["locShare"]     | s_cfg.locationSharing;
-    s_cfg.mobileRepeater    = doc["mobRepeater"]  | s_cfg.mobileRepeater;
     s_cfg.notifyPopup       = doc["notifyPopup"]  | s_cfg.notifyPopup;
     s_cfg.brightness        = doc["brightness"]   | s_cfg.brightness;
     s_cfg.screenTimeoutSec  = doc["screenTimeout"]| s_cfg.screenTimeoutSec;
@@ -198,112 +195,120 @@ const Config& config::get() { return s_cfg; }
 void config::init() {
     setDefaults(s_cfg);
 
-    // NVS is the primary store — it is always written before the SD backup, so it
-    // is more current.  Try it first.  The SD backup is only used when NVS is absent
-    // (fresh flash / erased partition) so that settings survive a firmware reflash.
+    // ── NVS primary (blob format) ───────────────────────────────────────
+    // Config is stored as a single putBytes("cfg") entry so every save()
+    // touches exactly 1 NVS entry instead of 80+, preventing NOT_ENOUGH_SPACE
+    // on the 16 KB NVS partition.
+    if (prefs.begin("ops", /*readOnly=*/true)) {
+        size_t loaded = prefs.getBytes("cfg", &s_cfg, sizeof(s_cfg));
+        prefs.end();
+        if (loaded == sizeof(s_cfg)) {
+            // Clean up any legacy CH<n> shortnames from very old firmware.
+            bool migrated = false;
+            for (int i = 1; i < 10; i++) {
+                char* n  = s_cfg.channels[i].name;
+                char* sn = s_cfg.channels[i].shortname;
+                if (n[0]=='C' && n[1]=='H' && n[2]>='2' && n[2]<='5' && n[3]=='\0') {
+                    n[0] = '\0'; sn[0] = '\0'; migrated = true;
+                }
+            }
+            if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
+            OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
+                    s_cfg.callsign, s_cfg.radioRegion);
+            return;
+        }
+        // Blob absent or wrong size (first boot after firmware update that
+        // changed Config layout).  Fall through to SD / legacy-key migration.
+        OPS_LOG("Config", "NVS blob mismatch (got %u, want %u) — migrating",
+                (unsigned)loaded, (unsigned)sizeof(s_cfg));
+    } else {
+        prefs.end();
+    }
+
+    // ── SD backup (migration / post-reflash) ────────────────────────────
+    // SD JSON survives reflash and is the most likely source of current data.
+    if (sdcard::hasCompleteBackup() && _loadFromSD()) {
+        OPS_LOG("Config", "Restored from SD backup: callsign=%s", s_cfg.callsign);
+        // Clear old per-key entries and write compact blob.
+        if (prefs.begin("ops", false)) { prefs.clear(); prefs.end(); }
+        save();
+        return;
+    }
+
+    // ── Legacy individual NVS keys (migration from pre-blob firmware) ───
+    // Only reached if SD is absent and the blob is missing/wrong-size.
     if (prefs.begin("ops", /*readOnly=*/true)) {
         String region = prefs.getString("radioRegion", s_cfg.radioRegion);
         strncpy(s_cfg.radioRegion, region.c_str(), sizeof(s_cfg.radioRegion) - 1);
-
         String cs = prefs.getString("callsign", s_cfg.callsign);
         strncpy(s_cfg.callsign, cs.c_str(), sizeof(s_cfg.callsign) - 1);
-
         String mapDir = prefs.getString("mapTileDir", s_cfg.mapTileDir);
         strncpy(s_cfg.mapTileDir, mapDir.c_str(), sizeof(s_cfg.mapTileDir) - 1);
 
-        s_cfg.activeChannel       = prefs.getInt("channel",       s_cfg.activeChannel);
-        s_cfg.bluetoothEnabled    = prefs.getBool("bluetooth",    s_cfg.bluetoothEnabled);
-        s_cfg.speakerEnabled      = prefs.getBool("speaker",      s_cfg.speakerEnabled);
-        s_cfg.gpsEnabled          = prefs.getBool("gps",          s_cfg.gpsEnabled);
-        s_cfg.kbBrightness        = prefs.getUChar("kbBright",    128);
-        s_cfg.kbLayout            = prefs.getUChar("kbLayout",    0);
-        s_cfg.autoAddClient       = prefs.getBool("aaclient",     s_cfg.autoAddClient);
-        s_cfg.autoAddRepeater     = prefs.getBool("aarepeater",   s_cfg.autoAddRepeater);
-        s_cfg.saveMsgs            = prefs.getBool("saveMsgs",     s_cfg.saveMsgs);
-        s_cfg.showHops            = prefs.getBool("showHops",     s_cfg.showHops);
-        s_cfg.showRssi            = prefs.getBool("showRssi",     s_cfg.showRssi);
-        s_cfg.locationSharing     = prefs.getBool("locShare",     s_cfg.locationSharing);
-        s_cfg.mobileRepeater      = prefs.getBool("mobRepeater",  s_cfg.mobileRepeater);
-        s_cfg.notifyPopup         = prefs.getBool("notifyPopup",  s_cfg.notifyPopup);
-        s_cfg.brightness          = prefs.getInt("brightness",    s_cfg.brightness);
-        s_cfg.screenTimeoutSec    = prefs.getInt("screenTimeout", s_cfg.screenTimeoutSec);
-        s_cfg.notifySound         = prefs.getBool("notifySound",  s_cfg.notifySound);
-        s_cfg.notifySoundChoice   = prefs.getUChar("notifySndCh", 0);
-        s_cfg.theme               = prefs.getInt("theme",         s_cfg.theme);
-        s_cfg.radioProfile        = prefs.getUChar("radioProf",   s_cfg.radioProfile);
-        s_cfg.showAdverts         = prefs.getBool("showAdverts",  s_cfg.showAdverts);
-        s_cfg.radioCustom         = prefs.getBool("radioCustom",  false);
-        s_cfg.freqMHz             = prefs.getFloat("freqMHz",     0.0f);
-        s_cfg.radioSF             = prefs.getUChar("radioSF",     0);
-        s_cfg.radioBW             = prefs.getUChar("radioBW",     0);
-        s_cfg.radioCR             = prefs.getUChar("radioCR",     0);
-        s_cfg.radioTX             = (int8_t)prefs.getChar("radioTX", 0);
-        s_cfg.manualLat           = prefs.getFloat("manualLat",   0.0f);
-        s_cfg.manualLon           = prefs.getFloat("manualLon",   0.0f);
-        s_cfg.autoForward         = prefs.getBool("autoFwd",      true);
-        s_cfg.pathHashSz          = prefs.getUChar("pathHashSz",  0);
+        s_cfg.activeChannel     = prefs.getInt("channel",       s_cfg.activeChannel);
+        s_cfg.bluetoothEnabled  = prefs.getBool("bluetooth",    s_cfg.bluetoothEnabled);
+        s_cfg.speakerEnabled    = prefs.getBool("speaker",      s_cfg.speakerEnabled);
+        s_cfg.gpsEnabled        = prefs.getBool("gps",          s_cfg.gpsEnabled);
+        s_cfg.kbBrightness      = prefs.getUChar("kbBright",    128);
+        s_cfg.kbLayout          = prefs.getUChar("kbLayout",    0);
+        s_cfg.autoAddClient     = prefs.getBool("aaclient",     s_cfg.autoAddClient);
+        s_cfg.autoAddRepeater   = prefs.getBool("aarepeater",   s_cfg.autoAddRepeater);
+        s_cfg.saveMsgs          = prefs.getBool("saveMsgs",     s_cfg.saveMsgs);
+        s_cfg.showHops          = prefs.getBool("showHops",     s_cfg.showHops);
+        s_cfg.showRssi          = prefs.getBool("showRssi",     s_cfg.showRssi);
+        s_cfg.locationSharing   = prefs.getBool("locShare",     s_cfg.locationSharing);
+        s_cfg.notifyPopup       = prefs.getBool("notifyPopup",  s_cfg.notifyPopup);
+        s_cfg.brightness        = prefs.getInt("brightness",    s_cfg.brightness);
+        s_cfg.screenTimeoutSec  = prefs.getInt("screenTimeout", s_cfg.screenTimeoutSec);
+        s_cfg.notifySound       = prefs.getBool("notifySound",  s_cfg.notifySound);
+        s_cfg.notifySoundChoice = prefs.getUChar("notifySndCh", 0);
+        s_cfg.theme             = prefs.getInt("theme",         s_cfg.theme);
+        s_cfg.radioProfile      = prefs.getUChar("radioProf",   s_cfg.radioProfile);
+        s_cfg.showAdverts       = prefs.getBool("showAdverts",  s_cfg.showAdverts);
+        s_cfg.radioCustom       = prefs.getBool("radioCustom",  false);
+        s_cfg.freqMHz           = prefs.getFloat("freqMHz",     0.0f);
+        s_cfg.radioSF           = prefs.getUChar("radioSF",     0);
+        s_cfg.radioBW           = prefs.getUChar("radioBW",     0);
+        s_cfg.radioCR           = prefs.getUChar("radioCR",     0);
+        s_cfg.radioTX           = (int8_t)prefs.getChar("radioTX", 0);
+        s_cfg.manualLat         = prefs.getFloat("manualLat",   0.0f);
+        s_cfg.manualLon         = prefs.getFloat("manualLon",   0.0f);
+        s_cfg.autoForward       = prefs.getBool("autoFwd",      true);
+        s_cfg.pathHashSz        = prefs.getUChar("pathHashSz",  0);
         s_cfg.timezoneOffsetHours = (int8_t)prefs.getChar("tzOff", 0);
         {
             String scope = prefs.getString("scopeTag", "");
             strncpy(s_cfg.scopeTag, scope.c_str(), sizeof(s_cfg.scopeTag) - 1);
             s_cfg.scopeTag[sizeof(s_cfg.scopeTag) - 1] = '\0';
         }
-
         for (int i = 0; i < 10; i++) {
             char key[12];
             snprintf(key, sizeof(key), "ch%dname", i);
             String n = prefs.getString(key, s_cfg.channels[i].name);
             strncpy(s_cfg.channels[i].name, n.c_str(), sizeof(s_cfg.channels[i].name) - 1);
-
             snprintf(key, sizeof(key), "ch%dsn", i);
             String sn = prefs.getString(key, s_cfg.channels[i].shortname);
             strncpy(s_cfg.channels[i].shortname, sn.c_str(), sizeof(s_cfg.channels[i].shortname) - 1);
-
             snprintf(key, sizeof(key), "ch%dpsk", i);
             String pk = prefs.getString(key, s_cfg.channels[i].psk);
             strncpy(s_cfg.channels[i].psk, pk.c_str(), sizeof(s_cfg.channels[i].psk) - 1);
-
             snprintf(key, sizeof(key), "ch%dnotify", i);
             s_cfg.channels[i].notify = prefs.getBool(key, false);
-
             snprintf(key, sizeof(key), "ch%dscope", i);
-            {
-                String sc = prefs.getString(key, "");
-                strncpy(s_cfg.channels[i].scope, sc.c_str(), sizeof(s_cfg.channels[i].scope) - 1);
-                s_cfg.channels[i].scope[sizeof(s_cfg.channels[i].scope) - 1] = '\0';
-            }
+            String sc = prefs.getString(key, "");
+            strncpy(s_cfg.channels[i].scope, sc.c_str(), sizeof(s_cfg.channels[i].scope) - 1);
+            s_cfg.channels[i].scope[sizeof(s_cfg.channels[i].scope) - 1] = '\0';
         }
-
         prefs.end();
-
-        // Migration: old firmware stored auto-derived "CH2".."CH5" as both name and
-        // shortname for unconfigured channel slots. Clear them so those tabs don't appear.
-        bool migrated = false;
-        for (int i = 1; i < 10; i++) {
-            char* n  = s_cfg.channels[i].name;
-            char* sn = s_cfg.channels[i].shortname;
-            if (n[0] == 'C' && n[1] == 'H' && n[2] >= '2' && n[2] <= '5' && n[3] == '\0') {
-                n[0] = '\0'; sn[0] = '\0'; migrated = true;
-            }
-        }
-        if (migrated) {
-            OPS_LOG("Config", "Migrated legacy CH<n> channel names — resaving");
-            config::save();
-        }
-
-        OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s", s_cfg.callsign, s_cfg.radioRegion);
-        return;
-    }
-
-    // NVS empty or unreadable — fall back to SD backup (handles post-reflash recovery).
-    prefs.end();
-    if (sdcard::hasCompleteBackup() && _loadFromSD()) {
-        OPS_LOG("Config", "Restored from SD backup: callsign=%s", s_cfg.callsign);
+        // Clear old per-key entries and write compact blob.
+        if (prefs.begin("ops", false)) { prefs.clear(); prefs.end(); }
+        OPS_LOG("Config", "Migrated from legacy NVS keys: callsign=%s", s_cfg.callsign);
         save();
         return;
     }
+    prefs.end();
 
-    // Last resort: partial SD load or factory defaults.
+    // ── Factory defaults ────────────────────────────────────────────────
     if (!_loadFromSD())
         OPS_LOG("Config", "No saved config, using defaults");
     save();
@@ -314,57 +319,8 @@ void config::save() {
         OPS_LOG("Config", "Failed to open NVS for write");
         return;
     }
-    prefs.putString("radioRegion",  s_cfg.radioRegion);
-    prefs.putString("callsign",     s_cfg.callsign);
-    prefs.putString("mapTileDir",   s_cfg.mapTileDir);
-    prefs.putInt("channel",         s_cfg.activeChannel);
-    prefs.putBool("bluetooth",   s_cfg.bluetoothEnabled);
-    prefs.putBool("speaker",     s_cfg.speakerEnabled);
-    prefs.putBool("gps",         s_cfg.gpsEnabled);
-    prefs.putUChar("kbBright", s_cfg.kbBrightness);
-    prefs.putUChar("kbLayout",  s_cfg.kbLayout);
-    prefs.putBool("aaclient",   s_cfg.autoAddClient);
-    prefs.putBool("aarepeater", s_cfg.autoAddRepeater);
-    prefs.putBool("saveMsgs",    s_cfg.saveMsgs);
-    prefs.putBool("showHops",    s_cfg.showHops);
-    prefs.putBool("showRssi",    s_cfg.showRssi);
-    prefs.putBool("locShare",    s_cfg.locationSharing);
-    prefs.putBool("mobRepeater", s_cfg.mobileRepeater);
-    prefs.putBool("notifyPopup", s_cfg.notifyPopup);
-    prefs.putInt("brightness",      s_cfg.brightness);
-    prefs.putInt("screenTimeout",   s_cfg.screenTimeoutSec);
-    prefs.putBool("notifySound",    s_cfg.notifySound);
-    prefs.putUChar("notifySndCh",  s_cfg.notifySoundChoice);
-    prefs.putInt("theme",           s_cfg.theme);
-    prefs.putUChar("radioProf",     s_cfg.radioProfile);
-    prefs.putBool("showAdverts",    s_cfg.showAdverts);
-    prefs.putBool("radioCustom",    s_cfg.radioCustom);
-    prefs.putFloat("freqMHz",       s_cfg.freqMHz);
-    prefs.putUChar("radioSF",       s_cfg.radioSF);
-    prefs.putUChar("radioBW",       s_cfg.radioBW);
-    prefs.putUChar("radioCR",       s_cfg.radioCR);
-    prefs.putChar("radioTX",        s_cfg.radioTX);
-    prefs.putFloat("manualLat",     s_cfg.manualLat);
-    prefs.putFloat("manualLon",     s_cfg.manualLon);
-    prefs.putBool("autoFwd",        s_cfg.autoForward);
-    prefs.putUChar("pathHashSz",    s_cfg.pathHashSz);
-    prefs.putChar("tzOff",          s_cfg.timezoneOffsetHours);
-    prefs.putString("scopeTag",     s_cfg.scopeTag);
-    for (int i = 0; i < 10; i++) {
-        char key[12];
-        snprintf(key, sizeof(key), "ch%dname", i);
-        prefs.putString(key, s_cfg.channels[i].name);
-        snprintf(key, sizeof(key), "ch%dsn", i);
-        prefs.putString(key, s_cfg.channels[i].shortname);
-        snprintf(key, sizeof(key), "ch%dpsk", i);
-        prefs.putString(key, s_cfg.channels[i].psk);
-
-        snprintf(key, sizeof(key), "ch%dnotify", i);
-        prefs.putBool(key, s_cfg.channels[i].notify);
-
-        snprintf(key, sizeof(key), "ch%dscope", i);
-        prefs.putString(key, s_cfg.channels[i].scope);
-    }
+    // Single blob — 1 NVS entry regardless of how many fields Config has.
+    prefs.putBytes("cfg", &s_cfg, sizeof(s_cfg));
     prefs.end();
     _saveToSD();
     OPS_LOG("Config", "Saved");
@@ -406,4 +362,4 @@ void config::setChannel(int idx, const char* name, const char* psk, const char* 
     save();
 }
 
-}  // namespace oms
+}  // namespace ops

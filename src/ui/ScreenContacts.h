@@ -24,6 +24,7 @@ private:
     // Popup action callbacks (user_data = overlay obj)
     static void _onPopupDM        (lv_event_t* e);
     static void _onPopupFavourite (lv_event_t* e);
+    static void _onPopupShareQR   (lv_event_t* e);
     static void _onPopupSetPath   (lv_event_t* e);
     static void _onPopupResetPath (lv_event_t* e);
     static void _onPopupDelete    (lv_event_t* e);

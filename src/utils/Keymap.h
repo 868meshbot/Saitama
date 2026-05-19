@@ -29,4 +29,4 @@ struct KeyOut {
 KeyOut translate(char raw, uint8_t layout, uint32_t nowMs);
 
 }  // namespace keymap
-}  // namespace oms
+}  // namespace ops

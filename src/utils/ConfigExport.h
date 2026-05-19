@@ -3,10 +3,10 @@
 //
 // Export and import config + identity to/from SD card.
 // Uses MeshCore-compatible format:
-//   /oms/config.json   -- Saitama settings (JSON)
-//   /oms/identity.id   -- MeshCore local identity (binary)
-//   /oms/regions.bin   -- MeshCore region map (binary)
-//   /oms/contacts/     -- Directory of exported contacts (binary)
+//   /ops/config.json   -- Saitama settings (JSON)
+//   /ops/identity.id   -- MeshCore local identity (binary)
+//   /ops/regions.bin   -- MeshCore region map (binary)
+//   /ops/contacts/     -- Directory of exported contacts (binary)
 
 #pragma once
 
@@ -15,7 +15,7 @@
 namespace ops {
 
 // Export all config to SD card. Returns true on success.
-// Overwrites existing files. Creates /oms/ directory if needed.
+// Overwrites existing files. Creates /ops/ directory if needed.
 bool configExportToSD();
 
 // Import all config from SD card. Returns true on success.
@@ -32,4 +32,4 @@ bool importIdentityFromSD(const char* filename = nullptr);
 // Check if SD card has a valid config export.
 bool hasSDConfig();
 
-}  // namespace oms
+}  // namespace ops

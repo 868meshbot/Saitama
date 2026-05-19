@@ -281,4 +281,4 @@ void repeaters::setPath(int idx, uint8_t pathLen, const uint8_t* path)
     OPS_LOG("Repeaters", "Path saved: %s len=%d", s_reps[idx].name, pathLen);
 }
 
-}  // namespace oms
+}  // namespace ops

@@ -298,7 +298,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /time <epoch-seconds>");
         appendLine("  /memory");
         appendLine("  /battery");
-        appendLine("  /sd  |  /sd mount  |  /sd restore  |  /sd ls [path]");
+        appendLine("  /sd  |  /sd mount  |  /sd unmount  |  /sd restore  |  /sd ls [path]");
         appendLine("  /identity restore");
         appendLine("  /list {n}  |  /messages {n|all}  |  /clearmessages");
         appendLine("  /clearcontacts  |  /contacts delete <prefix>");
@@ -308,13 +308,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /reset path  |  /resetpath <hex>");
         appendLine("  /public <text>  |  /local <text>");
         appendLine("  /ch3 <text>  |  /ch4 <text>  |  /ch5 <text>");
-        appendLine("  /setchannel <1-5> #<name> [psk]");
-        appendLine("  /channel <1-5>  |  /channels");
+        appendLine("  /setchannel <1-10> #<name> [psk]");
+        appendLine("  /channel <1-10>  |  /channels");
         appendLine("  /adverts  |  /quiet");
         appendLine("  /mobrep  |  /autorep  |  /replist  |  /clearrep");
         appendLine("  /scope #<region>  |  /scope clear  |  /scope");
         appendLine("  /pathsize [1|2]  - 1=1-byte hashes, 2=2-byte hashes");
-        appendLine("  /uizoom [10|12|13|15]  |  /uifont [0|1]");
         appendLine("  /control <hex>");
         appendLine("  /repeaters [secs]  |  /repeateradmin <hex> [pass]");
         appendLine("  /repadmin [<hex>] <cmd>  - send admin cmd (login first)");
@@ -436,7 +435,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── channels ──────────────────────────────────────────────────────
     if (strcmp(cmd, "channels") == 0) {
         const auto& cfg = ops::config::get();
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 10; i++) {
             char buf[48];
             if (cfg.channels[i].name[0]) {
                 snprintf(buf, sizeof(buf), "  CH%d: #%s", i + 1, cfg.channels[i].name);
@@ -451,7 +450,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── channel <n> ───────────────────────────────────────────────────
     if (strcmp(cmd, "channel") == 0) {
         int n = atoi(args);
-        if (n < 1 || n > 5) { appendLine("Usage: /channel <1-5>"); return; }
+        if (n < 1 || n > 10) { appendLine("Usage: /channel <1-10>"); return; }
         const auto& cfg = ops::config::get();
         const auto& ch = cfg.channels[n - 1];
         char buf[48];
@@ -464,9 +463,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── setchannel <n> #<name> [hex-psk] ─────────────────────────────
     if (strcmp(cmd, "setchannel") == 0) {
         int n = atoi(args);
-        if (n < 1 || n > 5) { appendLine("Usage: /setchannel <1-5> #<name> [hex-psk]"); return; }
+        if (n < 1 || n > 10) { appendLine("Usage: /setchannel <1-10> #<name> [hex-psk]"); return; }
         const char* nameStart = strchr(args, '#');
-        if (!nameStart) { appendLine("Usage: /setchannel <1-5> #<name> [hex-psk]"); return; }
+        if (!nameStart) { appendLine("Usage: /setchannel <1-10> #<name> [hex-psk]"); return; }
         nameStart++;  // skip '#'
 
         char chName[16] = {};
@@ -532,15 +531,6 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "CH%d set to #%s  (PSK auto-derived)", n, chName);
         }
         appendLine(buf);
-        return;
-    }
-
-    // ── mobrep ────────────────────────────────────────────────────────
-    if (strcmp(cmd, "mobrep") == 0) {
-        auto& cfg = const_cast<ops::Config&>(ops::config::get());
-        cfg.mobileRepeater = !cfg.mobileRepeater;
-        ops::config::save();
-        appendLine(cfg.mobileRepeater ? "Mobile repeater: ON" : "Mobile repeater: OFF");
         return;
     }
 
@@ -649,18 +639,6 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "Scope: #%s", cfg.scopeTag);
             appendLine(buf);
         }
-        return;
-    }
-
-    // ── uizoom ────────────────────────────────────────────────────────
-    if (strcmp(cmd, "uizoom") == 0) {
-        appendLine("[uizoom - not yet implemented]");
-        return;
-    }
-
-    // ── uifont ────────────────────────────────────────────────────────
-    if (strcmp(cmd, "uifont") == 0) {
-        appendLine("[uifont - not yet implemented]");
         return;
     }
 
@@ -822,15 +800,23 @@ void ScreenTerminal::_dispatch(const char* raw) {
         snprintf(buf, sizeof(buf), "Callsign: %s",
                  cfg.callsign[0] ? cfg.callsign : "(not set)");
         appendLine(buf);
-        uint8_t prefix[4] = {};
-        mesh.getSelfPubKeyPrefix(prefix);
-        if (prefix[0] || prefix[1] || prefix[2] || prefix[3]) {
-            snprintf(buf, sizeof(buf), "Key: %02X%02X%02X%02X",
-                     prefix[0], prefix[1], prefix[2], prefix[3]);
+        uint8_t fullKey[32] = {};
+        mesh.getSelfPubKey(fullKey);
+        bool keySet = false;
+        for (int ki = 0; ki < 32; ki++) if (fullKey[ki]) { keySet = true; break; }
+        if (keySet) {
+            // Print as two lines of 32 hex chars each to fit the terminal width
+            char hex[65] = {};
+            for (int ki = 0; ki < 32; ki++)
+                snprintf(hex + ki * 2, 3, "%02X", fullKey[ki]);
+            char kbuf1[36], kbuf2[36];
+            snprintf(kbuf1, sizeof(kbuf1), "Key: %.32s", hex);
+            snprintf(kbuf2, sizeof(kbuf2), "     %.32s", hex + 32);
+            appendLine(kbuf1);
+            appendLine(kbuf2);
         } else {
-            strncpy(buf, "Key: (mesh not initialised)", sizeof(buf));
+            appendLine("Key: (mesh not initialised)");
         }
-        appendLine(buf);
         snprintf(buf, sizeof(buf), "Radio: %s  %.3f MHz",
                  kProfNames[p], (double)mesh.getFreqMHz());
         appendLine(buf);
@@ -1286,6 +1272,13 @@ void ScreenTerminal::_dispatch(const char* raw) {
             } else {
                 appendLine("SD mount failed - no card?");
             }
+            return;
+        }
+
+        if (strcmp(sub, "unmount") == 0) {
+            if (!ops::sdcard::isMounted()) { appendLine("SD already unmounted."); return; }
+            ops::sdcard::unmount();
+            appendLine("SD unmounted — safe to remove card.");
             return;
         }
 

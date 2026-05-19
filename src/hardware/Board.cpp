@@ -1,5 +1,5 @@
-// OpenMeshOS — Board.cpp
-// Copyright 2026 OpenMeshOS — MIT License
+// Saitama — Board.cpp
+// Copyright 2026 Saitama — MIT License
 //
 // Hardware abstraction for the LilyGo T-Deck Plus (ESP32-S3).
 // All pin numbers verified against the official LilyGo schematic.
@@ -15,7 +15,7 @@
 // non-zero = ASCII keycode.  No register write required.
 static constexpr uint8_t KB_ADDR = 0x55;
 
-namespace oms {
+namespace ops {
 
 // ── Pin definitions (T-Deck Plus) ─────────────────────────────────────
 //
@@ -96,7 +96,7 @@ Board& Board::instance() {
 
 // ── init() ────────────────────────────────────────────────────────
 void Board::init() {
-    OMS_LOG("Board", "Initialising T-Deck Plus hardware");
+    OPS_LOG("Board", "Initialising T-Deck Plus hardware");
 
     // 1) Power on the peripheral rail FIRST — nothing works without this
     pinMode(PIN_POWERON, OUTPUT);
@@ -112,7 +112,7 @@ void Board::init() {
     delay(50);  // allow I2C devices to finish startup
     Wire.beginTransmission(KB_ADDR);
     _keyboardPresent = (Wire.endTransmission(true) == 0);
-    OMS_LOG("Board", "BBQ10 keyboard at 0x%02X: %s",
+    OPS_LOG("Board", "BBQ10 keyboard at 0x%02X: %s",
             KB_ADDR, _keyboardPresent ? "FOUND" : "NOT FOUND");
 
     // 4) Trackball GPIOs (4-direction optical encoder + press)
@@ -128,16 +128,16 @@ void Board::init() {
     attachInterrupt(digitalPinToInterrupt(PIN_TBALL_DOWN),  isr_tball_down,  FALLING);
     attachInterrupt(digitalPinToInterrupt(PIN_TBALL_LEFT),  isr_tball_left,  FALLING);
     attachInterrupt(digitalPinToInterrupt(PIN_TBALL_RIGHT), isr_tball_right, FALLING);
-    OMS_LOG("Board", "Trackball ISRs attached (UP=%d DN=%d LT=%d RT=%d)",
+    OPS_LOG("Board", "Trackball ISRs attached (UP=%d DN=%d LT=%d RT=%d)",
             PIN_TBALL_UP, PIN_TBALL_DOWN, PIN_TBALL_LEFT, PIN_TBALL_RIGHT);
 
     // 5) Touch controller interrupt (active-low, INT → ESP32)
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
 
     // 6) GPS serial (T-Deck Plus has built-in GPS module)
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     _gpsSerial.begin(38400, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
-    OMS_LOG("Board", "GPS serial started (RX=%d TX=%d)", PIN_GPS_RX, PIN_GPS_TX);
+    OPS_LOG("Board", "GPS serial started (RX=%d TX=%d)", PIN_GPS_RX, PIN_GPS_TX);
 #endif
 
     // 7) Seed ESP32 RTC from compile timestamp so the clock shows something
@@ -158,11 +158,11 @@ void Board::init() {
         time_t ct = mktime(&tm);
         struct timeval tv = { ct, 0 };
         settimeofday(&tv, nullptr);
-        OMS_LOG("Board", "RTC seeded from compile time: %s %s", __DATE__, __TIME__);
+        OPS_LOG("Board", "RTC seeded from compile time: %s %s", __DATE__, __TIME__);
     }
 
     _initialized = true;
-    OMS_LOG("Board", "Hardware ready (POWERON=GPIO%d, BL=GPIO%d)",
+    OPS_LOG("Board", "Hardware ready (POWERON=GPIO%d, BL=GPIO%d)",
             PIN_POWERON, PIN_BACKLIGHT);
 }
 
@@ -198,7 +198,7 @@ void Board::tick() {
                 (!digitalRead(PIN_TBALL_LEFT)  << 1) |
                 (!digitalRead(PIN_TBALL_RIGHT) << 0);
 
-            OMS_LOG("TRACKBALL-GPIO",
+            OPS_LOG("TRACKBALL-GPIO",
                     "dir=%s (pin_down_state=0x%X, isr_counts: U=%lu D=%lu L=%lu R=%lu)",
                     dir, pinStates, (unsigned long)u, (unsigned long)d,
                     (unsigned long)l, (unsigned long)r);
@@ -219,7 +219,7 @@ void Board::tick() {
     }
 
     // GPS feed + RTC sync
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     while (_gpsSerial.available()) {
         _gps.encode(_gpsSerial.read());
     }
@@ -238,7 +238,7 @@ void Board::tick() {
             struct timeval tv = { mktime(&t), 0 };
             settimeofday(&tv, nullptr);
             _gpsLastSync = now_ms;
-            OMS_LOG("GPS", "RTC synced: %04d-%02d-%02d %02d:%02d:%02d UTC",
+            OPS_LOG("GPS", "RTC synced: %04d-%02d-%02d %02d:%02d:%02d UTC",
                     _gps.date.year(), _gps.date.month(), _gps.date.day(),
                     _gps.time.hour(), _gps.time.minute(), _gps.time.second());
         }
@@ -295,7 +295,7 @@ int Board::batteryPercent() const {
 
 // ── GPS ───────────────────────────────────────────────────────────
 bool Board::hasGPSFix() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return _gps.location.isValid();
 #else
     return false;
@@ -303,7 +303,7 @@ bool Board::hasGPSFix() const {
 }
 
 float Board::gpsLat() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return static_cast<float>(_gps.location.lat());
 #else
     return 0.0f;
@@ -311,7 +311,7 @@ float Board::gpsLat() const {
 }
 
 float Board::gpsLng() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return static_cast<float>(_gps.location.lng());
 #else
     return 0.0f;
@@ -319,7 +319,7 @@ float Board::gpsLng() const {
 }
 
 float Board::gpsAltM() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return _gps.altitude.isValid() ? static_cast<float>(_gps.altitude.meters()) : 0.0f;
 #else
     return 0.0f;
@@ -327,7 +327,7 @@ float Board::gpsAltM() const {
 }
 
 float Board::gpsHdop() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return _gps.hdop.isValid() ? static_cast<float>(_gps.hdop.hdop()) : 99.9f;
 #else
     return 99.9f;
@@ -335,7 +335,7 @@ float Board::gpsHdop() const {
 }
 
 uint8_t Board::gpsSatellites() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return _gps.satellites.isValid() ? (uint8_t)_gps.satellites.value() : 0;
 #else
     return 0;
@@ -343,7 +343,7 @@ uint8_t Board::gpsSatellites() const {
 }
 
 uint32_t Board::gpsNmeaCount() const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     return _gps.passedChecksum();
 #else
     return 0;
@@ -352,7 +352,7 @@ uint32_t Board::gpsNmeaCount() const {
 
 bool Board::gpsDateTime(uint16_t& year, uint8_t& month, uint8_t& day,
                          uint8_t& hour, uint8_t& minute, uint8_t& sec) const {
-#ifdef OMS_HAS_BUILTIN_GPS
+#ifdef OPS_HAS_BUILTIN_GPS
     if (!_gps.date.isValid() || !_gps.time.isValid()) return false;
     year   = _gps.date.year();
     month  = _gps.date.month();
@@ -382,10 +382,10 @@ bool Board::pollKeyboard(char& outKey) {
 
     if (raw == 0) return false;
 
-    OMS_LOG("KB-RAW", "0x%02X ('%c')", raw, (raw >= 32 && raw < 127) ? (char)raw : '?');
+    OPS_LOG("KB-RAW", "0x%02X ('%c')", raw, (raw >= 32 && raw < 127) ? (char)raw : '?');
 
     outKey = (char)raw;
     return true;
 }
 
-}  // namespace oms
+}  // namespace ops

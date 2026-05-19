@@ -22,6 +22,7 @@
 
 #include "ScreenSettings.h"
 #include "ScreenLauncher.h"
+#include "QRPopup.h"
 #include "Theme.h"
 #include "../utils/Config.h"
 #include "../utils/Keymap.h"
@@ -188,14 +189,24 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     const auto& cfg = ops::config::get();
 
     // Item indices match _onItemClick switch
-    _addRow(_list, "Device Name",   cfg.callsign, 0);
-    _addRow(_list, "Channels",      "",           1);   // opens the 5-slot picker
+    _addRow(_list, "Device Name",     cfg.callsign, 0);
+    _addRow(_list, "Share My Contact","",           24); // show self pubkey as QR
+    _addRow(_list, "Channels",        "",           1);  // opens the 5-slot picker
     static const char* kRadioShort[] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
         "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
         "PT 868", "CH", "US/CA", "VN"
     };
     _addRow(_list, "Radio", kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2], 6);
+    char pwrBuf[10];
+    if (cfg.radioTX >= 10 && cfg.radioTX <= 22)
+        snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX);
+    else
+        snprintf(pwrBuf, sizeof(pwrBuf), "Default");
+    _addRow(_list, "Power", pwrBuf, 25);
+    char brightBuf[8];
+    snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
+    _addRow(_list, "Brightness", brightBuf, 26);
     _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "ON" : "OFF", 7);
     _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "ON" : "OFF", 8);
     _addRow(_list, "GPS",             cfg.gpsEnabled       ? "ON" : "OFF", 9);
@@ -237,7 +248,6 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, "Show Hops",          cfg.showHops        ? "ON" : "OFF", 15);
     _addRow(_list, "Show RSSI",          cfg.showRssi        ? "ON" : "OFF", 19);
     _addRow(_list, "Location Sharing",   cfg.locationSharing ? "ON" : "OFF", 17);
-    _addRow(_list, "Mobile Repeater",    cfg.mobileRepeater  ? "ON" : "OFF", 18);
 
     s_listPtr = _list;
 }
@@ -418,7 +428,6 @@ struct EditChCtx {
     int        ch;
     lv_obj_t* nameTa;
     lv_obj_t* pskTa;
-    lv_obj_t* snTa;
     lv_obj_t* scopeTa;
 };
 static EditChCtx s_editCtx;
@@ -434,9 +443,10 @@ static void _closeEditCh(bool doSave) {
         const char* rawPsk = lv_textarea_get_text(s_editCtx.pskTa);
         char pskNorm[25] = {};
         ops::MeshService::normalizePsk(rawPsk ? rawPsk : "", pskNorm, sizeof(pskNorm));
-        const char* sn    = lv_textarea_get_text(s_editCtx.snTa);
         const char* scope = s_editCtx.scopeTa
                             ? lv_textarea_get_text(s_editCtx.scopeTa) : "";
+        // Preserve existing shortname — field removed from UI
+        const char* sn = ops::config::get().channels[s_editCtx.ch].shortname;
         ops::config::setChannel(s_editCtx.ch, cleanName,
                                 pskNorm, sn ? sn : "",
                                 scope ? scope : "");
@@ -535,15 +545,10 @@ static void _openChannelsDialog() {
             LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
         char rowBuf[40];
-        if (cfg.channels[i].name[0]) {
-            if (cfg.channels[i].shortname[0])
-                snprintf(rowBuf, sizeof(rowBuf), "CH%d: %s  [%s]",
-                         i + 1, cfg.channels[i].name, cfg.channels[i].shortname);
-            else
-                snprintf(rowBuf, sizeof(rowBuf), "CH%d: %s", i + 1, cfg.channels[i].name);
-        } else {
+        if (cfg.channels[i].name[0])
+            snprintf(rowBuf, sizeof(rowBuf), "CH%d: %s", i + 1, cfg.channels[i].name);
+        else
             snprintf(rowBuf, sizeof(rowBuf), "CH%d: [disabled]", i + 1);
-        }
         lv_obj_t* lbl = lv_label_create(row);
         lv_label_set_text(lbl, rowBuf);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
@@ -698,6 +703,27 @@ static void _onPskShuffle(lv_event_t* /*e*/)
     lv_textarea_set_text(s_editCtx.pskTa, psk);
 }
 
+static void _onEditChShareQR(lv_event_t* /*e*/)
+{
+    if (!s_editCtx.nameTa || !s_editCtx.pskTa) return;
+    const char* rawName = lv_textarea_get_text(s_editCtx.nameTa);
+    char cleanName[32] = {};
+    if (rawName) {
+        const char* src = (rawName[0] == '#') ? rawName + 1 : rawName;
+        strncpy(cleanName, src, sizeof(cleanName) - 1);
+    }
+    if (!cleanName[0]) return;
+    const char* rawPsk = lv_textarea_get_text(s_editCtx.pskTa);
+    const char* scope  = s_editCtx.scopeTa
+                         ? lv_textarea_get_text(s_editCtx.scopeTa) : "";
+    char data[120];
+    snprintf(data, sizeof(data), "MC:CH:%s/%s/%s",
+             cleanName, rawPsk ? rawPsk : "", scope ? scope : "");
+    char title[48];
+    snprintf(title, sizeof(title), "Channel: #%s", cleanName);
+    showQrPopup(title, data);
+}
+
 // ── Edit a single channel ─────────────────────────────────────────────
 static void _openEditChannelDialog(int ch) {
     lv_obj_t* modal = lv_obj_create(lv_scr_act());
@@ -796,14 +822,11 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_set_style_text_color(shuffleLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(shuffleLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(shuffleLbl);
-    s_editCtx.snTa   = _makeChField(panel, "Short name (5 chars max for tab label)",
-                                    cfg.channels[ch].shortname, 5,
-                                    "e.g. Pub");
     s_editCtx.scopeTa = _makeChField(panel, "Scope (optional, e.g. AU)",
                                      cfg.channels[ch].scope, 15,
                                      "leave blank for no scope");
 
-    // Button row
+    // Button row: [Share QR]  [Save]  [Exit]
     lv_obj_t* btnRow = lv_obj_create(panel);
     lv_obj_set_size(btnRow, LV_PCT(100), 30);
     lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
@@ -812,10 +835,26 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btnRow,
-        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* qrBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(qrBtn, 80, 26);
+    lv_obj_set_style_bg_color(qrBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(qrBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(qrBtn, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(qrBtn, 1, 0);
+    lv_obj_set_style_radius(qrBtn, 4, 0);
+    lv_obj_set_style_shadow_width(qrBtn, 0, 0);
+    lv_obj_add_event_cb(qrBtn, _onEditChShareQR, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(qrBtn, _onEditChKey,     LV_EVENT_KEY,     nullptr);
+    lv_obj_t* qrLbl = lv_label_create(qrBtn);
+    lv_label_set_text(qrLbl, "Share QR");
+    lv_obj_set_style_text_color(qrLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(qrLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(qrLbl);
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
-    lv_obj_set_size(saveBtn, 120, 26);
+    lv_obj_set_size(saveBtn, 100, 26);
     lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
     lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
@@ -829,7 +868,7 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
-    lv_obj_set_size(exitBtn, 100, 26);
+    lv_obj_set_size(exitBtn, 80, 26);
     lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
     lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
@@ -849,8 +888,8 @@ static void _openEditChannelDialog(int ch) {
         lv_group_add_obj(g, s_editCtx.nameTa);
         lv_group_add_obj(g, s_editCtx.pskTa);
         lv_group_add_obj(g, shuffleBtn);
-        lv_group_add_obj(g, s_editCtx.snTa);
         lv_group_add_obj(g, s_editCtx.scopeTa);
+        lv_group_add_obj(g, qrBtn);
         lv_group_add_obj(g, saveBtn);
         lv_group_add_obj(g, exitBtn);
         lv_group_focus_obj(s_editCtx.nameTa);
@@ -858,9 +897,8 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_add_event_cb(s_editCtx.nameTa,  _onEditChKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(s_editCtx.pskTa,   _onEditChKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(shuffleBtn,         _onEditChKey, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(s_editCtx.snTa,    _onEditChKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(s_editCtx.scopeTa, _onEditChKey, LV_EVENT_KEY, nullptr);
-    // Enter on scope (last field) = save
+    // Enter on scope (last text field) = save
     lv_obj_add_event_cb(s_editCtx.scopeTa, _onEditChSave, LV_EVENT_READY, nullptr);
 }
 
@@ -1759,6 +1797,273 @@ static void _openKbBrightDialog() {
     lv_obj_add_event_cb(saveBtn,        _onKbKey, LV_EVENT_KEY, nullptr);
 }
 
+// ── TX Power picker ──────────────────────────────────────────────────
+
+struct TxPowerCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
+static TxPowerCtx s_txCtx;
+
+static void _onTxPowerSlide(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_txCtx.slider);
+    char buf[10];
+    snprintf(buf, sizeof(buf), "%d dBm", v);
+    lv_label_set_text(s_txCtx.valLbl, buf);
+}
+
+static void _onTxPowerSave(lv_event_t* /*e*/) {
+    int8_t v = (int8_t)lv_slider_get_value(s_txCtx.slider);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.radioTX = v;
+    ops::config::save();
+    ops::MeshService::instance().setTxPower(v);
+    lv_obj_del(s_txCtx.modal);
+    ScreenSettings::show();
+}
+
+static void _onTxPowerExit(lv_event_t* /*e*/) {
+    lv_obj_del(s_txCtx.modal);
+}
+
+static void _onTxPowerKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
+        lv_obj_del(s_txCtx.modal);
+}
+
+static void _openTxPowerDialog() {
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_txCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onTxPowerKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 165);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "TX Power");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    int8_t curVal = ops::config::get().radioTX;
+    if (curVal < 10 || curVal > 22) curVal = 22;
+
+    s_txCtx.valLbl = lv_label_create(panel);
+    char initBuf[10];
+    snprintf(initBuf, sizeof(initBuf), "%d dBm", curVal);
+    lv_label_set_text(s_txCtx.valLbl, initBuf);
+    lv_obj_set_style_text_color(s_txCtx.valLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_txCtx.valLbl, &lv_font_montserrat_12, 0);
+
+    s_txCtx.slider = lv_slider_create(panel);
+    lv_obj_set_width(s_txCtx.slider, 220);
+    lv_slider_set_range(s_txCtx.slider, 10, 22);
+    lv_slider_set_value(s_txCtx.slider, (int)curVal, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_txCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_txCtx.slider, theme::ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(s_txCtx.slider, theme::BORDER, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_txCtx.slider, _onTxPowerSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onTxPowerSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onTxPowerExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onTxPowerKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* gTx = lv_group_get_default();
+    if (gTx) {
+        lv_group_add_obj(gTx, s_txCtx.slider);
+        lv_group_add_obj(gTx, saveBtn);
+        lv_group_add_obj(gTx, exitBtn);
+        lv_group_focus_obj(s_txCtx.slider);
+    }
+    lv_obj_add_event_cb(s_txCtx.slider, _onTxPowerKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(saveBtn,        _onTxPowerKey, LV_EVENT_KEY, nullptr);
+}
+
+// ── Brightness picker ────────────────────────────────────────────────
+
+struct BrightCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; uint8_t origVal; };
+static BrightCtx s_brightCtx;
+
+static void _onBrightSlide(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_brightCtx.slider);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", v * 100 / 255);
+    lv_label_set_text(s_brightCtx.valLbl, buf);
+    ops::Board::instance().setDisplayBrightness((uint8_t)v);
+}
+
+static void _onBrightSave(lv_event_t* /*e*/) {
+    uint8_t v = (uint8_t)lv_slider_get_value(s_brightCtx.slider);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.brightness = (int)v;
+    ops::config::save();
+    ops::Board::instance().setDisplayBrightness(v);
+    lv_obj_del(s_brightCtx.modal);
+    ScreenSettings::show();
+}
+
+static void _onBrightExit(lv_event_t* /*e*/) {
+    ops::Board::instance().setDisplayBrightness(s_brightCtx.origVal);
+    lv_obj_del(s_brightCtx.modal);
+}
+
+static void _onBrightKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
+        ops::Board::instance().setDisplayBrightness(s_brightCtx.origVal);
+        lv_obj_del(s_brightCtx.modal);
+    }
+}
+
+static void _openBrightnessDialog() {
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_brightCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onBrightKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 165);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Brightness");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    int curRaw = ops::config::get().brightness;
+    if (curRaw < 128) curRaw = 200;   // clamp to minimum 50%
+    s_brightCtx.origVal = (uint8_t)curRaw;
+
+    s_brightCtx.valLbl = lv_label_create(panel);
+    char initBuf[8];
+    snprintf(initBuf, sizeof(initBuf), "%d%%", curRaw * 100 / 255);
+    lv_label_set_text(s_brightCtx.valLbl, initBuf);
+    lv_obj_set_style_text_color(s_brightCtx.valLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_brightCtx.valLbl, &lv_font_montserrat_12, 0);
+
+    s_brightCtx.slider = lv_slider_create(panel);
+    lv_obj_set_width(s_brightCtx.slider, 220);
+    lv_slider_set_range(s_brightCtx.slider, 128, 255);
+    lv_slider_set_value(s_brightCtx.slider, curRaw, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_brightCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_brightCtx.slider, theme::ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(s_brightCtx.slider, theme::BORDER, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_brightCtx.slider, _onBrightSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onBrightSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onBrightExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onBrightKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* gBr = lv_group_get_default();
+    if (gBr) {
+        lv_group_add_obj(gBr, s_brightCtx.slider);
+        lv_group_add_obj(gBr, saveBtn);
+        lv_group_add_obj(gBr, exitBtn);
+        lv_group_focus_obj(s_brightCtx.slider);
+    }
+    lv_obj_add_event_cb(s_brightCtx.slider, _onBrightKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(saveBtn,            _onBrightKey, LV_EVENT_KEY, nullptr);
+}
+
 // ── Radio profile picker ──────────────────────────────────────────────
 
 struct RadioProfile {
@@ -2182,6 +2487,20 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openNameDialog();
             return;
 
+        case 24: {  // Share My Contact → QR popup
+            uint8_t pubKey[32];
+            ops::MeshService::instance().getSelfPubKey(pubKey);
+            char hexBuf[65] = {};
+            for (int i = 0; i < 32; i++)
+                snprintf(hexBuf + i * 2, 3, "%02X", pubKey[i]);
+            char data[90];
+            snprintf(data, sizeof(data), "MC:C:%s/%s", hexBuf, cfg.callsign);
+            char title[40];
+            snprintf(title, sizeof(title), "My Contact: %s", cfg.callsign);
+            showQrPopup(title, data);
+            return;
+        }
+
         case 1:  // Channels → channel list dialog
             _openChannelsDialog();
             return;
@@ -2221,6 +2540,14 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openRadioDialog();
             return;
 
+        case 25:  // Power → TX power slider
+            _openTxPowerDialog();
+            return;
+
+        case 26:  // Brightness → backlight dimmer
+            _openBrightnessDialog();
+            return;
+
         case 11:  // Firmware Update — placeholder
             OPS_LOG("Settings", "Item %d: not yet implemented", idx);
             return;
@@ -2247,11 +2574,6 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 17:  // Location Sharing — direct toggle
             cfg.locationSharing = !cfg.locationSharing;
-            ops::config::save();
-            break;
-
-        case 18:  // Mobile Repeater — direct toggle
-            cfg.mobileRepeater = !cfg.mobileRepeater;
             ops::config::save();
             break;
 

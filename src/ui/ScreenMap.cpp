@@ -591,7 +591,7 @@ void ScreenMap::_onMountClick(lv_event_t*)
     }
     OPS_LOG("Map", "Attempting SD remount");
     ops::sdcard::init();   // re-runs SPI + SD.begin(); safe to call again
-    s_eng.init();           // re-checks /oms/maps existence
+    s_eng.init();           // re-checks /ops/maps existence
     _redrawMap();           // shows dialog again if still not found
 }
 

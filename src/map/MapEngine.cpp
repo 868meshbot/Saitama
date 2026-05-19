@@ -4,7 +4,7 @@
 // Offline map rendering for ESP32 with LVGL.
 // Uses PNG tiles from SD card, rendered as LVGL images.
 // Tile naming follows OSM slippy map convention:
-//   /oms/maps/{z}/{x}/{y}.png
+//   /ops/maps/{z}/{x}/{y}.png
 
 #include "MapEngine.h"
 #include "../utils/Log.h"
@@ -56,7 +56,7 @@ void MapEngine::init() {
         return;
     }
     _sdPresent = SD.exists("/ops/maps");
-    OPS_LOG("Map", "Tile dir /oms/maps %s", _sdPresent ? "found" : "not found");
+    OPS_LOG("Map", "Tile dir /ops/maps %s", _sdPresent ? "found" : "not found");
 }
 
 void MapEngine::tick() {
@@ -131,4 +131,4 @@ bool MapEngine::renderFrame() {
     return false;
 }
 
-}  // namespace oms
+}  // namespace ops

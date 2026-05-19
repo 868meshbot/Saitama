@@ -8,7 +8,7 @@
 namespace ops {
 namespace sdcard {
     // Mount SD on shared SPI bus (CS=39, SCK=40, MISO=38, MOSI=41).
-    // Creates /oms/ directory.  Silent no-op if no card is present.
+    // Creates /ops/ directory.  Silent no-op if no card is present.
     void init();
 
     bool isMounted();
@@ -17,18 +17,21 @@ namespace sdcard {
     // Returns true if the card is now mounted. No-op if already mounted.
     bool tryMount();
 
-    // Binary file helpers (used for /oms/identity.bin).
+    // Flush and unmount the card safely (call before physical removal).
+    void unmount();
+
+    // Binary file helpers (used for /ops/identity.bin).
     bool writeFile(const char* path, const uint8_t* data, size_t len);
     bool readFile(const char* path, uint8_t* buf, size_t maxLen, size_t* outLen);
 
-    // Message log helpers — /oms/msgs/<tag>.log, one JSON line per message.
+    // Message log helpers — /ops/msgs/<tag>.log, one JSON line per message.
     bool   appendMsgLine(const char* tag, const char* json);
     size_t readMsgLog   (const char* tag, char* buf, size_t bufSize);
     bool   deleteMsgLog (const char* tag);  // removes the .log file for tag
 
     // Directory listing — newline-separated entries in buf; dirs wrapped in [].
     size_t   listDir(const char* path, char* buf, size_t bufSize);
-    // Delete all files in /oms/msgs/.
+    // Delete all files in /ops/msgs/.
     void     clearMsgLogs();
     // Disk capacity helpers.
     uint64_t totalMB();

@@ -102,7 +102,7 @@ namespace ops {
 // ── Board shim ─────────────────────────────────────────────────────
 // Extends ESP32Board but skips Wire.begin() (Board.cpp already owns it)
 // and delegates battery millivolts to the Board singleton.
-class OMSBoard : public ESP32Board {
+class OPSBoard : public ESP32Board {
 public:
     uint16_t getBattMilliVolts() override {
         // Board returns 0-100 percent; map to ~3200-4200 mV LiPo range
@@ -143,10 +143,10 @@ static int _b64decode(const char* in, uint8_t* out, int outMax) {
 // Declared in dependency order — C++ initialises statics in declaration
 // order within a translation unit, so each object is ready before
 // anything that references it is constructed.
-static OMSBoard                  oms_board;
+static OPSBoard                  ops_board;
 static SPIClass                  lora_spi(FSPI);
 static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, lora_spi));
-static CustomSX1262Wrapper       radio_driver(sx1262, oms_board);
+static CustomSX1262Wrapper       radio_driver(sx1262, ops_board);
 static ArduinoMillis             ms_clock;
 static StdRNG                    std_rng;
 static ESP32RTCClock             rtc_clock;
@@ -577,7 +577,7 @@ class OMSMesh : public BaseChatMesh {
             memcpy(&_outFrame[i], &bw, 4); i += 4;
             _outFrame[i++] = 8; // sf
             _outFrame[i++] = 8; // cr
-            const char* name = _callsign[0] ? _callsign : "OPS-NODE";
+            const char* name = _callsign[0] ? _callsign : "OMS-NODE";
             int nlen = (int)strlen(name);
             if (i + nlen > MAX_FRAME_SIZE) nlen = MAX_FRAME_SIZE - i;
             memcpy(&_outFrame[i], name, nlen); i += nlen;
@@ -1945,7 +1945,8 @@ public:
     }
 
     bool isRadioActive() const { return _active; }
-    void getSelfPubKeyPrefix(uint8_t out[4]) const { memcpy(out, self_id.pub_key, 4); }
+    void getSelfPubKeyPrefix(uint8_t out[4])  const { memcpy(out, self_id.pub_key, 4);  }
+    void getSelfPubKey(uint8_t out[32])       const { memcpy(out, self_id.pub_key, 32); }
 
     bool getContactPathInfo(const uint8_t* prefix4, PathInfo& out) const {
         OMSMesh* self = const_cast<OMSMesh*>(this);
@@ -1974,7 +1975,7 @@ public:
     }
 
     // Reads /mesh/self.id from LittleFS and writes it to NVS ("opsMesh"/"selfId")
-    // and SD (/oms/identity.bin).  Call after every identity load or save.
+    // and SD (/ops/identity.bin).  Call after every identity load or save.
     void _saveIdentityBackups() {
         if (!LittleFS.exists("/mesh/self.id")) return;
         File f = LittleFS.open("/mesh/self.id", "r");
@@ -2087,7 +2088,7 @@ void MeshService::init() {
     OPS_LOG("Mesh", "SX1262 OK %.1f MHz SF%d BW%d", (double)LORA_FREQ, LORA_SF, LORA_BW);
 
     const auto& cfg = ops::config::get();
-    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OPS-NODE");
+    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OMS-NODE");
 
     applyLoraProfile(cfg.radioProfile);
     applyRadioOverrides();
@@ -2201,6 +2202,11 @@ void MeshService::getSelfPubKeyPrefix(uint8_t out[4]) const {
     memset(out, 0, 4);
 }
 
+void MeshService::getSelfPubKey(uint8_t out[32]) const {
+    if (_initialized) { the_mesh.getSelfPubKey(out); return; }
+    memset(out, 0, 32);
+}
+
 bool MeshService::getContactPath(const uint8_t* prefix4, PathInfo& out) const {
     if (!_initialized) { out = {}; return false; }
     return the_mesh.getContactPathInfo(prefix4, out);
@@ -2306,7 +2312,7 @@ void MeshService::startCompanionBLE()
 {
     const auto& cfg = ops::config::get();
     ops::BTCompanionService::instance().init(
-        cfg.callsign[0] ? cfg.callsign : "OPS-NODE", 123456);
+        cfg.callsign[0] ? cfg.callsign : "OMS-NODE", 123456);
     if (_initialized)
         the_mesh.startCompanionInterface(
             ops::BTCompanionService::instance().getInterface());
@@ -2336,4 +2342,4 @@ bool MeshService::pollDiscoverResult(DiscoverEntry& out) {
     return _initialized && the_mesh.pollDiscoverResult(out);
 }
 
-}  // namespace oms
+}  // namespace ops

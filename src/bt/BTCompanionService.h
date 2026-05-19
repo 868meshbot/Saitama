@@ -34,4 +34,4 @@ private:
     bool _bleInited = false;
 };
 
-}  // namespace oms
+}  // namespace ops

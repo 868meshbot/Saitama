@@ -5,6 +5,7 @@
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
 #include "ScreenTerminal.h"
+#include "QRPopup.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
@@ -297,6 +298,7 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
 
     makeBtn("Direct Message", theme::TEXT,  theme::PRIMARY, theme::PRIMARY, _onPopupDM);
     makeBtn(favLabel,         favFg,        theme::BG,      favBd,          _onPopupFavourite);
+    makeBtn("Share QR",       theme::ACCENT,theme::BG,      theme::ACCENT,  _onPopupShareQR);
     makeBtn("Set Path",       theme::TEXT,  theme::BG,      theme::BORDER,  _onPopupSetPath);
     makeBtn("Reset Path",     theme::ORANGE,theme::BG,      theme::ORANGE,  _onPopupResetPath);
     makeBtn("Delete Contact", theme::RED,   theme::BG,      theme::RED,     _onPopupDelete);
@@ -377,6 +379,41 @@ void ScreenContacts::_onPopupClose(lv_event_t* e)
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     lv_obj_del(overlay);
     s_pendingContact = -1;
+}
+
+// ── _onPopupShareQR() — encode contact as QR code ────────────────────
+void ScreenContacts::_onPopupShareQR(lv_event_t* e)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    lv_obj_del(overlay);
+
+    Contact c;
+    if (s_pendingContact < 0 || !contacts::get(s_pendingContact, c)) {
+        s_pendingContact = -1;
+        return;
+    }
+    s_pendingContact = -1;
+
+    char hexBuf[65] = {};
+    bool hasKey = false;
+    for (int i = 0; i < 32; i++) if (c.pubKey[i]) { hasKey = true; break; }
+
+    char data[110];
+    if (hasKey) {
+        for (int i = 0; i < 32; i++)
+            snprintf(hexBuf + i * 2, 3, "%02X", c.pubKey[i]);
+        snprintf(data, sizeof(data), "MC:C:%s/%s", hexBuf, c.name);
+    } else {
+        // Full key not yet received — encode 4-byte prefix only
+        snprintf(hexBuf, 9, "%02X%02X%02X%02X",
+                 c.pubKeyPrefix[0], c.pubKeyPrefix[1],
+                 c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
+        snprintf(data, sizeof(data), "MC:CP:%s/%s", hexBuf, c.name);
+    }
+
+    char title[48];
+    snprintf(title, sizeof(title), "Contact: %s", c.name);
+    ops::ui::showQrPopup(title, data);
 }
 
 // ─────────────────────────────────────────────────────────────────────

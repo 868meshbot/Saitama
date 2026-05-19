@@ -25,4 +25,4 @@ namespace sound {
     void playStartupJingle();
 
 }  // namespace sound
-}  // namespace oms
+}  // namespace ops

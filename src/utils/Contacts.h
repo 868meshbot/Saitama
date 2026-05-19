@@ -50,4 +50,4 @@ namespace contacts {
     void setPosition(int idx, int32_t lat, int32_t lon);
 }
 
-}  // namespace oms
+}  // namespace ops

@@ -585,4 +585,4 @@ void ScreenTrace::_onTraceClick(lv_event_t * /*e*/) {
 }
 
 } // namespace ui
-} // namespace oms
+} // namespace ops

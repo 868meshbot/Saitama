@@ -209,6 +209,8 @@ static void _deactivateScreensaver()
         s_prevScreen = nullptr;
     }
     if (sav) lv_obj_del(sav);
+    Board::instance().setDisplayBrightness(
+        (uint8_t)ops::config::get().brightness);
 }
 
 static void _activateScreensaver()
@@ -242,11 +244,12 @@ static void _activateScreensaver()
     lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     const char* name = ops::config::get().callsign[0]
-                       ? ops::config::get().callsign : "OPS-NODE";
+                       ? ops::config::get().callsign : "OMS-NODE";
     lv_label_set_text(s_ssNameLbl, name);
 
     lv_scr_load(s_screensaverScreen);
     s_screensaverActive = true;
+    Board::instance().setDisplayBrightness(0);
 }
 
 // ---------- Notification popup helpers ----------
@@ -320,6 +323,13 @@ void init() {
     tft.setRotation(1);
     tft.setSwapBytes(true);  // LVGL outputs little-endian RGB565; SPI needs big-endian
     tft.fillScreen(TFT_BLACK);
+
+    // Switch GPIO 42 from digital to ledc PWM so brightness can be dimmed.
+    // Board::init() drove the pin HIGH via digitalWrite; ledcAttachPin re-routes
+    // the pin mux to the ledc peripheral, overriding that.
+    Board::instance().initBacklightPWM();
+    Board::instance().setDisplayBrightness(
+        (uint8_t)ops::config::get().brightness);
 
     lv_init();
     ops::emoji::init();

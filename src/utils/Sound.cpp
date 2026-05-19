@@ -230,4 +230,4 @@ void sound::playStartupJingle()
               &written, pdMS_TO_TICKS(2000));
 }
 
-}  // namespace oms
+}  // namespace ops
