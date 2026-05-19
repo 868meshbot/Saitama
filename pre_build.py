@@ -7,6 +7,13 @@ import glob
 
 Import("env")
 
+# Prepend compat/ to the include search path so it takes priority over library
+# headers. compat/helpers/radiolib/ contains RadioLib 7.6.0 compatible shims
+# for SX126xReset.h and CustomSX1262Wrapper.h — MeshCore's originals access
+# members that RadioLib 7.6.0 moved to private.
+compat_dir = os.path.join(env.subst("$PROJECT_DIR"), "compat")
+env.Prepend(CPPPATH=[compat_dir])
+
 # ed25519 lives in lib/MeshCore/lib/ed25519 with no PlatformIO manifest.
 # PlatformIO's LDF won't auto-link it because no project source directly
 # includes it — only MeshCore's Identity.cpp does. Compile it explicitly.
