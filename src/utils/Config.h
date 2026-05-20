@@ -23,7 +23,7 @@ struct Config {
     int        activeChannel;     // 0-9
     bool       bluetoothEnabled;
     bool       speakerEnabled;
-    bool       gpsEnabled;
+    uint8_t    gpsMode;         // 0=off, 1=intermittent, 2=on (GPS_MODE_* constants)
     uint8_t    kbBrightness;     // keyboard backlight 0=off, 1-255=brightness
     uint8_t    kbLayout;         // keyboard layout: 0=EN, 1=FR AZERTY, 2=DE QWERTZ
     bool       autoAddClient;    // auto-add client nodes to contacts
@@ -35,7 +35,8 @@ struct Config {
     bool       notifyPopup;       // show on-screen popup for new messages
     // screenTimeoutSec == 0 means always-on display
     int        brightness;        // 0-255 backlight
-    int        screenTimeoutSec;  // seconds before screen sleeps
+    int        screenTimeoutSec;  // seconds before screensaver activates (0=off)
+    uint8_t    screenOffMin;      // minutes after screensaver before backlight off (0=never, min 2)
     bool       notifySound;
     uint8_t    notifySoundChoice; // 0=default ping, 1=pluck, 2=clear, 3=whoosh
     char       mapTileDir[32];
@@ -59,6 +60,11 @@ struct Config {
     int8_t     timezoneOffsetHours;
     // Scope / region tag for flood-scoped transmissions (empty = no scope)
     char       scopeTag[16];
+    // LoRa duty cycle: SX1262 hardware RX duty cycle for power saving
+    bool       loraDutyCycle;   // true = hardware duty cycle (46ms RX / 469ms sleep)
+    // CPU governor: controls setCpuFrequencyMhz based on display state
+    // 0=PowerSave(40/40/40) 1=Medium(80/40/40) 2=Normal(240/80/80) 3=Turbo(240/240/240)
+    uint8_t    cpuGovernor;
 };
 
 namespace config {

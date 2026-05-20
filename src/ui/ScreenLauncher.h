@@ -42,7 +42,8 @@ public:
     static void refreshBattery(int percent, bool charging = false);
 
     // Called from UIScreen::tick() — refreshes GPS icon and satellite count.
-    static void refreshStatus(bool gpsEnabled, bool hasFix, int satellites);
+    // gpsMode: 0=off (red), 1=intermittent (orange), 2=on (green/muted by fix).
+    static void refreshStatus(uint8_t gpsMode, bool hasFix, int satellites);
 
     // Called from UIScreen::tick() — refreshes LoRa radio status indicator.
     static void refreshRadio(bool initialized, bool active);

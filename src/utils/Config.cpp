@@ -31,7 +31,7 @@ static void setDefaults(Config& c) {
     c.activeChannel    = 0;
     c.bluetoothEnabled  = false;
     c.speakerEnabled    = true;
-    c.gpsEnabled        = true;
+    c.gpsMode           = 2;  // on by default
     c.kbBrightness    = 128;
     c.kbLayout        = 0;
     c.autoAddClient     = true;
@@ -43,6 +43,7 @@ static void setDefaults(Config& c) {
     c.notifyPopup       = true;
     c.brightness       = 200;
     c.screenTimeoutSec = 30;
+    c.screenOffMin     = 0;
     c.notifySound      = true;
     c.notifySoundChoice = 0;
     strncpy(c.mapTileDir, "/map", sizeof(c.mapTileDir));
@@ -61,6 +62,8 @@ static void setDefaults(Config& c) {
     c.pathHashSz       = 0;
     c.timezoneOffsetHours = 0;
     c.scopeTag[0]      = '\0';
+    c.loraDutyCycle    = false;
+    c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
 }
 
 // ── SD JSON helpers ────────────────────────────────────────────────
@@ -74,7 +77,7 @@ static void _saveToSD() {
     doc["channel"]      = s_cfg.activeChannel;
     doc["bluetooth"]    = s_cfg.bluetoothEnabled;
     doc["speaker"]      = s_cfg.speakerEnabled;
-    doc["gps"]          = s_cfg.gpsEnabled;
+    doc["gpsMode"]      = s_cfg.gpsMode;
     doc["kbBright"]   = s_cfg.kbBrightness;
     doc["kbLayout"]   = s_cfg.kbLayout;
     doc["aaclient"]     = s_cfg.autoAddClient;
@@ -86,6 +89,7 @@ static void _saveToSD() {
     doc["notifyPopup"]  = s_cfg.notifyPopup;
     doc["brightness"]   = s_cfg.brightness;
     doc["screenTimeout"]= s_cfg.screenTimeoutSec;
+    doc["screenOff"]    = s_cfg.screenOffMin;
     doc["notifySound"]  = s_cfg.notifySound;
     doc["notifySndCh"]  = s_cfg.notifySoundChoice;
     doc["theme"]        = s_cfg.theme;
@@ -103,6 +107,8 @@ static void _saveToSD() {
     doc["pathHashSz"]   = s_cfg.pathHashSz;
     doc["tzOff"]        = s_cfg.timezoneOffsetHours;
     doc["scopeTag"]     = s_cfg.scopeTag;
+    doc["loraDC"]       = s_cfg.loraDutyCycle;
+    doc["cpuGov"]       = s_cfg.cpuGovernor;
     JsonArray chArr = doc["channels"].to<JsonArray>();
     for (int i = 0; i < 10; i++) {
         JsonObject ch = chArr.add<JsonObject>();
@@ -133,7 +139,11 @@ static bool _loadFromSD() {
     s_cfg.activeChannel    = doc["channel"]      | s_cfg.activeChannel;
     s_cfg.bluetoothEnabled  = doc["bluetooth"]    | s_cfg.bluetoothEnabled;
     s_cfg.speakerEnabled    = doc["speaker"]      | s_cfg.speakerEnabled;
-    s_cfg.gpsEnabled        = doc["gps"]          | s_cfg.gpsEnabled;
+    // "gpsMode" is the current key; fall back to legacy "gps" bool (true→2, false→0).
+    if (doc["gpsMode"].is<int>())
+        s_cfg.gpsMode = (uint8_t)(int)doc["gpsMode"];
+    else
+        s_cfg.gpsMode = doc["gps"].is<bool>() ? (doc["gps"] ? 2 : 0) : s_cfg.gpsMode;
     s_cfg.kbBrightness    = (uint8_t)(doc["kbBright"] | 128);
     s_cfg.kbLayout        = (uint8_t)(doc["kbLayout"] | 0);
     s_cfg.autoAddClient     = doc["aaclient"]     | s_cfg.autoAddClient;
@@ -145,6 +155,7 @@ static bool _loadFromSD() {
     s_cfg.notifyPopup       = doc["notifyPopup"]  | s_cfg.notifyPopup;
     s_cfg.brightness        = doc["brightness"]   | s_cfg.brightness;
     s_cfg.screenTimeoutSec  = doc["screenTimeout"]| s_cfg.screenTimeoutSec;
+    s_cfg.screenOffMin      = (uint8_t)(doc["screenOff"] | 0);
     s_cfg.notifySound        = doc["notifySound"]   | s_cfg.notifySound;
     s_cfg.notifySoundChoice  = (uint8_t)(doc["notifySndCh"] | 0);
     s_cfg.theme             = doc["theme"]        | s_cfg.theme;
@@ -163,6 +174,8 @@ static bool _loadFromSD() {
     s_cfg.timezoneOffsetHours = (int8_t)(doc["tzOff"] | 0);
     strncpy(s_cfg.scopeTag, doc["scopeTag"] | "", sizeof(s_cfg.scopeTag) - 1);
     s_cfg.scopeTag[sizeof(s_cfg.scopeTag) - 1] = '\0';
+    s_cfg.loraDutyCycle = doc["loraDC"] | false;
+    s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     if (doc["channels"].is<JsonArray>()) {
         JsonArray chArr = doc["channels"].as<JsonArray>();
         int i = 0;
@@ -248,7 +261,7 @@ void config::init() {
         s_cfg.activeChannel     = prefs.getInt("channel",       s_cfg.activeChannel);
         s_cfg.bluetoothEnabled  = prefs.getBool("bluetooth",    s_cfg.bluetoothEnabled);
         s_cfg.speakerEnabled    = prefs.getBool("speaker",      s_cfg.speakerEnabled);
-        s_cfg.gpsEnabled        = prefs.getBool("gps",          s_cfg.gpsEnabled);
+        s_cfg.gpsMode           = prefs.getBool("gps", true) ? 2 : 0;  // legacy bool key
         s_cfg.kbBrightness      = prefs.getUChar("kbBright",    128);
         s_cfg.kbLayout          = prefs.getUChar("kbLayout",    0);
         s_cfg.autoAddClient     = prefs.getBool("aaclient",     s_cfg.autoAddClient);
@@ -260,6 +273,7 @@ void config::init() {
         s_cfg.notifyPopup       = prefs.getBool("notifyPopup",  s_cfg.notifyPopup);
         s_cfg.brightness        = prefs.getInt("brightness",    s_cfg.brightness);
         s_cfg.screenTimeoutSec  = prefs.getInt("screenTimeout", s_cfg.screenTimeoutSec);
+        s_cfg.screenOffMin      = prefs.getUChar("screenOff",    0);
         s_cfg.notifySound       = prefs.getBool("notifySound",  s_cfg.notifySound);
         s_cfg.notifySoundChoice = prefs.getUChar("notifySndCh", 0);
         s_cfg.theme             = prefs.getInt("theme",         s_cfg.theme);

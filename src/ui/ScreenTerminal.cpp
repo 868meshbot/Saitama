@@ -16,12 +16,14 @@
 
 #include "ScreenTerminal.h"
 #include "ScreenLauncher.h"
+#include "ScreenPower.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
 #include "../utils/Repeaters.h"
 #include "../utils/SDCard.h"
+#include "../utils/GpsMgr.h"
 #include "../utils/Log.h"
 #include "../hardware/Board.h"
 #include "../version.h"
@@ -298,6 +300,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /time <epoch-seconds>");
         appendLine("  /memory");
         appendLine("  /battery");
+        appendLine("  /power  - open power monitor screen");
         appendLine("  /sd  |  /sd mount  |  /sd unmount  |  /sd restore  |  /sd ls [path]");
         appendLine("  /identity restore");
         appendLine("  /list {n}  |  /messages {n|all}  |  /clearmessages");
@@ -317,7 +320,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /control <hex>");
         appendLine("  /repeaters [secs]  |  /repeateradmin <hex> [pass]");
         appendLine("  /repadmin [<hex>] <cmd>  - send admin cmd (login first)");
-        appendLine("  /gps [on|off]  - status if no arg");
+        appendLine("  /gps [on|off|intermittent]  - status if no arg");
         appendLine("  /i2c scan");
         appendLine("  /kbbl <0-255>  - probe keyboard backlight protocols");
         appendLine("  /tbdebug on|off  - trackball ISR log to CDC serial");
@@ -370,6 +373,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
+    // ── power ─────────────────────────────────────────────────────────
+    if (strcmp(cmd, "power") == 0) {
+        ScreenPower::show();
+        return;
+    }
+
     // ── tbdebug ───────────────────────────────────────────────────────
     if (strcmp(cmd, "tbdebug") == 0) {
         if (strcmp(args, "on") == 0) {
@@ -390,17 +399,25 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── gps ───────────────────────────────────────────────────────────
     if (strcmp(cmd, "gps") == 0) {
         auto& cfg = const_cast<ops::Config&>(ops::config::get());
+        static const char* modeNames[] = { "off", "intermittent", "on" };
         if (strcmp(args, "on") == 0) {
-            cfg.gpsEnabled = true; ops::config::save();
-            appendLine("GPS enabled.");
+            cfg.gpsMode = GPS_MODE_ON; ops::config::save();
+            ops::GpsMgr::instance().applyMode(GPS_MODE_ON);
+            appendLine("GPS mode: On");
         } else if (strcmp(args, "off") == 0) {
-            cfg.gpsEnabled = false; ops::config::save();
-            appendLine("GPS disabled.");
+            cfg.gpsMode = GPS_MODE_OFF; ops::config::save();
+            ops::GpsMgr::instance().applyMode(GPS_MODE_OFF);
+            appendLine("GPS mode: Off");
+        } else if (strcmp(args, "intermittent") == 0 || strcmp(args, "inter") == 0) {
+            cfg.gpsMode = GPS_MODE_INTER; ops::config::save();
+            ops::GpsMgr::instance().applyMode(GPS_MODE_INTER);
+            appendLine("GPS mode: Intermittent (1h sleep, 5min resync)");
         } else if (strcmp(args, "get") == 0 || args[0] == '\0') {
             auto& b = Board::instance();
             char buf[80];
             appendLine("GPS Status:");
-            snprintf(buf, sizeof(buf), "   Enabled: %s", cfg.gpsEnabled ? "yes" : "no");
+            snprintf(buf, sizeof(buf), "   Mode: %s",
+                     modeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2]);
             appendLine(buf);
             appendLine("   Baud rate: 38400");
             snprintf(buf, sizeof(buf), "   NMEA sentences received: %lu",
@@ -427,7 +444,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 appendLine(buf);
             }
         } else {
-            appendLine("Usage: /gps on|off");
+            appendLine("Usage: /gps on|off|intermittent");
         }
         return;
     }
@@ -1323,7 +1340,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
 
         if (strcmp(sub, "ls") == 0) {
-            const char* path = sub_args[0] ? sub_args : "/ops";
+            const char* path = sub_args[0] ? sub_args : "/oms";
             static char lsbuf[1024];
             size_t n = ops::sdcard::listDir(path, lsbuf, sizeof(lsbuf));
             if (n == 0) { appendLine("(empty or not found)"); return; }

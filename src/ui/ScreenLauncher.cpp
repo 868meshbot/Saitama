@@ -119,7 +119,7 @@ void ScreenLauncher::show() {
         refreshClock();
         auto& b = Board::instance();
         refreshBattery(b.batteryPercent(), b.batteryCharging());
-        refreshStatus(ops::config::get().gpsEnabled, b.hasGPSFix(), 0);
+        refreshStatus(ops::config::get().gpsMode, b.hasGPSFix(), 0);
         refreshSpeaker(ops::config::get().speakerEnabled);
     }
 
@@ -386,22 +386,32 @@ void ScreenLauncher::refreshBattery(int percent, bool charging) {
 }
 
 // ── refreshStatus() ──────────────────────────────────────────────────
-void ScreenLauncher::refreshStatus(bool gpsEnabled, bool hasFix, int satellites) {
-    if (_satLbl) {
-        if (!gpsEnabled) {
-            lv_obj_add_flag(_satLbl, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_clear_flag(_satLbl, LV_OBJ_FLAG_HIDDEN);
-            char buf[12];
-            if (hasFix && satellites > 0)
-                snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
-            else
-                snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "--");
-            lv_label_set_text(_satLbl, buf);
-            lv_obj_set_style_text_color(_satLbl,
-                hasFix ? theme::GREEN : theme::TEXT_MUTED, 0);
-        }
+void ScreenLauncher::refreshStatus(uint8_t gpsMode, bool hasFix, int satellites) {
+    if (!_satLbl) return;
+    lv_obj_clear_flag(_satLbl, LV_OBJ_FLAG_HIDDEN);
+    char buf[12];
+    lv_color_t col;
+    if (gpsMode == 0) {
+        // Off — show red GPS icon
+        snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "OFF");
+        col = theme::RED;
+    } else if (gpsMode == 1) {
+        // Intermittent — orange; show sat count when available
+        if (hasFix && satellites > 0)
+            snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
+        else
+            snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "--");
+        col = theme::ORANGE;
+    } else {
+        // On — green with fix, muted without
+        if (hasFix && satellites > 0)
+            snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
+        else
+            snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "--");
+        col = hasFix ? theme::GREEN : theme::TEXT_MUTED;
     }
+    lv_label_set_text(_satLbl, buf);
+    lv_obj_set_style_text_color(_satLbl, col, 0);
 }
 
 // ── refreshRadio() ───────────────────────────────────────────────────

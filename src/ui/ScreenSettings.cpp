@@ -21,6 +21,7 @@
 //   └──────────────────────────────────────┘
 
 #include "ScreenSettings.h"
+#include "UIScreen.h"
 #include "ScreenLauncher.h"
 #include "QRPopup.h"
 #include "Theme.h"
@@ -29,6 +30,7 @@
 #include "../utils/Log.h"
 #include "../mesh/MeshService.h"
 #include "../hardware/Board.h"
+#include "../utils/GpsMgr.h"
 #include "../version.h"
 #include <cstring>
 #include <cstdio>
@@ -204,12 +206,18 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     else
         snprintf(pwrBuf, sizeof(pwrBuf), "Default");
     _addRow(_list, "Power", pwrBuf, 25);
+    _addRow(_list, "LoRa Duty Cycle", cfg.loraDutyCycle ? "ON" : "OFF", 28);
+    static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
+    _addRow(_list, "CPU Governor",
+            kGovNames[cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2], 29);
     char brightBuf[8];
     snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
     _addRow(_list, "Brightness", brightBuf, 26);
     _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "ON" : "OFF", 7);
     _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "ON" : "OFF", 8);
-    _addRow(_list, "GPS",             cfg.gpsEnabled       ? "ON" : "OFF", 9);
+    static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
+    _addRow(_list, "GPS",
+            gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9);
     char kbBuf[8];
     if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "Off");
     else snprintf(kbBuf, sizeof(kbBuf), "%d", cfg.kbBrightness);
@@ -240,6 +248,13 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
     _addRow(_list, "Screen Timeout",     toStr, 13);
+    {
+        char soStr[12];
+        uint8_t offMin = cfg.screenOffMin;
+        if (offMin < 2) snprintf(soStr, sizeof(soStr), "Off");
+        else            snprintf(soStr, sizeof(soStr), "%d min", (int)offMin);
+        _addRow(_list, "Screen Off",     soStr, 27);
+    }
     _addRow(_list, "Notifications",      "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
     _addRow(_list, "Notification Sound",
@@ -1136,7 +1151,7 @@ static void _openSetTimeDialog() {
     int     yy = 26;  // 2-digit year
     bool gpsTime = false;
 #ifdef OPS_HAS_BUILTIN_GPS
-    if (ops::config::get().gpsEnabled) {
+    if (ops::config::get().gpsMode != GPS_MODE_OFF) {
         uint16_t yr4 = 0; uint8_t sc = 0;
         gpsTime = Board::instance().gpsDateTime(yr4, mo, dy, hr, mi, sc);
         if (gpsTime) yy = (int)(yr4 % 100);
@@ -1659,6 +1674,140 @@ static void _openTimeoutDialog() {
     }
     lv_obj_add_event_cb(s_toCtx.slider, _onToKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(saveBtn,        _onToKey, LV_EVENT_KEY, nullptr);
+}
+
+// ── Screen Off slider dialog ──────────────────────────────────────────
+// Slider 0–10: 0–1 = Off, 2–10 = minutes before backlight cuts entirely.
+
+struct ScreenOffCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
+static ScreenOffCtx s_soCtx;
+
+static void _fmtScreenOffVal(char* buf, size_t len, int v) {
+    if (v < 2) snprintf(buf, len, "Off");
+    else        snprintf(buf, len, "%d min", v);
+}
+
+static void _onSoSlide(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_soCtx.slider);
+    char buf[16];
+    _fmtScreenOffVal(buf, sizeof(buf), v);
+    lv_label_set_text(s_soCtx.valLbl, buf);
+}
+
+static void _onSoSave(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_soCtx.slider);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.screenOffMin = (v < 2) ? 0 : (uint8_t)v;
+    ops::config::save();
+    lv_obj_del(s_soCtx.modal);
+    ScreenSettings::show();
+}
+static void _onSoExit(lv_event_t* /*e*/) { lv_obj_del(s_soCtx.modal); }
+static void _onSoKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_soCtx.modal);
+}
+
+static void _openScreenOffDialog() {
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_soCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onSoKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 165);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Screen Off");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* hint = lv_label_create(panel);
+    lv_label_set_text(hint, "Backlight off after screensaver");
+    lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+
+    int curVal = (int)ops::config::get().screenOffMin;
+    s_soCtx.valLbl = lv_label_create(panel);
+    char initBuf[16];
+    _fmtScreenOffVal(initBuf, sizeof(initBuf), curVal);
+    lv_label_set_text(s_soCtx.valLbl, initBuf);
+    lv_obj_set_style_text_color(s_soCtx.valLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_soCtx.valLbl, &lv_font_montserrat_12, 0);
+
+    s_soCtx.slider = lv_slider_create(panel);
+    lv_obj_set_width(s_soCtx.slider, 220);
+    lv_slider_set_range(s_soCtx.slider, 0, 10);
+    lv_slider_set_value(s_soCtx.slider, curVal, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_soCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_soCtx.slider, theme::ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(s_soCtx.slider, theme::BORDER, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_soCtx.slider, _onSoSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 220, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(row);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onSoSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(row);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onSoExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onSoKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* gSo = lv_group_get_default();
+    if (gSo) {
+        lv_group_add_obj(gSo, s_soCtx.slider);
+        lv_group_add_obj(gSo, saveBtn);
+        lv_group_add_obj(gSo, exitBtn);
+        lv_group_focus_obj(s_soCtx.slider);
+    }
+    lv_obj_add_event_cb(s_soCtx.slider, _onSoKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(saveBtn,        _onSoKey, LV_EVENT_KEY, nullptr);
 }
 
 // ── Keyboard brightness slider dialog ────────────────────────────────
@@ -2477,6 +2626,134 @@ static void _openNotifSoundDialog() {
     }
 }
 
+// ── CPU Governor dropdown dialog ──────────────────────────────────────
+
+struct CpuGovCtx { lv_obj_t* modal; lv_obj_t* dd; };
+static CpuGovCtx s_cgCtx;
+
+static void _onCGSave(lv_event_t* /*e*/) {
+    uint8_t sel = (uint8_t)lv_dropdown_get_selected(s_cgCtx.dd);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.cpuGovernor = sel < 4 ? sel : 2;
+    ops::config::save();
+    ops::ui::applyGovernorNow();
+    lv_obj_del(s_cgCtx.modal);
+    ScreenSettings::show();
+}
+static void _onCGExit(lv_event_t* /*e*/) { lv_obj_del(s_cgCtx.modal); }
+static void _onCGKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_cgCtx.modal);
+}
+
+static void _openCpuGovDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_cgCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onCGKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 150);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "CPU Governor");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    // Hint row: show freq table so user knows what they're choosing
+    lv_obj_t* hint = lv_label_create(panel);
+    lv_label_set_text(hint,
+        "Active / Saver / Off\n"
+        "PowerSave: 40/40/40 MHz\n"
+        "Medium:    80/40/40 MHz\n"
+        "Normal:   240/80/80 MHz\n"
+        "Turbo:  240/240/240 MHz");
+    lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* dd = lv_dropdown_create(panel);
+    s_cgCtx.dd = dd;
+    lv_dropdown_set_options(dd, "Power Save\nMedium\nNormal\nTurbo");
+    lv_dropdown_set_selected(dd, cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2);
+    lv_obj_set_width(dd, 210);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+
+    lv_obj_t* list = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+    lv_obj_set_style_text_color(list, theme::TEXT, 0);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(list, theme::BORDER, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onCGSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onCGKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onCGExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onCGKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, dd);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, exitBtn);
+        lv_group_focus_obj(dd);
+    }
+}
+
 // ── _onItemClick() ───────────────────────────────────────────────────
 void ScreenSettings::_onItemClick(lv_event_t* e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -2519,9 +2796,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             ops::config::save();
             break;
 
-        case 9:  // GPS
-            cfg.gpsEnabled = !cfg.gpsEnabled;
+        case 9:  // GPS — cycle Off → Intermittent → On
+            cfg.gpsMode = (cfg.gpsMode + 1) % 3;
             ops::config::save();
+            ops::GpsMgr::instance().applyMode(cfg.gpsMode);
             break;
 
         case 21:  // Keyboard brightness → slider dialog
@@ -2560,6 +2838,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openTimeoutDialog();
             return;
 
+        case 27:  // Screen Off → slider dialog
+            _openScreenOffDialog();
+            return;
+
         case 16:  // Notifications → dialog
             _openNotificationsDialog();
             return;
@@ -2591,6 +2873,15 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             cfg.showRssi = !cfg.showRssi;
             ops::config::save();
             break;
+
+        case 28:  // LoRa Duty Cycle — direct toggle
+            cfg.loraDutyCycle = !cfg.loraDutyCycle;
+            ops::config::save();
+            break;
+
+        case 29:  // CPU Governor → dropdown dialog
+            _openCpuGovDialog();
+            return;
 
         default: return;
     }

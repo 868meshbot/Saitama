@@ -63,6 +63,8 @@ struct RadioStats {
     // Cumulative airtime in milliseconds (from Dispatcher)
     uint32_t airtimeTxMs;
     uint32_t airtimeRxMs;
+    // True while SX1262 hardware duty cycle is armed (46ms RX / 469ms sleep)
+    bool     loraDutyCycleActive;
 };
 
 struct PeerInfo {

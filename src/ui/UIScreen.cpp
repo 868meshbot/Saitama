@@ -14,6 +14,7 @@
 #include "ScreenFinder.h"
 #include "ScreenRepeaters.h"
 #include "ScreenMap.h"
+#include "ScreenPower.h"
 #include "Theme.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -23,6 +24,7 @@
 #include "../utils/Sound.h"
 #include "../utils/Keymap.h"
 #include "../utils/SDCard.h"
+#include "../utils/GpsMgr.h"
 #include "Emoji.h"
 
 #include <lvgl.h>
@@ -30,6 +32,26 @@
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <time.h>
+
+// ── CPU governor ───────────────────────────────────────────────────
+// Frequency table [governor 0-3][state: 0=active, 1=screensaver, 2=screen-off]
+//   0 Power Save : 40 / 40 / 40 MHz
+//   1 Medium     : 80 / 40 / 40 MHz
+//   2 Normal     : 240 / 80 / 80 MHz   ← default
+//   3 Turbo      : 240 / 240 / 240 MHz
+static constexpr uint32_t kGovFreq[4][3] = {
+    {  40,  40,  40 },
+    {  80,  40,  40 },
+    { 240,  80,  80 },
+    { 240, 240, 240 },
+};
+// 0=active, 1=screensaver, 2=screen-off
+static void _applyGovFreq(uint8_t state)
+{
+    uint8_t gov = ops::config::get().cpuGovernor;
+    if (gov > 3) gov = 2;
+    setCpuFrequencyMhz(kGovFreq[gov][state < 3 ? state : 0]);
+}
 
 static TFT_eSPI tft = TFT_eSPI();
 
@@ -58,6 +80,8 @@ static lv_obj_t* s_ssNameLbl         = nullptr;
 static lv_obj_t* s_prevScreen        = nullptr;
 static lv_obj_t* s_notifyPopup       = nullptr;
 static bool      s_touchDismiss      = false;  // set in touch_read, consumed in tick()
+static bool      s_screenOff         = false;  // backlight fully off (beyond screensaver)
+static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(), consumed in tick()
 
 // LVGL 8 touch indev (GT911 capacitive)
 static lv_indev_drv_t s_touch_drv;
@@ -199,6 +223,7 @@ static void _deactivateScreensaver()
 {
     if (!s_screensaverActive) return;
     s_screensaverActive = false;
+    s_screenOff         = false;
     s_lastActivityMs    = millis();
     lv_obj_t* sav       = s_screensaverScreen;
     s_screensaverScreen = nullptr;
@@ -211,6 +236,7 @@ static void _deactivateScreensaver()
     if (sav) lv_obj_del(sav);
     Board::instance().setDisplayBrightness(
         (uint8_t)ops::config::get().brightness);
+    _applyGovFreq(0);  // restore active-screen frequency
 }
 
 static void _activateScreensaver()
@@ -249,7 +275,12 @@ static void _activateScreensaver()
 
     lv_scr_load(s_screensaverScreen);
     s_screensaverActive = true;
-    Board::instance().setDisplayBrightness(0);
+    s_screenOff         = false;
+    _applyGovFreq(1);  // screensaver frequency
+    // Dim to ~12% of configured brightness (min 20) — clock stays readable.
+    int cfg_b = ops::config::get().brightness;
+    uint8_t ssDim = (uint8_t)((cfg_b / 5) < 20 ? 20 : cfg_b / 5);
+    Board::instance().setDisplayBrightness(ssDim);
 }
 
 // ---------- Notification popup helpers ----------
@@ -330,6 +361,7 @@ void init() {
     Board::instance().initBacklightPWM();
     Board::instance().setDisplayBrightness(
         (uint8_t)ops::config::get().brightness);
+    _applyGovFreq(0);  // start at active-screen frequency
 
     lv_init();
     ops::emoji::init();
@@ -379,6 +411,9 @@ void init() {
     // Probe GT911 (sets s_gt911 address, s_touchOk flag, logs product ID)
     gt911_probe();
 
+    // Initialise GPS power manager (applies starting mode from config).
+    ops::GpsMgr::instance().init();
+
     // Show boot screen — auto-transitions to launcher after 2.5 s
     ScreenBoot::show();
 
@@ -389,6 +424,9 @@ void init() {
 void tick() {
     auto& board  = Board::instance();
     uint32_t now = millis();
+
+    // GPS power management state machine
+    ops::GpsMgr::instance().tick();
 
     // Touch dismiss flag set by touch_read when screensaver is active
     if (s_touchDismiss) {
@@ -540,6 +578,18 @@ void tick() {
         }
     }
 
+    // Screen off: cut backlight entirely after screenOffMin minutes of screensaver.
+    if (s_screensaverActive && !s_screenOff) {
+        uint8_t offMin = ops::config::get().screenOffMin;
+        if (offMin >= 2) {
+            if (now - s_lastActivityMs >= (uint32_t)offMin * 60000UL) {
+                s_screenOff = true;
+                Board::instance().setDisplayBrightness(0);
+                _applyGovFreq(2);  // screen-off frequency
+            }
+        }
+    }
+
     // Drain incoming mesh messages every tick.
     // appendLine() echoes every line to CDC serial via Serial.println().
     {
@@ -575,6 +625,7 @@ void tick() {
 
     ScreenTrace::tick();
     ScreenFinder::tick();
+    ScreenPower::tick();
 
     // Drain discover results → ScreenFinder
     {
@@ -624,7 +675,7 @@ void tick() {
         ScreenLauncher::refreshBattery(battPct, chg);
         ScreenLauncher::refreshSpeaker(ops::config::get().speakerEnabled);
         ScreenLauncher::refreshStatus(
-            ops::config::get().gpsEnabled,
+            ops::config::get().gpsMode,
             board.hasGPSFix(),
             (int)board.gpsSatellites());
         ScreenLauncher::refreshRadio(
@@ -650,6 +701,13 @@ void tick() {
         }
     }
 
+    // Apply deferred governor change outside LVGL callbacks
+    if (s_govApplyPending) {
+        s_govApplyPending = false;
+        if (s_screensaverActive) _applyGovFreq(1);
+        else                     _applyGovFreq(0);
+    }
+
     // Drive LVGL at ~30 FPS
     static uint32_t lastLvgl = 0;
     if (now - lastLvgl >= 33UL) {
@@ -660,6 +718,10 @@ void tick() {
 
 void showLauncher() {
     ScreenLauncher::show();
+}
+
+void applyGovernorNow() {
+    s_govApplyPending = true;
 }
 
 }}  // namespace ops::ui

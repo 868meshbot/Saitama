@@ -6,6 +6,7 @@
 #include "Theme.h"
 #include "../utils/Log.h"
 #include "../utils/Config.h"
+#include "../utils/GpsMgr.h"
 #include "../hardware/Board.h"
 #include <cstdio>
 #include <cstring>
@@ -34,7 +35,7 @@ static void _buildGPSBody(lv_obj_t* screen) {
     auto& b              = Board::instance();
     const auto& cfg      = ops::config::get();
 
-    bool gpsOff  = !cfg.gpsEnabled;
+    bool gpsOff  = (cfg.gpsMode == GPS_MODE_OFF);
     bool hasFix  = !gpsOff && b.hasGPSFix();
     int  satCnt  = gpsOff ? 0 : (int)b.gpsSatellites();
     float lat    = hasFix ? b.gpsLat()  : 0.0f;

@@ -102,7 +102,7 @@ namespace ops {
 // ── Board shim ─────────────────────────────────────────────────────
 // Extends ESP32Board but skips Wire.begin() (Board.cpp already owns it)
 // and delegates battery millivolts to the Board singleton.
-class OPSBoard : public ESP32Board {
+class OMSBoard : public ESP32Board {
 public:
     uint16_t getBattMilliVolts() override {
         // Board returns 0-100 percent; map to ~3200-4200 mV LiPo range
@@ -143,15 +143,28 @@ static int _b64decode(const char* in, uint8_t* out, int outMax) {
 // Declared in dependency order — C++ initialises statics in declaration
 // order within a translation unit, so each object is ready before
 // anything that references it is constructed.
-static OPSBoard                  ops_board;
+static OMSBoard                  oms_board;
 static SPIClass                  lora_spi(FSPI);
 static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, lora_spi));
-static CustomSX1262Wrapper       radio_driver(sx1262, ops_board);
+static CustomSX1262Wrapper       radio_driver(sx1262, oms_board);
 static ArduinoMillis             ms_clock;
 static StdRNG                    std_rng;
 static ESP32RTCClock             rtc_clock;
 static StaticPoolPacketManager   pkt_mgr(32);
 static SimpleMeshTables          mesh_tables;
+
+// ── LoRa duty cycle state ─────────────────────────────────────────
+// Declared before OMSMesh so getStats() can reference s_dcApplied inline.
+// SX1262 hardware duty cycle: radio sleeps most of the time and wakes on
+// preamble detection via DIO1 interrupt — MeshCore's STATE_RX is never cleared.
+// RX window 50 ms covers the 33 ms 8-symbol preamble at SF8/BW62.5 with margin.
+// Duty cycle ~10 % → ~0.6 mA average idle vs ~6 mA continuous RX.
+static uint32_t s_dcLastPacketMs  = 0;
+static uint32_t s_dcLastRecvCount = 0;
+static uint32_t s_dcLastSentCount = 0;
+static bool     s_dcApplied       = false;
+static constexpr uint32_t DC_RX_US  =  50000;  //  50 ms RX window
+static constexpr uint32_t DC_SLP_US = 450000;  // 450 ms sleep
 
 // ── OMSMesh ────────────────────────────────────────────────────────
 class OMSMesh : public BaseChatMesh {
@@ -1934,8 +1947,9 @@ public:
         s.floodRecv        = getNumRecvFlood();
         s.directSent       = getNumSentDirect();
         s.directRecv       = getNumRecvDirect();
-        s.airtimeTxMs      = (uint32_t)getTotalAirTime();
-        s.airtimeRxMs      = (uint32_t)getReceiveAirTime();
+        s.airtimeTxMs         = (uint32_t)getTotalAirTime();
+        s.airtimeRxMs         = (uint32_t)getReceiveAirTime();
+        s.loraDutyCycleActive = s_dcApplied;
         return s;
     }
 
@@ -2069,6 +2083,44 @@ void MeshService::normalizePsk(const char* in, char* out, int outSize)
     out[outSize - 1] = '\0';
 }
 
+static void _tickDutyCycle() {
+    const auto& cfg = config::get();
+
+    // Detect received packets — MeshCore calls startReceive() after each one,
+    // which exits duty cycle mode on the hardware side.
+    uint32_t recvNow = radio_driver.getPacketsRecv();
+    uint32_t sentNow = radio_driver.getPacketsSent();
+
+    if (recvNow != s_dcLastRecvCount) {
+        s_dcLastRecvCount = recvNow;
+        s_dcLastPacketMs  = millis();
+        s_dcApplied       = false;  // MeshCore called startReceive(); hardware back to continuous RX
+    }
+    if (sentNow != s_dcLastSentCount) {
+        s_dcLastSentCount = sentNow;
+        s_dcApplied       = false;  // TX finished; MeshCore will call startReceive() shortly
+    }
+
+    if (!cfg.loraDutyCycle) {
+        if (s_dcApplied) {
+            // Restore continuous RX without touching MeshCore's state variable.
+            sx1262.startReceive();
+            s_dcApplied = false;
+            OPS_LOG("Mesh", "LoRa duty cycle disarmed");
+        }
+        return;
+    }
+
+    // Arm duty cycle after 3 s of no received packets (3-hop flood repeat window).
+    if (!s_dcApplied && radio_driver.isInRecvMode()) {
+        if (millis() - s_dcLastPacketMs >= 3000UL) {
+            sx1262.startReceiveDutyCycle(DC_RX_US, DC_SLP_US);
+            s_dcApplied = true;
+            OPS_LOG("Mesh", "LoRa duty cycle armed (Rx:50ms Sleep:450ms)");
+        }
+    }
+}
+
 // ── MeshService singleton ──────────────────────────────────────────
 static MeshService s_instance;
 
@@ -2102,6 +2154,7 @@ void MeshService::tick() {
     if (!_initialized) return;
     the_mesh.loop();
     the_mesh.checkSerialInterface();
+    _tickDutyCycle();
 }
 
 bool MeshService::sendChannel(int chIdx, const char* text) {

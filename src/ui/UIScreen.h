@@ -16,4 +16,8 @@ void tick();
 // Navigate to the main launcher from any screen (back / home action).
 void showLauncher();
 
+// Apply the CPU frequency for the current governor and display state.
+// Call after changing cfg.cpuGovernor so the new setting takes effect immediately.
+void applyGovernorNow();
+
 }}  // namespace ops::ui

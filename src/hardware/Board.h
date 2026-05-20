@@ -48,6 +48,29 @@ public:
     bool gpsDateTime(uint16_t& year, uint8_t& month,  uint8_t& day,
                      uint8_t&  hour, uint8_t& minute, uint8_t& sec) const;
 
+    // millis() timestamp of the last successful RTC sync from GPS; 0 if never.
+    uint32_t gpsLastSyncMs() const {
+#ifdef OPS_HAS_BUILTIN_GPS
+        return _gpsLastSync;
+#else
+        return 0;
+#endif
+    }
+
+    // Send GPS chip to PMTK standby (any UART byte wakes it).
+    void gpsStandby() {
+#ifdef OPS_HAS_BUILTIN_GPS
+        _gpsSerial.print("$PMTK161,0*28\r\n");
+#endif
+    }
+
+    // Wake GPS from PMTK standby by sending a dummy byte.
+    void gpsWake() {
+#ifdef OPS_HAS_BUILTIN_GPS
+        _gpsSerial.write((uint8_t)0xFF);
+#endif
+    }
+
     // Screen backlight PWM on GPIO 42 via ledc (channel 0, 5 kHz, 8-bit).
     // Call initBacklightPWM() once after Board::init(); then setDisplayBrightness()
     // anytime. Range: 0 = off/blank, 128 = 50%, 255 = full.
