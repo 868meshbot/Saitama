@@ -175,6 +175,7 @@ public:
     void  setBandwidth(float bw_khz);
     void  setCodingRate(uint8_t cr);
     void  setTxPower(int8_t dbm);
+    void  setRxBoost(bool boost);
     void  applyLoraProfile(uint8_t profile);
     void  applyRadioOverrides();  // apply cfg.radioCustom overrides after profile
 

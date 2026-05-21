@@ -2144,6 +2144,7 @@ void MeshService::init() {
 
     applyLoraProfile(cfg.radioProfile);
     applyRadioOverrides();
+    if (cfg.rxBoost) sx1262.setRxBoostedGainMode(true);
     the_mesh.sendSelfAdvert(random(500, 2500));
 
     _initialized = true;
@@ -2303,6 +2304,10 @@ void MeshService::setCodingRate(uint8_t cr) {
 
 void MeshService::setTxPower(int8_t dbm) {
     if (_initialized) sx1262.setOutputPower(dbm);
+}
+
+void MeshService::setRxBoost(bool boost) {
+    if (_initialized) sx1262.setRxBoostedGainMode(boost);
 }
 
 void MeshService::applyRadioOverrides() {

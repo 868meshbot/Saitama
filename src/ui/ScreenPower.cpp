@@ -260,20 +260,23 @@ void ScreenPower::_sample() {
   float rxF = (dRx < sampleWindow) ? (float)dRx / (float)sampleWindow : 1.0f;
   if (txF + rxF > 1.0f) rxF = 1.0f - txF;
 
-  // SX1262: 30 mA @ 10 dBm → 120 mA @ 22 dBm, 6 mA active RX.
-  // Duty cycle: 10% at 6 mA + 90% at 0.002 mA ≈ 0.6 mA average idle.
-  // Continuous RX standby: ~2 mA.
+  // SX1262 current estimates:
+  //   TX: 30 mA @ 10 dBm → ~112 mA @ 22 dBm
+  //   RX power-saving gain: ~4.6 mA  |  RX boosted gain: ~5.3 mA (+0.7 mA)
+  //   Duty cycle idle: ~0.6 mA avg   |  Continuous standby: ~2 mA
   int8_t txdBm  = (cfg.radioTX > 0) ? cfg.radioTX : 17;
   float  txMA   = 30.0f + (float)(txdBm - 10) * 7.5f;
+  float  rxMA   = cfg.rxBoost ? 5.3f : 4.6f;
   float  idleMA = stats.loraDutyCycleActive ? 0.6f : 2.0f;
-  float  loraMA = txF * txMA + rxF * 6.0f + (1.0f - txF - rxF) * idleMA;
+  float  loraMA = txF * txMA + rxF * rxMA + (1.0f - txF - rxF) * idleMA;
 
   if (_loraLbl) {
     int txPct = (int)(txF * 100.0f + 0.5f);
-    if (stats.loraDutyCycleActive)
-      snprintf(buf, sizeof(buf), "LoRa DC: %.1fmA Tx%d%%", loraMA, txPct);
-    else
-      snprintf(buf, sizeof(buf), "LoRa: %.0fmA Tx%d%%", loraMA, txPct);
+    char flags[8] = "";
+    if (stats.loraDutyCycleActive && cfg.rxBoost) snprintf(flags, sizeof(flags), " DC+RXB");
+    else if (stats.loraDutyCycleActive)            snprintf(flags, sizeof(flags), " DC");
+    else if (cfg.rxBoost)                          snprintf(flags, sizeof(flags), " RXB");
+    snprintf(buf, sizeof(buf), "LoRa%s: %.1fmA Tx%d%%", flags, loraMA, txPct);
     lv_label_set_text(_loraLbl, buf);
   }
 

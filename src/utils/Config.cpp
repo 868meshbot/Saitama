@@ -63,6 +63,7 @@ static void setDefaults(Config& c) {
     c.timezoneOffsetHours = 0;
     c.scopeTag[0]      = '\0';
     c.loraDutyCycle    = false;
+    c.rxBoost          = false;
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
 }
 
@@ -108,6 +109,7 @@ static void _saveToSD() {
     doc["tzOff"]        = s_cfg.timezoneOffsetHours;
     doc["scopeTag"]     = s_cfg.scopeTag;
     doc["loraDC"]       = s_cfg.loraDutyCycle;
+    doc["rxBoost"]      = s_cfg.rxBoost;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     JsonArray chArr = doc["channels"].to<JsonArray>();
     for (int i = 0; i < 10; i++) {
@@ -174,7 +176,8 @@ static bool _loadFromSD() {
     s_cfg.timezoneOffsetHours = (int8_t)(doc["tzOff"] | 0);
     strncpy(s_cfg.scopeTag, doc["scopeTag"] | "", sizeof(s_cfg.scopeTag) - 1);
     s_cfg.scopeTag[sizeof(s_cfg.scopeTag) - 1] = '\0';
-    s_cfg.loraDutyCycle = doc["loraDC"] | false;
+    s_cfg.loraDutyCycle = doc["loraDC"]   | false;
+    s_cfg.rxBoost       = doc["rxBoost"]  | false;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     if (doc["channels"].is<JsonArray>()) {
         JsonArray chArr = doc["channels"].as<JsonArray>();

@@ -62,6 +62,7 @@ struct Config {
     char       scopeTag[16];
     // LoRa duty cycle: SX1262 hardware RX duty cycle for power saving
     bool       loraDutyCycle;   // true = hardware duty cycle (46ms RX / 469ms sleep)
+    bool       rxBoost;         // true = SX1262 boosted RX gain (~2-3 dB, +0.7 mA)
     // CPU governor: controls setCpuFrequencyMhz based on display state
     // 0=PowerSave(40/40/40) 1=Medium(80/40/40) 2=Normal(240/80/80) 3=Turbo(240/240/240)
     uint8_t    cpuGovernor;

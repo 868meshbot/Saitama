@@ -1948,7 +1948,8 @@ static void _openKbBrightDialog() {
 
 // ── TX Power picker ──────────────────────────────────────────────────
 
-struct TxPowerCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
+struct TxPowerCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl;
+                    lv_obj_t* boostBtn; lv_obj_t* boostLbl; bool boostOn; };
 static TxPowerCtx s_txCtx;
 
 static void _onTxPowerSlide(lv_event_t* /*e*/) {
@@ -1958,12 +1959,24 @@ static void _onTxPowerSlide(lv_event_t* /*e*/) {
     lv_label_set_text(s_txCtx.valLbl, buf);
 }
 
+static void _onTxBoostToggle(lv_event_t* /*e*/) {
+    s_txCtx.boostOn = !s_txCtx.boostOn;
+    lv_label_set_text(s_txCtx.boostLbl,
+        s_txCtx.boostOn ? "RX Boost: ON" : "RX Boost: OFF");
+    lv_obj_set_style_bg_color(s_txCtx.boostBtn,
+        s_txCtx.boostOn ? theme::PRIMARY : theme::BG, 0);
+    lv_obj_set_style_text_color(s_txCtx.boostLbl,
+        s_txCtx.boostOn ? theme::ACCENT : theme::TEXT_MUTED, 0);
+}
+
 static void _onTxPowerSave(lv_event_t* /*e*/) {
     int8_t v = (int8_t)lv_slider_get_value(s_txCtx.slider);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
-    cfg.radioTX = v;
+    cfg.radioTX   = v;
+    cfg.rxBoost   = s_txCtx.boostOn;
     ops::config::save();
     ops::MeshService::instance().setTxPower(v);
+    ops::MeshService::instance().setRxBoost(s_txCtx.boostOn);
     lv_obj_del(s_txCtx.modal);
     ScreenSettings::show();
 }
@@ -1990,8 +2003,10 @@ static void _openTxPowerDialog() {
     lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(modal, _onTxPowerKey, LV_EVENT_KEY, nullptr);
 
+    s_txCtx.boostOn = ops::config::get().rxBoost;
+
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 165);
+    lv_obj_set_size(panel, 240, 198);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
@@ -2026,6 +2041,27 @@ static void _openTxPowerDialog() {
     lv_obj_set_style_bg_color(s_txCtx.slider, theme::ACCENT, LV_PART_KNOB);
     lv_obj_set_style_bg_color(s_txCtx.slider, theme::BORDER, LV_PART_MAIN);
     lv_obj_add_event_cb(s_txCtx.slider, _onTxPowerSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // ── RX Boost toggle ──────────────────────────────────────────────
+    lv_obj_t* boostBtn = lv_btn_create(panel);
+    s_txCtx.boostBtn = boostBtn;
+    lv_obj_set_size(boostBtn, 220, 26);
+    lv_obj_set_style_bg_color(boostBtn,
+        s_txCtx.boostOn ? theme::PRIMARY : theme::BG, 0);
+    lv_obj_set_style_bg_color(boostBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(boostBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(boostBtn, 1, 0);
+    lv_obj_set_style_radius(boostBtn, 4, 0);
+    lv_obj_set_style_shadow_width(boostBtn, 0, 0);
+    lv_obj_add_event_cb(boostBtn, _onTxBoostToggle, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(boostBtn, _onTxPowerKey,    LV_EVENT_KEY,     nullptr);
+    lv_obj_t* boostLbl = lv_label_create(boostBtn);
+    s_txCtx.boostLbl = boostLbl;
+    lv_label_set_text(boostLbl, s_txCtx.boostOn ? "RX Boost: ON" : "RX Boost: OFF");
+    lv_obj_set_style_text_color(boostLbl,
+        s_txCtx.boostOn ? theme::ACCENT : theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(boostLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(boostLbl);
 
     lv_obj_t* btnRow = lv_obj_create(panel);
     lv_obj_set_size(btnRow, 220, 32);
@@ -2069,6 +2105,7 @@ static void _openTxPowerDialog() {
     lv_group_t* gTx = lv_group_get_default();
     if (gTx) {
         lv_group_add_obj(gTx, s_txCtx.slider);
+        lv_group_add_obj(gTx, boostBtn);
         lv_group_add_obj(gTx, saveBtn);
         lv_group_add_obj(gTx, exitBtn);
         lv_group_focus_obj(s_txCtx.slider);
