@@ -102,7 +102,7 @@ namespace ops {
 // ── Board shim ─────────────────────────────────────────────────────
 // Extends ESP32Board but skips Wire.begin() (Board.cpp already owns it)
 // and delegates battery millivolts to the Board singleton.
-class OMSBoard : public ESP32Board {
+class OPSBoard : public ESP32Board {
 public:
     uint16_t getBattMilliVolts() override {
         // Board returns 0-100 percent; map to ~3200-4200 mV LiPo range
@@ -143,10 +143,10 @@ static int _b64decode(const char* in, uint8_t* out, int outMax) {
 // Declared in dependency order — C++ initialises statics in declaration
 // order within a translation unit, so each object is ready before
 // anything that references it is constructed.
-static OMSBoard                  oms_board;
+static OPSBoard                  ops_board;
 static SPIClass                  lora_spi(FSPI);
 static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, lora_spi));
-static CustomSX1262Wrapper       radio_driver(sx1262, oms_board);
+static CustomSX1262Wrapper       radio_driver(sx1262, ops_board);
 static ArduinoMillis             ms_clock;
 static StdRNG                    std_rng;
 static ESP32RTCClock             rtc_clock;
@@ -154,7 +154,7 @@ static StaticPoolPacketManager   pkt_mgr(32);
 static SimpleMeshTables          mesh_tables;
 
 // ── LoRa duty cycle state ─────────────────────────────────────────
-// Declared before OMSMesh so getStats() can reference s_dcApplied inline.
+// Declared before OPSMesh so getStats() can reference s_dcApplied inline.
 // SX1262 hardware duty cycle: radio sleeps most of the time and wakes on
 // preamble detection via DIO1 interrupt — MeshCore's STATE_RX is never cleared.
 // RX window 50 ms covers the 33 ms 8-symbol preamble at SF8/BW62.5 with margin.
@@ -166,8 +166,8 @@ static bool     s_dcApplied       = false;
 static constexpr uint32_t DC_RX_US  =  50000;  //  50 ms RX window
 static constexpr uint32_t DC_SLP_US = 450000;  // 450 ms sleep
 
-// ── OMSMesh ────────────────────────────────────────────────────────
-class OMSMesh : public BaseChatMesh {
+// ── OPSMesh ────────────────────────────────────────────────────────
+class OPSMesh : public BaseChatMesh {
     static constexpr int RX_QUEUE_SIZE = 24;
     static constexpr int MAX_PEERS     = 60;
 
@@ -590,7 +590,7 @@ class OMSMesh : public BaseChatMesh {
             memcpy(&_outFrame[i], &bw, 4); i += 4;
             _outFrame[i++] = 8; // sf
             _outFrame[i++] = 8; // cr
-            const char* name = _callsign[0] ? _callsign : "OMS-NODE";
+            const char* name = _callsign[0] ? _callsign : "OPS-NODE";
             int nlen = (int)strlen(name);
             if (i + nlen > MAX_FRAME_SIZE) nlen = MAX_FRAME_SIZE - i;
             memcpy(&_outFrame[i], name, nlen); i += nlen;
@@ -1486,7 +1486,7 @@ public:
 
     bool hasPathToContact(const uint8_t* prefix4) const {
         // const_cast: lookupContactByPubKey is non-const in BaseChatMesh
-        OMSMesh* self = const_cast<OMSMesh*>(this);
+        OPSMesh* self = const_cast<OPSMesh*>(this);
         ContactInfo* ci = self->lookupContactByPubKey(prefix4, 4);
         return ci && ci->out_path_len != OUT_PATH_UNKNOWN;
     }
@@ -1598,7 +1598,7 @@ public:
         }
     }
 
-    OMSMesh()
+    OPSMesh()
         : BaseChatMesh(radio_driver, ms_clock, std_rng, rtc_clock, pkt_mgr, mesh_tables)
     {}
 
@@ -1963,7 +1963,7 @@ public:
     void getSelfPubKey(uint8_t out[32])       const { memcpy(out, self_id.pub_key, 32); }
 
     bool getContactPathInfo(const uint8_t* prefix4, PathInfo& out) const {
-        OMSMesh* self = const_cast<OMSMesh*>(this);
+        OPSMesh* self = const_cast<OPSMesh*>(this);
         ContactInfo* ci = self->lookupContactByPubKey(prefix4, 4);
         if (!ci) { out = {}; return false; }
         out.found  = true;
@@ -2009,7 +2009,7 @@ public:
     }
 };
 
-static OMSMesh the_mesh;
+static OPSMesh the_mesh;
 
 // ── MeshService utilities ─────────────────────────────────────────
 void MeshService::deriveChannelPsk(const char* name, char* psk_out, int psk_size)
@@ -2140,7 +2140,7 @@ void MeshService::init() {
     OPS_LOG("Mesh", "SX1262 OK %.1f MHz SF%d BW%d", (double)LORA_FREQ, LORA_SF, LORA_BW);
 
     const auto& cfg = ops::config::get();
-    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OMS-NODE");
+    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OPS-NODE");
 
     applyLoraProfile(cfg.radioProfile);
     applyRadioOverrides();
@@ -2365,7 +2365,7 @@ void MeshService::startCompanionBLE()
 {
     const auto& cfg = ops::config::get();
     ops::BTCompanionService::instance().init(
-        cfg.callsign[0] ? cfg.callsign : "OMS-NODE", 123456);
+        cfg.callsign[0] ? cfg.callsign : "OPS-NODE", 123456);
     if (_initialized)
         the_mesh.startCompanionInterface(
             ops::BTCompanionService::instance().getInterface());

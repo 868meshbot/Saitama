@@ -6,7 +6,7 @@
 //   ┌──────────────────────────────────────┐  y = 0
 //   │ [⌂ Home]    Settings          12:34 │  top bar  28 px
 //   ├──────────────────────────────────────┤  y = 28
-//   │ Device Name          OMS-0001  >    │  \
+//   │ Device Name          OPS-0001  >    │  \
 //   │ Channel 1            Public    >    │   |
 //   │ Channel 2            CH2       >    │   | scrollable
 //   │ Channel 3            Disabled  >    │   |  list

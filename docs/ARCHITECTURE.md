@@ -147,7 +147,7 @@ single background task later. Not needed for v0.1.
 | What | Where | Format | Size |
 |------|-------|--------|------|
 | Config | SPIFFS `/ops.cfg` | JSON | ~1KB |
-| Identity keys | SPIFFS `/oms.id` or `/identity.id` | Binary (MeshCore format) | ~96B |
+| Identity keys | SPIFFS `/ops.id` or `/identity.id` | Binary (MeshCore format) | ~96B |
 | Region map | SPIFFS `/regions.bin` | Binary (MeshCore format) | Varies |
 | Message log | SPIFFS `/msgs/` | JSON lines | ~100KB max |
 | Map tiles | SD card `/map/z/x/y.png` | PNG 256x256 | Varies |

@@ -64,7 +64,7 @@ void setup() {
 
     OPS_LOG("main", "Ready");
     Serial.println("\r\nSaitama serial console ready — type /help and press Enter");
-    Serial.print("OMS> ");
+    Serial.print("OPS> ");
 }
 
 // ── Loop ────────────────────────────────────────────────────────────

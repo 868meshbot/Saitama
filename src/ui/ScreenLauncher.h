@@ -12,7 +12,7 @@
 //  │  Heard    Map    Advertise Settings  │  grid      188 px
 //  │  Trace  Terminal   GPS     Signal    │
 //  ├───────────────────────────────────────┤  y = 216
-//  │ OMS-0001                     🔋 87%  │  bottom bar 24 px
+//  │ OPS-0001                     🔋 87%  │  bottom bar 24 px
 //  └───────────────────────────────────────┘  y = 240
 
 #pragma once

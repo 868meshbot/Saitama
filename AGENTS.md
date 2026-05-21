@@ -60,7 +60,7 @@ g++ -std=c++14 -Wall -Wextra -o test_map_engine test/test_map_engine.cpp -lm
 
 4. **C++14 compatible** — no C++17 features. The ESP32-S3 toolchain has limits.
 
-5. **`ops::` namespace** — all Saitama code goes in the `oms` namespace. Never in the global namespace.
+5. **`ops::` namespace** — all Saitama code goes in the `ops` namespace. Never in the global namespace.
 
 6. **MIT license header** on every source file:
    ```cpp

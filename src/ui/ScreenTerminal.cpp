@@ -1340,7 +1340,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
 
         if (strcmp(sub, "ls") == 0) {
-            const char* path = sub_args[0] ? sub_args : "/oms";
+            const char* path = sub_args[0] ? sub_args : "/ops";
             static char lsbuf[1024];
             size_t n = ops::sdcard::listDir(path, lsbuf, sizeof(lsbuf));
             if (n == 0) { appendLine("(empty or not found)"); return; }
@@ -1747,7 +1747,7 @@ void ScreenTerminal::tickSerial() {
             Serial.println(_serialBuf);        // echo the completed command
             _dispatch(_serialBuf);
             _serialLen = 0;
-            Serial.print("OMS> ");             // re-print prompt
+            Serial.print("OPS> ");             // re-print prompt
         } else if ((c == 8 || c == 127) && _serialLen > 0) {
             // Backspace / DEL — erase last character
             _serialLen--;

@@ -17,11 +17,11 @@ void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
 {
     if (!_bleInited) {
         char name[32];
-        strncpy(name, deviceName ? deviceName : "OMS-NODE", sizeof(name) - 1);
+        strncpy(name, deviceName ? deviceName : "OPS-NODE", sizeof(name) - 1);
         name[sizeof(name) - 1] = '\0';
-        _ble.begin("OMS", name, pinCode);
+        _ble.begin("OPS", name, pinCode);
         _bleInited = true;
-        OPS_LOG("BT", "BLE stack init as 'OMS %s'", name);
+        OPS_LOG("BT", "BLE stack init as 'OPS %s'", name);
         // First call: enable() is invoked by startCompanionInterface() next,
         // which starts the GATT service and advertising for the first time.
     } else {

@@ -17,7 +17,7 @@ static Config      s_cfg;
 static Preferences prefs;
 
 static void setDefaults(Config& c) {
-    strncpy(c.callsign,    "OMS-0001", sizeof(c.callsign));
+    strncpy(c.callsign,    "OPS-0001", sizeof(c.callsign));
     strncpy(c.radioRegion, "EU868",    sizeof(c.radioRegion));
     // All channel slots start empty — user configures name, shortname, PSK explicitly
     strncpy(c.channels[0].name, "Public", sizeof(c.channels[0].name));

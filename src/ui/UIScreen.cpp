@@ -270,7 +270,7 @@ static void _activateScreensaver()
     lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     const char* name = ops::config::get().callsign[0]
-                       ? ops::config::get().callsign : "OMS-NODE";
+                       ? ops::config::get().callsign : "OPS-NODE";
     lv_label_set_text(s_ssNameLbl, name);
 
     lv_scr_load(s_screensaverScreen);
