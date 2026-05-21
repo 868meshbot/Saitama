@@ -16,7 +16,9 @@
 
 #include "ScreenTerminal.h"
 #include "ScreenLauncher.h"
+#include "ScreenMP3Player.h"
 #include "ScreenPower.h"
+#include "UIScreen.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Config.h"
@@ -324,6 +326,20 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /i2c scan");
         appendLine("  /kbbl <0-255>  - probe keyboard backlight protocols");
         appendLine("  /tbdebug on|off  - trackball ISR log to CDC serial");
+        appendLine("  /touch-cali  |  /touch-cali reset  - touchscreen calibration");
+        return;
+    }
+
+    // ── touch-cali ────────────────────────────────────────────────────
+    if (strcmp(cmd, "touch-cali") == 0) {
+        if (strcmp(args, "reset") == 0) {
+            ops::config::setTouchCal(1.0f, 0.0f, 1.0f, 0.0f);
+            appendLine("Touch cal reset to identity (1.0 / 0.0).");
+            return;
+        }
+        appendLine("Starting touch calibration — tap each crosshair in turn.");
+        appendLine("Backspace/ESC cancels.");
+        ops::ui::startTouchCalibration();
         return;
     }
 
@@ -1714,6 +1730,14 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
         if (command[0] == '\0') { appendLine("Usage: /repadmin [<8hex>] <command>"); return; }
         mesh.sendAdminCommand(targetKey, command);
+        return;
+    }
+
+    // ── play [path] ─ hidden easter egg, not in /help ────────────────
+    // /play         → open the MP3 player screen (file browser)
+    // /play <path>  → open the screen and immediately start that file
+    if (strcmp(cmd, "play") == 0) {
+        ops::ui::ScreenMP3Player::show(args[0] ? args : nullptr);
         return;
     }
 

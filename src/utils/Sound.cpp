@@ -51,7 +51,8 @@ static int16_t s_pluckBuf[PLUCK_SAMPLES];
 static int16_t s_clearBuf[CLEAR_SAMPLES];
 static int16_t s_whooshBuf[WHOOSH_SAMPLES];
 static int16_t s_jingleBuf[JINGLE_TOTAL];
-static bool    s_initialized = false;
+static bool     s_initialized = false;
+static uint32_t s_soundEndMs  = 0;  // millis() deadline while DMA is draining
 
 static void _generatePing()
 {
@@ -180,12 +181,23 @@ void sound::init()
     OPS_LOG("Sound", "I2S ready BCLK=%d WS=%d DATA=%d @ %dHz", SPK_BCLK, SPK_WS, SPK_DOUT, SAMPLE_RATE);
 }
 
+bool sound::isPlaying()
+{
+    return (millis() < s_soundEndMs);
+}
+
 void sound::playPing()
 {
     const auto& cfg = ops::config::get();
     // speakerEnabled is the master switch; notifySound gates DM pings
     if (!cfg.speakerEnabled || !cfg.notifySound) return;
     if (!s_initialized) return;
+
+    // I2S APB clock is only stable at ≥80 MHz CPU. Governors 0/1 can drop below
+    // that during screensaver. Boost momentarily; _applyGovFreq() will re-lower
+    // only after isPlaying() clears.
+    if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
+    s_soundEndMs = millis() + 300;
 
     size_t written = 0;
     // 50 ms timeout — DMA ring holds 2048 samples, ping is only 1200, so this
@@ -198,6 +210,9 @@ void sound::playNotification()
     const auto& cfg = ops::config::get();
     if (!cfg.speakerEnabled || !cfg.notifySound) return;
     if (!s_initialized) return;
+
+    if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
+    s_soundEndMs = millis() + 300;
 
     size_t written = 0;
     switch (cfg.notifySoundChoice) {

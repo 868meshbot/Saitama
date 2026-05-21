@@ -20,4 +20,9 @@ void showLauncher();
 // Call after changing cfg.cpuGovernor so the new setting takes effect immediately.
 void applyGovernorNow();
 
+// Launch the 2-point touch calibration routine.
+// Creates an LVGL overlay; tap the crosshair twice; coefficients are saved to Config.
+// Backspace/ESC cancels. Called from the /touch-cali terminal command.
+void startTouchCalibration();
+
 }}  // namespace ops::ui

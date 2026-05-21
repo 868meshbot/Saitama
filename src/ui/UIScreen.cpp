@@ -35,9 +35,11 @@
 
 // ── CPU governor ───────────────────────────────────────────────────
 // Frequency table [governor 0-3][state: 0=active, 1=screensaver, 2=screen-off]
-//   0 Power Save : 40 / 40 / 40 MHz
-//   1 Medium     : 80 / 40 / 40 MHz
-//   2 Normal     : 240 / 80 / 80 MHz   ← default
+// All values are clamped to ≥80 MHz in _applyGovFreq() — OPI PSRAM on the
+// ESP32-S3 crashes below 80 MHz when the clock source switches to XTAL.
+//   0 Power Save : 80 / 80 / 80 MHz  (table says 40 but clamp applies)
+//   1 Medium     : 80 / 80 / 80 MHz  (table says 40 but clamp applies)
+//   2 Normal     : 240 / 80 / 80 MHz  ← default
 //   3 Turbo      : 240 / 240 / 240 MHz
 static constexpr uint32_t kGovFreq[4][3] = {
     {  40,  40,  40 },
@@ -50,7 +52,12 @@ static void _applyGovFreq(uint8_t state)
 {
     uint8_t gov = ops::config::get().cpuGovernor;
     if (gov > 3) gov = 2;
-    setCpuFrequencyMhz(kGovFreq[gov][state < 3 ? state : 0]);
+    uint32_t freq = kGovFreq[gov][state < 3 ? state : 0];
+    // Hard floor at 80 MHz — two reasons:
+    //   1. ESP32-S3 OPI PSRAM is unstable below 80 MHz (XTAL clock source crashes on PSRAM access).
+    //   2. I2S APB clock requires ≥80 MHz while audio DMA is draining.
+    if (freq < 80) freq = 80;
+    setCpuFrequencyMhz(freq);
 }
 
 static TFT_eSPI tft = TFT_eSPI();
@@ -82,6 +89,21 @@ static lv_obj_t* s_notifyPopup       = nullptr;
 static bool      s_touchDismiss      = false;  // set in touch_read, consumed in tick()
 static bool      s_screenOff         = false;  // backlight fully off (beyond screensaver)
 static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(), consumed in tick()
+
+// Touch calibration
+static constexpr lv_coord_t kCalTx1 = 40,  kCalTy1 = 40;
+static constexpr lv_coord_t kCalTx2 = 200, kCalTy2 = 200;
+static uint8_t    s_calState       = 0;   // 0=idle 1=point1 2=point2
+static lv_obj_t*  s_calOverlay     = nullptr;
+static lv_obj_t*  s_calMsgLbl      = nullptr;
+static lv_obj_t*  s_calCross       = nullptr;
+static lv_coord_t s_calPx1         = 0;
+static lv_coord_t s_calPy1         = 0;
+static bool       s_calTapReady    = false;
+static lv_coord_t s_calRawPx       = 0;
+static lv_coord_t s_calRawPy       = 0;
+static bool       s_calPrevPressed = false;
+static uint32_t   s_calDismissAt   = 0;
 
 // LVGL 8 touch indev (GT911 capacitive)
 static lv_indev_drv_t s_touch_drv;
@@ -145,6 +167,7 @@ static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     if (!(status & 0x80) || (status & 0x0F) == 0) {
         data->point.x = last_x; data->point.y = last_y;
         data->state = LV_INDEV_STATE_RELEASED;
+        s_calPrevPressed = false;  // allow next physical touch to be treated as a new tap
         return;
     }
 
@@ -163,16 +186,27 @@ static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
         // TFT setRotation(1) is landscape: portrait-Y → screen-X, portrait-X → screen-Y mirrored.
         lv_coord_t px = (lv_coord_t)(((uint16_t)(xH & 0x0F) << 8) | xL);
         lv_coord_t py = (lv_coord_t)(((uint16_t)(yH & 0x0F) << 8) | yL);
-        lv_coord_t rx = py;                        // portrait Y → screen X
-        lv_coord_t ry = (OPS_SCREEN_H - 1) - px;  // portrait X → screen Y (mirror)
+
+        // Calibration mode: capture raw portrait coords on rising edge, suppress LVGL touch.
+        if (s_calState != 0) {
+            if (!s_calPrevPressed) {
+                s_calRawPx = px;
+                s_calRawPy = py;
+                s_calTapReady = true;
+            }
+            s_calPrevPressed = true;
+            data->point.x = last_x; data->point.y = last_y;
+            data->state   = LV_INDEV_STATE_RELEASED;
+            return;
+        }
+        s_calPrevPressed = false;
+
+        // Apply calibration transform (identity defaults: XScale=1 XOff=0 YScale=1 YOff=0).
+        const auto& tcfg = ops::config::get();
+        lv_coord_t rx = (lv_coord_t)(tcfg.touchCalXOff + (float)py * tcfg.touchCalXScale);
+        lv_coord_t ry = (lv_coord_t)(tcfg.touchCalYOff + (float)((OPS_SCREEN_H - 1) - px) * tcfg.touchCalYScale);
         last_x = (rx < 0) ? 0 : (rx >= OPS_SCREEN_W) ? OPS_SCREEN_W - 1 : rx;
         last_y = (ry < 0) ? 0 : (ry >= OPS_SCREEN_H) ? OPS_SCREEN_H - 1 : ry;
-
-        static uint32_t s_logCount = 0;
-        if (s_logCount < 5) {
-            OPS_LOG("Touch", "portrait(%d,%d) screen(%d,%d)", (int)px, (int)py, (int)last_x, (int)last_y);
-            s_logCount++;
-        }
     }
 
     data->point.x = last_x;
@@ -203,6 +237,72 @@ static void encoder_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     enc_diff = 0;
 }
 
+
+// ---------- Touch calibration helpers ----------
+
+static void _calBuildCross(lv_coord_t tx, lv_coord_t ty)
+{
+    if (s_calCross) { lv_obj_del(s_calCross); s_calCross = nullptr; }
+    const lv_coord_t SZ = 40;
+    s_calCross = lv_obj_create(s_calOverlay);
+    lv_obj_set_size(s_calCross, SZ, SZ);
+    lv_obj_set_pos(s_calCross, tx - SZ / 2, ty - SZ / 2);
+    lv_obj_set_style_bg_opa(s_calCross, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_calCross, lv_color_make(255, 80, 80), LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_calCross, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_calCross, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_calCross, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(s_calCross, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Horizontal arm
+    lv_obj_t* hArm = lv_obj_create(s_calCross);
+    lv_obj_set_size(hArm, SZ - 4, 2);
+    lv_obj_align(hArm, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(hArm, lv_color_make(255, 80, 80), LV_PART_MAIN);
+    lv_obj_set_style_border_width(hArm, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(hArm, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(hArm, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Vertical arm
+    lv_obj_t* vArm = lv_obj_create(s_calCross);
+    lv_obj_set_size(vArm, 2, SZ - 4);
+    lv_obj_align(vArm, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(vArm, lv_color_make(255, 80, 80), LV_PART_MAIN);
+    lv_obj_set_style_border_width(vArm, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(vArm, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(vArm, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void _calBuildOverlay(lv_coord_t tx, lv_coord_t ty, const char* msg)
+{
+    s_calOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_calOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_calOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_calOverlay, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_calOverlay, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_calOverlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_calOverlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(s_calOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_calMsgLbl = lv_label_create(s_calOverlay);
+    lv_obj_set_style_text_font(s_calMsgLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_calMsgLbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_width(s_calMsgLbl, OPS_SCREEN_W - 20);
+    lv_obj_set_style_text_align(s_calMsgLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(s_calMsgLbl, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(s_calMsgLbl, msg);
+    lv_obj_align(s_calMsgLbl, LV_ALIGN_TOP_MID, 0, 8);
+
+    _calBuildCross(tx, ty);
+}
+
+static void _calDismiss()
+{
+    s_calState = 0;
+    if (s_calOverlay) { lv_obj_del(s_calOverlay); s_calOverlay = nullptr; }
+    s_calMsgLbl = nullptr;
+    s_calCross  = nullptr;
+}
 
 namespace ops { namespace ui {
 
@@ -442,6 +542,9 @@ void tick() {
     if (s_screensaverActive) {
         // Any trackball activity wakes the screen; inputs are otherwise discarded.
         if (dx || dy || tbPress) _deactivateScreensaver();
+    } else if (s_calState != 0) {
+        // Calibration active — keep display awake, swallow all trackball input.
+        if (dx || dy || tbPress) s_lastActivityMs = now;
     } else {
         if (dx || dy || tbPress) s_lastActivityMs = now;
 
@@ -498,6 +601,12 @@ void tick() {
             bool kbRepl = xlat.replace;
             if (s_screensaverActive) {
                 _deactivateScreensaver();
+            } else if (s_calState != 0) {
+                // During calibration: backspace/ESC cancels; all other keys swallowed.
+                if (k == 8 || k == 127 || k == 27) {
+                    _calDismiss();
+                    ScreenTerminal::appendLine("Touch calibration cancelled.");
+                }
             } else {
                 s_lastActivityMs = now;
                 if (k == '\r' || k == '\n') {
@@ -701,6 +810,57 @@ void tick() {
         }
     }
 
+    // Touch calibration state machine
+    if (s_calState != 0 && s_calTapReady) {
+        s_calTapReady = false;
+        if (s_calState == 1) {
+            // Point 1 captured — advance to point 2.
+            s_calPx1 = s_calRawPx;
+            s_calPy1 = s_calRawPy;
+            s_calState = 2;
+            if (s_calMsgLbl)
+                lv_label_set_text(s_calMsgLbl, "Tap the crosshair (2/2)");
+            _calBuildCross(kCalTx2, kCalTy2);
+        } else if (s_calState == 2) {
+            lv_coord_t px2 = s_calRawPx, py2 = s_calRawPy;
+            // Guard: both points must be distinct on both axes.
+            lv_coord_t dpx = s_calPx1 - px2;  // should be non-zero (Y axis denominator)
+            lv_coord_t dpy = py2 - s_calPy1;  // should be non-zero (X axis denominator)
+            if (dpx == 0 || dpy == 0) {
+                if (s_calMsgLbl)
+                    lv_label_set_text(s_calMsgLbl, "Bad tap (same point?)\nTap crosshair (2/2)");
+            } else {
+                float xScale = (float)(kCalTx2 - kCalTx1) / (float)dpy;
+                float xOff   = (float)kCalTx1 - xScale * (float)s_calPy1;
+                float yScale = (float)(kCalTy2 - kCalTy1) / (float)((OPS_SCREEN_H - 1 - px2) - (OPS_SCREEN_H - 1 - s_calPx1));
+                float yOff   = (float)kCalTy1 - yScale * (float)(OPS_SCREEN_H - 1 - s_calPx1);
+                if (xScale < 0.5f || xScale > 2.0f || yScale < 0.5f || yScale > 2.0f) {
+                    // Wildly off — restart from point 1.
+                    s_calState = 1;
+                    if (s_calMsgLbl)
+                        lv_label_set_text(s_calMsgLbl, "Out of range — retry\nTap crosshair (1/2)");
+                    _calBuildCross(kCalTx1, kCalTy1);
+                } else {
+                    ops::config::setTouchCal(xScale, xOff, yScale, yOff);
+                    s_calState = 0;
+                    if (s_calCross) { lv_obj_del(s_calCross); s_calCross = nullptr; }
+                    char buf[80];
+                    snprintf(buf, sizeof(buf),
+                             "Calibration saved!\nXS=%.3f XO=%.1f\nYS=%.3f YO=%.1f",
+                             (double)xScale, (double)xOff,
+                             (double)yScale, (double)yOff);
+                    if (s_calMsgLbl) lv_label_set_text(s_calMsgLbl, buf);
+                    s_calDismissAt = millis() + 3000;
+                }
+            }
+        }
+    }
+    if (s_calDismissAt && millis() >= s_calDismissAt) {
+        s_calDismissAt = 0;
+        _calDismiss();
+        ScreenTerminal::appendLine("Touch calibration complete.");
+    }
+
     // Apply deferred governor change outside LVGL callbacks
     if (s_govApplyPending) {
         s_govApplyPending = false;
@@ -722,6 +882,17 @@ void showLauncher() {
 
 void applyGovernorNow() {
     s_govApplyPending = true;
+}
+
+void startTouchCalibration()
+{
+    if (s_screensaverActive) _deactivateScreensaver();
+    _calDismiss();  // clean up any previous session
+    s_calState       = 1;
+    s_calTapReady    = false;
+    s_calPrevPressed = false;
+    s_calDismissAt   = 0;
+    _calBuildOverlay(kCalTx1, kCalTy1, "Touch calibration\nTap the crosshair (1/2)");
 }
 
 }}  // namespace ops::ui

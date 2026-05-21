@@ -696,7 +696,8 @@ void ScreenHome::_showList()
     int rowIdx = 0;
 
     // Row width breakdown (OPS_SCREEN_W=320, pad_hor=4 each side):
-    //   content = 312 px; dot-cont=14, gap=4, name=260, gap=4, action-btn=30 → 312
+    //   content = 312 px; dot-cont=14, gap=4, name=224, gap=4, action-btn=30 → 276
+    //   action-btn right edge = pad_left(4)+14+4+224+4+30 = 280 px
     //   DM row (no action btn): dot-cont=14, gap=4, name=294 → 312
 
     auto addRow = [&](int chIdx, const char* name, bool hasDot, bool hasAction) {
@@ -747,7 +748,7 @@ void ScreenHome::_showList()
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_text(nameLbl, name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, hasAction ? 260 : 294);
+        lv_obj_set_width(nameLbl, hasAction ? 224 : 294);
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
 

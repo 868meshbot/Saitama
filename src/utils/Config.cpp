@@ -65,6 +65,10 @@ static void setDefaults(Config& c) {
     c.loraDutyCycle    = false;
     c.rxBoost          = false;
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
+    c.touchCalXScale   = 1.0f;
+    c.touchCalXOff     = 0.0f;
+    c.touchCalYScale   = 1.0f;
+    c.touchCalYOff     = 0.0f;
 }
 
 // ── SD JSON helpers ────────────────────────────────────────────────
@@ -111,6 +115,10 @@ static void _saveToSD() {
     doc["loraDC"]       = s_cfg.loraDutyCycle;
     doc["rxBoost"]      = s_cfg.rxBoost;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
+    doc["tcXScale"]     = s_cfg.touchCalXScale;
+    doc["tcXOff"]       = s_cfg.touchCalXOff;
+    doc["tcYScale"]     = s_cfg.touchCalYScale;
+    doc["tcYOff"]       = s_cfg.touchCalYOff;
     JsonArray chArr = doc["channels"].to<JsonArray>();
     for (int i = 0; i < 10; i++) {
         JsonObject ch = chArr.add<JsonObject>();
@@ -179,6 +187,10 @@ static bool _loadFromSD() {
     s_cfg.loraDutyCycle = doc["loraDC"]   | false;
     s_cfg.rxBoost       = doc["rxBoost"]  | false;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
+    s_cfg.touchCalXScale = doc["tcXScale"] | 1.0f;
+    s_cfg.touchCalXOff   = doc["tcXOff"]   | 0.0f;
+    s_cfg.touchCalYScale = doc["tcYScale"] | 1.0f;
+    s_cfg.touchCalYOff   = doc["tcYOff"]   | 0.0f;
     if (doc["channels"].is<JsonArray>()) {
         JsonArray chArr = doc["channels"].as<JsonArray>();
         int i = 0;
@@ -218,8 +230,11 @@ void config::init() {
     if (prefs.begin("ops", /*readOnly=*/true)) {
         size_t loaded = prefs.getBytes("cfg", &s_cfg, sizeof(s_cfg));
         prefs.end();
-        if (loaded == sizeof(s_cfg)) {
-            // Clean up any legacy CH<n> shortnames from very old firmware.
+        // Accept partial blobs from older firmware (struct grew after a firmware update).
+        // getBytes() copies only min(stored, requested) bytes; fields beyond the stored
+        // size are untouched and keep their setDefaults() values, so new fields default
+        // gracefully. 64-byte floor rejects clearly corrupt / empty entries.
+        if (loaded >= 64) {
             bool migrated = false;
             for (int i = 1; i < 10; i++) {
                 char* n  = s_cfg.channels[i].name;
@@ -228,15 +243,22 @@ void config::init() {
                     n[0] = '\0'; sn[0] = '\0'; migrated = true;
                 }
             }
-            if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
-            OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
-                    s_cfg.callsign, s_cfg.radioRegion);
+            if (loaded < sizeof(s_cfg)) {
+                // Partial blob — firmware struct grew since this blob was written.
+                // Resave immediately so next boot loads a full-size blob.
+                OPS_LOG("Config", "NVS partial blob (%u/%u bytes) — new fields defaulted; upgrading",
+                        (unsigned)loaded, (unsigned)sizeof(s_cfg));
+                config::save();
+            } else {
+                if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
+                OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
+                        s_cfg.callsign, s_cfg.radioRegion);
+            }
             return;
         }
-        // Blob absent or wrong size (first boot after firmware update that
-        // changed Config layout).  Fall through to SD / legacy-key migration.
-        OPS_LOG("Config", "NVS blob mismatch (got %u, want %u) — migrating",
-                (unsigned)loaded, (unsigned)sizeof(s_cfg));
+        // Blob absent or too small to be a valid Config — fall through to SD / legacy keys.
+        OPS_LOG("Config", "NVS blob absent or invalid (%u bytes) — migrating",
+                (unsigned)loaded);
     } else {
         prefs.end();
     }
@@ -357,6 +379,14 @@ void config::setRegion(const char* reg) {
 
 time_t config::localEpoch() {
     return time(nullptr) + (time_t)s_cfg.timezoneOffsetHours * 3600;
+}
+
+void config::setTouchCal(float xScale, float xOff, float yScale, float yOff) {
+    s_cfg.touchCalXScale = xScale;
+    s_cfg.touchCalXOff   = xOff;
+    s_cfg.touchCalYScale = yScale;
+    s_cfg.touchCalYOff   = yOff;
+    save();
 }
 
 void config::setChannelNotify(int idx, bool notify) {

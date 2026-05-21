@@ -66,6 +66,13 @@ struct Config {
     // CPU governor: controls setCpuFrequencyMhz based on display state
     // 0=PowerSave(40/40/40) 1=Medium(80/40/40) 2=Normal(240/80/80) 3=Turbo(240/240/240)
     uint8_t    cpuGovernor;
+    // Touch calibration: linear correction applied to raw GT911 portrait coords.
+    // screen_x = touchCalXOff + py * touchCalXScale        (identity: XScale=1, XOff=0)
+    // screen_y = touchCalYOff + (239-px) * touchCalYScale  (identity: YScale=1, YOff=0)
+    float      touchCalXScale;
+    float      touchCalXOff;
+    float      touchCalYScale;
+    float      touchCalYOff;
 };
 
 namespace config {
@@ -81,6 +88,9 @@ namespace config {
     // Returns time(nullptr) adjusted by timezoneOffsetHours.
     // Use with gmtime_r() wherever local time needs to be displayed.
     time_t localEpoch();
+
+    // Write calibration coefficients and persist (NVS + SD).
+    void setTouchCal(float xScale, float xOff, float yScale, float yOff);
 }
 
 }  // namespace ops

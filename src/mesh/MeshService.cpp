@@ -163,7 +163,7 @@ static uint32_t s_dcLastPacketMs  = 0;
 static uint32_t s_dcLastRecvCount = 0;
 static uint32_t s_dcLastSentCount = 0;
 static bool     s_dcApplied       = false;
-static constexpr uint32_t DC_RX_US  =  50000;  //  50 ms RX window
+static constexpr uint32_t DC_RX_US  = 100000;  // 100 ms RX window
 static constexpr uint32_t DC_SLP_US = 450000;  // 450 ms sleep
 
 // ── OPSMesh ────────────────────────────────────────────────────────
@@ -2116,7 +2116,7 @@ static void _tickDutyCycle() {
         if (millis() - s_dcLastPacketMs >= 3000UL) {
             sx1262.startReceiveDutyCycle(DC_RX_US, DC_SLP_US);
             s_dcApplied = true;
-            OPS_LOG("Mesh", "LoRa duty cycle armed (Rx:50ms Sleep:450ms)");
+            OPS_LOG("Mesh", "LoRa duty cycle armed (Rx:100ms Sleep:450ms)");
         }
     }
 }

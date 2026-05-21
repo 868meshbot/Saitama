@@ -22,8 +22,8 @@ namespace ops { namespace ui {
 
 // ── Layout constants ────────────────────────────────────────────────
 static constexpr int TOP_H   = 28;
-static constexpr int ZOOM_W  = 32;
-static constexpr int MAP_W   = OPS_SCREEN_W - ZOOM_W;  // 288
+static constexpr int ZOOM_W  = 0;    // no strip — zoom buttons float over canvas
+static constexpr int MAP_W   = OPS_SCREEN_W - ZOOM_W;  // 320
 static constexpr int MAP_H   = OPS_SCREEN_H - TOP_H;   // 212
 static constexpr int TILE_SZ = 256;
 static constexpr int ZOOM_MIN = 1;
@@ -239,27 +239,20 @@ void ScreenMap::_build()
     lv_group_focus_obj(_canvas);
 
 
-    // ── Zoom strip (right side) ───────────────────────────────────────
-    lv_obj_t* strip = lv_obj_create(_screen);
-    lv_obj_set_size(strip, ZOOM_W, MAP_H);
-    lv_obj_set_pos(strip, MAP_W, TOP_H);
-    lv_obj_set_style_bg_color(strip, theme::BG_CARD, 0);
-    lv_obj_set_style_border_width(strip, 0, 0);
-    lv_obj_set_style_radius(strip, 0, 0);
-    lv_obj_set_style_pad_all(strip, 2, 0);
-    lv_obj_set_style_pad_row(strip, 4, 0);
-    lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(strip,
-        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // ── Floating zoom buttons ────────────────────────────────────────────
+    // Sit over the map canvas bottom-right; right edge x=226 clears the GT911
+    // hardware deadzone (py_max≈231 → screen x>231 unreachable).
+    _zoomLbl = nullptr;  // no zoom label; _updateZoomLabel() guards on null
 
-    auto mkZoomBtn = [&](const char* label, lv_event_cb_t cb) -> lv_obj_t*
+    auto mkZoomBtn = [&](const char* label, lv_coord_t bx, lv_coord_t by, lv_event_cb_t cb)
     {
-        lv_obj_t* btn = lv_btn_create(strip);
+        lv_obj_t* btn = lv_btn_create(_screen);
         lv_group_remove_obj(btn);
-        lv_obj_set_size(btn, ZOOM_W - 4, 28);
+        lv_obj_set_size(btn, 44, 28);
+        lv_obj_set_pos(btn, bx, by);
         lv_obj_set_style_bg_color(btn, theme::PRIMARY, 0);
         lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_80, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
@@ -270,33 +263,11 @@ void ScreenMap::_build()
         lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_center(lbl);
-        return btn;
     };
 
-    mkZoomBtn("+", _onZoomIn);
-
-    // Spacer to push zoom label to centre
-    lv_obj_t* sp1 = lv_obj_create(strip);
-    lv_obj_set_size(sp1, 1, 1);
-    lv_obj_set_style_bg_opa(sp1, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(sp1, 0, 0);
-    lv_obj_set_style_pad_all(sp1, 0, 0);
-    lv_obj_set_flex_grow(sp1, 1);
-
-    _zoomLbl = lv_label_create(strip);
-    lv_label_set_text(_zoomLbl, "10");
-    lv_obj_set_style_text_color(_zoomLbl, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(_zoomLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_align(_zoomLbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t* sp2 = lv_obj_create(strip);
-    lv_obj_set_size(sp2, 1, 1);
-    lv_obj_set_style_bg_opa(sp2, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(sp2, 0, 0);
-    lv_obj_set_style_pad_all(sp2, 0, 0);
-    lv_obj_set_flex_grow(sp2, 1);
-
-    mkZoomBtn("-", _onZoomOut);
+    // x=242 → right edge=286; y positions at bottom of map area
+    mkZoomBtn("+", 242, OPS_SCREEN_H - 4 - 28 - 4 - 28, _onZoomIn);
+    mkZoomBtn("-", 242, OPS_SCREEN_H - 4 - 28,           _onZoomOut);
 }
 
 // ── _redrawMap() ──────────────────────────────────────────────────────

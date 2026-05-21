@@ -18,6 +18,10 @@ namespace sound {
     // Play the raw default ping (A5, 150 ms). Use playNotification() at call sites.
     void playPing();
 
+    // Returns true while DMA is still draining audio (approximately).
+    // Used by the CPU governor to avoid lowering APB below 80 MHz mid-playback.
+    bool isPlaying();
+
     // Play the boot startup jingle (DMG-style rising G-major arpeggio).
     // Gated by cfg.speakerEnabled only — not notifySound.
     // Blocks ~200 ms while queuing samples, then returns; audio finishes in DMA.
