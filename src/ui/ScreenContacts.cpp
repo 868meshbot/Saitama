@@ -60,6 +60,7 @@ void ScreenContacts::show()
 // ── _build() ─────────────────────────────────────────────────────────
 void ScreenContacts::_build()
 {
+    contacts::reloadFromSD();
     int cnt = contacts::count();
 
     _screen = lv_obj_create(nullptr);

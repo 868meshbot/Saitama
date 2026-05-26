@@ -133,6 +133,24 @@ static int _jsonGetStr(const char* json, const char* key, char* out, int outSize
     return n;
 }
 
+// Replace 3-byte UTF-8 smart quotes/dashes with ASCII equivalents in-place.
+// Needed because the Montserrat font only covers U+0020-007F and U+00A0-00FF.
+static void _sanitizeSmartPunct(char* s)
+{
+    unsigned char* p = (unsigned char*)s;
+    unsigned char* w = p;
+    while (*p) {
+        if (p[0] == 0xE2 && p[1] == 0x80) {
+            unsigned char sub = p[2];
+            if (sub == 0x98 || sub == 0x99) { *w++ = '\''; p += 3; continue; }
+            if (sub == 0x9C || sub == 0x9D) { *w++ = '"';  p += 3; continue; }
+            if (sub == 0x93 || sub == 0x94) { *w++ = '-';  p += 3; continue; }
+        }
+        *w++ = *p++;
+    }
+    *w = '\0';
+}
+
 // ── History ring buffer ───────────────────────────────────────────────
 
 void ScreenHome::_historyAdd(bool           sent,
@@ -157,6 +175,7 @@ void ScreenHome::_historyAdd(bool           sent,
     e.senderName[sizeof(e.senderName) - 1] = '\0';
     strncpy(e.text, text ? text : "", sizeof(e.text) - 1);
     e.text[sizeof(e.text) - 1] = '\0';
+    _sanitizeSmartPunct(e.text);
     strncpy(e.channelTag, channelTag ? channelTag : "Public", sizeof(e.channelTag) - 1);
     e.channelTag[sizeof(e.channelTag) - 1] = '\0';
     strncpy(e.pathStr, pathStr ? pathStr : "", sizeof(e.pathStr) - 1);

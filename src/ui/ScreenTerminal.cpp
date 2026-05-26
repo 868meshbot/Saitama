@@ -406,7 +406,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         } else {
             char buf[64];
             snprintf(buf, sizeof(buf), "Trackball ISR debug: %s  (usage: /tbdebug on|off)",
-                     Board::trackballDebug ? "ON" : "OFF");
+                     Board::trackballDebug ? "On" : "Off");
             appendLine(buf);
         }
         return;

@@ -74,6 +74,7 @@ void ScreenRepeaters::show()
 // ── _build() ─────────────────────────────────────────────────────────
 void ScreenRepeaters::_build()
 {
+    repeaters::reloadFromSD();
     int cnt = repeaters::count();
 
     _screen = lv_obj_create(nullptr);

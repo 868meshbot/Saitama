@@ -393,7 +393,7 @@ void ScreenLauncher::refreshStatus(uint8_t gpsMode, bool hasFix, int satellites)
     lv_color_t col;
     if (gpsMode == 0) {
         // Off — show red GPS icon
-        snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "OFF");
+        snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "Off");
         col = theme::RED;
     } else if (gpsMode == 1) {
         // Intermittent — orange; show sat count when available
@@ -427,7 +427,7 @@ void ScreenLauncher::refreshRadio(bool initialized, bool active)
         lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " RX");
         lv_obj_set_style_text_color(_radioLbl, theme::GREEN, 0);
     } else {
-        lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " OFF");
+        lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " Off");
         lv_obj_set_style_text_color(_radioLbl, theme::TEXT_MUTED, 0);
     }
 }

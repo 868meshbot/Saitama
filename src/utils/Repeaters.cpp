@@ -141,12 +141,34 @@ bool repeaters::findByKey(const uint8_t prefix[4], int* outIdx)
     return false;
 }
 
+static void _clearLegacyNvs()
+{
+    Preferences prefs;
+    if (!prefs.begin("opsrep", true)) { prefs.end(); return; }
+    bool hasData = prefs.getInt("n", 0) > 0;
+    prefs.end();
+    if (hasData) {
+        if (prefs.begin("opsrep", false)) { prefs.clear(); prefs.end(); }
+        OPS_LOG("Repeaters", "Legacy NVS namespace cleared");
+    }
+}
+
 void repeaters::init()
 {
-    // NVS is primary — try it first so a crash between NVS write and SD write
-    // never causes the stale SD backup to overwrite more recent NVS data.
+    // ── SD is always authoritative ────────────────────────────────────────
+    // SD JSON is named-key and more reliable than NVS: previous firmware's
+    // save() wrote to SD even when NVS putBytes was failing, so SD is always
+    // at least as fresh as NVS.
+    if (_loadFromSD()) {
+        OPS_LOG("Repeaters", "Loaded %d from SD", s_count);
+        _clearLegacyNvs();
+        return;
+    }
+
+    // ── NVS fallback (SD absent or no file yet) ───────────────────────────
+    // One-time migration: read legacy per-blob NVS data, write to SD, clear namespace.
     Preferences prefs;
-    if (prefs.begin("opsrep", /*readOnly=*/true)) {
+    if (prefs.begin("opsrep", true)) {
         int n = prefs.getInt("n", 0);
         if (n > 0) {
             s_count = (n > CAPACITY) ? CAPACITY : n;
@@ -160,8 +182,9 @@ void repeaters::init()
                 }
             }
             prefs.end();
-            _saveToSD();  // keep SD backup in sync
-            OPS_LOG("Repeaters", "Loaded %d from NVS", s_count);
+            if (prefs.begin("opsrep", false)) { prefs.clear(); prefs.end(); }
+            _saveToSD();
+            OPS_LOG("Repeaters", "Migrated %d from NVS to SD; NVS cleared", s_count);
             return;
         }
         prefs.end();
@@ -169,15 +192,7 @@ void repeaters::init()
         prefs.end();
     }
 
-    // NVS empty or unreadable — SD is the recovery path (post-reflash restore).
-    if (sdcard::hasCompleteBackup() && _loadFromSD()) {
-        save();
-        OPS_LOG("Repeaters", "Restored %d from SD", s_count);
-        return;
-    }
-
-    if (!_loadFromSD())
-        OPS_LOG("Repeaters", "No saved repeaters");
+    OPS_LOG("Repeaters", "No saved repeaters");
 }
 
 int repeaters::reloadFromSD()
@@ -208,18 +223,6 @@ void repeaters::clearPath(int idx)
 
 void repeaters::save()
 {
-    Preferences prefs;
-    if (!prefs.begin("opsrep", false)) {
-        OPS_LOG("Repeaters", "NVS write failed");
-        return;
-    }
-    prefs.putInt("n", s_count);
-    for (int i = 0; i < s_count; i++) {
-        char key[8];
-        snprintf(key, sizeof(key), "r%d", i);
-        prefs.putBytes(key, &s_reps[i], sizeof(Repeater));
-    }
-    prefs.end();
     _saveToSD();
 }
 

@@ -195,14 +195,24 @@ void contacts::remove(int idx)
     save();
 }
 
+static void _clearLegacyNvs();
+
 void contacts::init()
 {
-    // SD complete backup set is authoritative — overwrite NVS on restore
-    if (sdcard::hasCompleteBackup() && _loadFromSD()) {
-        save();
-        OPS_LOG("Contacts", "Restored %d from SD", s_count);
+    // ── SD is always authoritative ────────────────────────────────────────
+    // SD JSON is named-key and survives firmware updates. It is also more
+    // reliable than NVS here: previous firmware's save() wrote to SD even
+    // when the NVS putBytes was failing with NOT_ENOUGH_SPACE, so SD is
+    // always at least as fresh as NVS and usually fresher.
+    if (_loadFromSD()) {
+        OPS_LOG("Contacts", "Loaded %d from SD", s_count);
+        _clearLegacyNvs();
         return;
     }
+
+    // ── NVS fallback (SD absent or no file yet) ───────────────────────────
+    // Read legacy per-blob NVS data with full version migration, write to SD,
+    // then clear the namespace so it is never written again.
 
     // v0: name[32]+prefix[4]+lastSeen[4]+rssi[4]+unread[1]+pad[3] = 48
     struct LegacyContact {
@@ -242,80 +252,74 @@ void contacts::init()
     static_assert(sizeof(Contact) == 156, "Contact size changed — add a new migration case");
 
     Preferences prefs;
-    if (!prefs.begin("opsct", true)) {
-        prefs.end();
-        // NVS empty — try SD archive (covers reflash scenario)
-        if (!_loadFromSD())
-            OPS_LOG("Contacts", "No saved contacts");
-        return;
-    }
-    s_count = prefs.getInt("n", 0);
-    if (s_count > contacts::CAPACITY) s_count = contacts::CAPACITY;
-    bool needResave = false;
-    for (int i = 0; i < s_count; i++) {
-        char key[8];
-        snprintf(key, sizeof(key), "c%d", i);
-        size_t blobSz = prefs.getBytesLength(key);
-        if (blobSz == sizeof(Contact)) {
-            prefs.getBytes(key, &s_contacts[i], sizeof(Contact));
-        } else if (blobSz == sizeof(PrePathContact)) {
-            // v2 → v3: added outPathValid/outPathLen/outPath
-            PrePathContact old{};
-            prefs.getBytes(key, &old, sizeof(PrePathContact));
-            memset(&s_contacts[i], 0, sizeof(Contact));
-            memcpy(s_contacts[i].name,         old.name,         32);
-            memcpy(s_contacts[i].pubKeyPrefix,  old.pubKeyPrefix, 4);
-            memcpy(s_contacts[i].pubKey,        old.pubKey,       32);
-            s_contacts[i].lastSeen  = old.lastSeen;
-            s_contacts[i].lastRssi  = old.lastRssi;
-            s_contacts[i].hasUnread = old.hasUnread;
-            s_contacts[i].lat       = old.lat;
-            s_contacts[i].lon       = old.lon;
-            s_contacts[i].outPathLen = 0xFF;  // path unknown
-            needResave = true;
-        } else if (blobSz == sizeof(PreLatLonContact)) {
-            // v1 → v2: copy all fields, lat/lon default to 0
-            PreLatLonContact old{};
-            prefs.getBytes(key, &old, sizeof(PreLatLonContact));
-            memset(&s_contacts[i], 0, sizeof(Contact));
-            memcpy(s_contacts[i].name,        old.name,        32);
-            memcpy(s_contacts[i].pubKeyPrefix, old.pubKeyPrefix, 4);
-            memcpy(s_contacts[i].pubKey,       old.pubKey,      32);
-            s_contacts[i].lastSeen  = old.lastSeen;
-            s_contacts[i].lastRssi  = old.lastRssi;
-            s_contacts[i].hasUnread = old.hasUnread;
-            needResave = true;
-        } else if (blobSz == sizeof(LegacyContact)) {
-            // v0 → v2: no pubKey, no lat/lon
-            LegacyContact old{};
-            prefs.getBytes(key, &old, sizeof(LegacyContact));
-            memset(&s_contacts[i], 0, sizeof(Contact));
-            memcpy(s_contacts[i].name,         old.name,         32);
-            memcpy(s_contacts[i].pubKeyPrefix,  old.pubKeyPrefix, 4);
-            s_contacts[i].lastSeen  = old.lastSeen;
-            s_contacts[i].lastRssi  = old.lastRssi;
-            s_contacts[i].hasUnread = old.hasUnread;
-            needResave = true;
-        }
-    }
-    prefs.end();
-    // NVS opened but had 0 contacts — prefer SD if available
-    // (covers: reflash preserved NVS namespace but cleared its data)
-    if (s_count == 0 && sdcard::isMounted()) {
-        _loadFromSD();
-        if (s_count > 0) {
-            save();
-            OPS_LOG("Contacts", "Restored %d from SD (NVS was empty)", s_count);
+    if (prefs.begin("opsct", true)) {
+        int n = prefs.getInt("n", 0);
+        if (n > 0) {
+            s_count = (n > CAPACITY) ? CAPACITY : n;
+            for (int i = 0; i < s_count; i++) {
+                char key[8];
+                snprintf(key, sizeof(key), "c%d", i);
+                size_t blobSz = prefs.getBytesLength(key);
+                if (blobSz == sizeof(Contact)) {
+                    prefs.getBytes(key, &s_contacts[i], sizeof(Contact));
+                } else if (blobSz == sizeof(PrePathContact)) {
+                    PrePathContact old{};
+                    prefs.getBytes(key, &old, sizeof(PrePathContact));
+                    memset(&s_contacts[i], 0, sizeof(Contact));
+                    memcpy(s_contacts[i].name,         old.name,         32);
+                    memcpy(s_contacts[i].pubKeyPrefix,  old.pubKeyPrefix, 4);
+                    memcpy(s_contacts[i].pubKey,        old.pubKey,       32);
+                    s_contacts[i].lastSeen  = old.lastSeen;
+                    s_contacts[i].lastRssi  = old.lastRssi;
+                    s_contacts[i].hasUnread = old.hasUnread;
+                    s_contacts[i].lat       = old.lat;
+                    s_contacts[i].lon       = old.lon;
+                    s_contacts[i].outPathLen = 0xFF;
+                } else if (blobSz == sizeof(PreLatLonContact)) {
+                    PreLatLonContact old{};
+                    prefs.getBytes(key, &old, sizeof(PreLatLonContact));
+                    memset(&s_contacts[i], 0, sizeof(Contact));
+                    memcpy(s_contacts[i].name,        old.name,        32);
+                    memcpy(s_contacts[i].pubKeyPrefix, old.pubKeyPrefix, 4);
+                    memcpy(s_contacts[i].pubKey,       old.pubKey,      32);
+                    s_contacts[i].lastSeen  = old.lastSeen;
+                    s_contacts[i].lastRssi  = old.lastRssi;
+                    s_contacts[i].hasUnread = old.hasUnread;
+                } else if (blobSz == sizeof(LegacyContact)) {
+                    LegacyContact old{};
+                    prefs.getBytes(key, &old, sizeof(LegacyContact));
+                    memset(&s_contacts[i], 0, sizeof(Contact));
+                    memcpy(s_contacts[i].name,        old.name,        32);
+                    memcpy(s_contacts[i].pubKeyPrefix, old.pubKeyPrefix, 4);
+                    s_contacts[i].lastSeen  = old.lastSeen;
+                    s_contacts[i].lastRssi  = old.lastRssi;
+                    s_contacts[i].hasUnread = old.hasUnread;
+                }
+            }
+            prefs.end();
+            if (prefs.begin("opsct", false)) { prefs.clear(); prefs.end(); }
+            _saveToSD();
+            OPS_LOG("Contacts", "Migrated %d from NVS to SD; NVS cleared", s_count);
             return;
         }
-    }
-    if (needResave) {
-        OPS_LOG("Contacts", "Migrating %d contacts to new format", s_count);
-        save();  // writes NVS + SD
+        prefs.end();
     } else {
-        _saveToSD();  // ensure SD backup exists even when NVS was the source
+        prefs.end();
     }
-    OPS_LOG("Contacts", "Loaded %d from NVS", s_count);
+
+    OPS_LOG("Contacts", "No saved contacts");
+}
+
+static void _clearLegacyNvs()
+{
+    Preferences prefs;
+    if (!prefs.begin("opsct", true)) { prefs.end(); return; }
+    bool hasData = prefs.getInt("n", 0) > 0;
+    prefs.end();
+    if (hasData) {
+        if (prefs.begin("opsct", false)) { prefs.clear(); prefs.end(); }
+        OPS_LOG("Contacts", "Legacy NVS namespace cleared");
+    }
 }
 
 int contacts::reloadFromSD()
@@ -370,18 +374,6 @@ void contacts::clearPath(int idx)
 
 void contacts::save()
 {
-    Preferences prefs;
-    if (!prefs.begin("opsct", false)) {
-        OPS_LOG("Contacts", "NVS write failed");
-        return;
-    }
-    prefs.putInt("n", s_count);
-    for (int i = 0; i < s_count; i++) {
-        char key[8];
-        snprintf(key, sizeof(key), "c%d", i);
-        prefs.putBytes(key, &s_contacts[i], sizeof(Contact));
-    }
-    prefs.end();
     _saveToSD();
 }
 

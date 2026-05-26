@@ -230,11 +230,11 @@ void config::init() {
     if (prefs.begin("ops", /*readOnly=*/true)) {
         size_t loaded = prefs.getBytes("cfg", &s_cfg, sizeof(s_cfg));
         prefs.end();
-        // Accept partial blobs from older firmware (struct grew after a firmware update).
-        // getBytes() copies only min(stored, requested) bytes; fields beyond the stored
-        // size are untouched and keep their setDefaults() values, so new fields default
-        // gracefully. 64-byte floor rejects clearly corrupt / empty entries.
-        if (loaded >= 64) {
+        // Require an exact size match: sizeof(Config) is the implicit version.
+        // Any struct layout change (field added, removed, or reordered) changes
+        // the size, causing a mismatch → fall through to SD JSON (named-key,
+        // layout-safe).  This prevents silently loading mis-aligned field data.
+        if (loaded == sizeof(s_cfg)) {
             bool migrated = false;
             for (int i = 1; i < 10; i++) {
                 char* n  = s_cfg.channels[i].name;
@@ -243,22 +243,13 @@ void config::init() {
                     n[0] = '\0'; sn[0] = '\0'; migrated = true;
                 }
             }
-            if (loaded < sizeof(s_cfg)) {
-                // Partial blob — firmware struct grew since this blob was written.
-                // Resave immediately so next boot loads a full-size blob.
-                OPS_LOG("Config", "NVS partial blob (%u/%u bytes) — new fields defaulted; upgrading",
-                        (unsigned)loaded, (unsigned)sizeof(s_cfg));
-                config::save();
-            } else {
-                if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
-                OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
-                        s_cfg.callsign, s_cfg.radioRegion);
-            }
+            if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
+            OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
+                    s_cfg.callsign, s_cfg.radioRegion);
             return;
         }
-        // Blob absent or too small to be a valid Config — fall through to SD / legacy keys.
-        OPS_LOG("Config", "NVS blob absent or invalid (%u bytes) — migrating",
-                (unsigned)loaded);
+        OPS_LOG("Config", "NVS blob size mismatch (got %u, want %u) — migrating from SD",
+                (unsigned)loaded, (unsigned)sizeof(s_cfg));
     } else {
         prefs.end();
     }

@@ -206,15 +206,15 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     else
         snprintf(pwrBuf, sizeof(pwrBuf), "Default");
     _addRow(_list, "Power", pwrBuf, 25);
-    _addRow(_list, "LoRa Duty Cycle", cfg.loraDutyCycle ? "ON" : "OFF", 28);
+    _addRow(_list, "LoRa Duty Cycle", cfg.loraDutyCycle ? "On" : "Off", 28);
     static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
     _addRow(_list, "CPU Governor",
             kGovNames[cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2], 29);
     char brightBuf[8];
     snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
     _addRow(_list, "Brightness", brightBuf, 26);
-    _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "ON" : "OFF", 7);
-    _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "ON" : "OFF", 8);
+    _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "On" : "Off", 7);
+    _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "On" : "Off", 8);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
     _addRow(_list, "GPS",
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9);
@@ -259,10 +259,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
     _addRow(_list, "Notification Sound",
             kSndNames[cfg.notifySoundChoice < 4 ? cfg.notifySoundChoice : 0], 22);
-    _addRow(_list, "Save Messages",      cfg.saveMsgs        ? "ON" : "OFF", 14);
-    _addRow(_list, "Show Hops",          cfg.showHops        ? "ON" : "OFF", 15);
-    _addRow(_list, "Show RSSI",          cfg.showRssi        ? "ON" : "OFF", 19);
-    _addRow(_list, "Location Sharing",   cfg.locationSharing ? "ON" : "OFF", 17);
+    _addRow(_list, "Save Messages",      cfg.saveMsgs        ? "On" : "Off", 14);
+    _addRow(_list, "Show Hops",          cfg.showHops        ? "On" : "Off", 15);
+    _addRow(_list, "Show RSSI",          cfg.showRssi        ? "On" : "Off", 19);
+    _addRow(_list, "Location Sharing",   cfg.locationSharing ? "On" : "Off", 17);
 
     s_listPtr = _list;
 }
@@ -929,14 +929,14 @@ static AutoAddCtx s_aaCtx;
 
 static void _onAAClientToggle(lv_event_t* /*e*/) {
     s_aaCtx.clientOn = !s_aaCtx.clientOn;
-    lv_label_set_text(s_aaCtx.clientValLbl, s_aaCtx.clientOn ? "ON" : "OFF");
+    lv_label_set_text(s_aaCtx.clientValLbl, s_aaCtx.clientOn ? "On" : "Off");
     lv_obj_set_style_text_color(s_aaCtx.clientValLbl,
         s_aaCtx.clientOn ? theme::GREEN : theme::TEXT_MUTED, 0);
 }
 
 static void _onAARepToggle(lv_event_t* /*e*/) {
     s_aaCtx.repOn = !s_aaCtx.repOn;
-    lv_label_set_text(s_aaCtx.repValLbl, s_aaCtx.repOn ? "ON" : "OFF");
+    lv_label_set_text(s_aaCtx.repValLbl, s_aaCtx.repOn ? "On" : "Off");
     lv_obj_set_style_text_color(s_aaCtx.repValLbl,
         s_aaCtx.repOn ? theme::GREEN : theme::TEXT_MUTED, 0);
 }
@@ -991,7 +991,7 @@ static lv_obj_t* _makeToggleRow(lv_obj_t* parent, const char* label,
     if (modal) lv_obj_add_event_cb(btn, _onModalKey, LV_EVENT_KEY, modal);
 
     lv_obj_t* valLbl = lv_label_create(btn);
-    lv_label_set_text(valLbl, on ? "ON" : "OFF");
+    lv_label_set_text(valLbl, on ? "On" : "Off");
     lv_obj_set_style_text_color(valLbl, on ? theme::GREEN : theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(valLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(valLbl);
@@ -1298,13 +1298,13 @@ static NotifCtx s_nCtx;
 
 static void _onNSoundToggle(lv_event_t* /*e*/) {
     s_nCtx.soundOn = !s_nCtx.soundOn;
-    lv_label_set_text(s_nCtx.soundLbl, s_nCtx.soundOn ? "ON" : "OFF");
+    lv_label_set_text(s_nCtx.soundLbl, s_nCtx.soundOn ? "On" : "Off");
     lv_obj_set_style_text_color(s_nCtx.soundLbl,
         s_nCtx.soundOn ? theme::GREEN : theme::TEXT_MUTED, 0);
 }
 static void _onNPopupToggle(lv_event_t* /*e*/) {
     s_nCtx.popupOn = !s_nCtx.popupOn;
-    lv_label_set_text(s_nCtx.popupLbl, s_nCtx.popupOn ? "ON" : "OFF");
+    lv_label_set_text(s_nCtx.popupLbl, s_nCtx.popupOn ? "On" : "Off");
     lv_obj_set_style_text_color(s_nCtx.popupLbl,
         s_nCtx.popupOn ? theme::GREEN : theme::TEXT_MUTED, 0);
 }
