@@ -23,7 +23,7 @@ struct Repeater {
 };
 
 namespace repeaters {
-    static constexpr int CAPACITY = 50;
+    static constexpr int CAPACITY = 250;
 
     void init();   // loads from SD; no-op if SD not mounted
     void save();   // writes /ops/repeaters.json
@@ -43,6 +43,9 @@ namespace repeaters {
     // Update lat/lon in the in-memory array without triggering a full NVS save.
     // Position is persisted on the next natural save() call.
     void setPosition(int idx, int32_t lat, int32_t lon);
+    // Populate pubKey[32] from a live advert if it is not yet set (all zeros).
+    // No-op and no save if the key is already known; saves immediately on first fill.
+    void setFullKey(int idx, const uint8_t* pubKey32);
 }
 
 }  // namespace ops

@@ -61,7 +61,7 @@ ScreenHome::MsgEntry ScreenHome::s_history[ScreenHome::HISTORY_MAX];
 int                  ScreenHome::s_histCount = 0;
 lv_obj_t*            ScreenHome::s_metaLabels[ScreenHome::HISTORY_MAX] = {};
 
-char ScreenHome::s_loadedTags[10][16] = {};
+char ScreenHome::s_loadedTags[10][32] = {};
 int  ScreenHome::s_loadedTagCnt = 0;
 bool ScreenHome::s_loadingFromSD = false;
 
@@ -192,11 +192,18 @@ void ScreenHome::_historyAdd(bool           sent,
     s_metaLabels[s_histCount] = nullptr;
     s_histCount++;
 
-    if (!s_loadingFromSD && ops::config::get().saveMsgs && ops::sdcard::isMounted()) {
+    if (s_loadingFromSD) {
+        // replaying from SD — skip write
+    } else if (!ops::config::get().saveMsgs) {
+        OPS_LOG("Chat", "saveMsgs off — not saving '%s'", e.channelTag);
+    } else if (!ops::sdcard::isMounted()) {
+        OPS_LOG("Chat", "SD not mounted — dropping msg for '%s'", e.channelTag);
+    } else {
         char line[480];
         _serializeMsgLine(line, sizeof(line), sent, sender, text,
                           hops, ts, (int)rssi, expectedAck);
-        ops::sdcard::appendMsgLine(e.channelTag, line);
+        if (!ops::sdcard::appendMsgLine(e.channelTag, line))
+            OPS_LOG("Chat", "appendMsgLine failed for '%s'", e.channelTag);
     }
 }
 
@@ -304,27 +311,45 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_obj_set_style_bg_color(bubble,
         sent ? theme::PRIMARY : theme::BG_CARD, 0);
 
-    // Tap a received bubble to add the sender as a contact.
-    // Only wire up when we have a non-zero pubKeyPrefix (not available for SD-loaded msgs).
-    if (!sent && histIdx >= 0 && histIdx < HISTORY_MAX)
-    {
-        const uint8_t* kp = s_history[histIdx].pubKeyPrefix;
-        bool hasKey = kp[0] || kp[1] || kp[2] || kp[3];
-        if (hasKey)
-        {
-            lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(bubble, _onBubbleClick,
-                                LV_EVENT_CLICKED, (void*)(intptr_t)histIdx);
-        }
-    }
+    if (!sent) {
+        // Header row: sender name (if known) + action button (▾) pinned to top-right.
+        lv_obj_t* hdr = lv_obj_create(bubble);
+        lv_obj_set_width(hdr, LV_PCT(100));
+        lv_obj_set_height(hdr, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_set_style_pad_column(hdr, 3, 0);
+        lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    if (!sent && senderName && senderName[0] != '\0') {
-        lv_obj_t* nameLbl = lv_label_create(bubble);
-        lv_label_set_text(nameLbl, senderName);
-        lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, LV_PCT(100));
-        lv_obj_set_style_text_color(nameLbl, theme::GREEN, 0);
+        lv_obj_t* nameLbl = lv_label_create(hdr);
+        lv_label_set_text(nameLbl, (senderName && senderName[0]) ? senderName : "");
+        lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_flex_grow(nameLbl, 1);
+        lv_obj_set_style_min_width(nameLbl, 0, 0);
+        lv_obj_set_style_text_color(nameLbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* btn = lv_btn_create(hdr);
+        lv_group_remove_obj(btn);
+        lv_obj_set_size(btn, 18, 18);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 3, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_add_event_cb(btn, _onBubbleClick, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)histIdx);
+        lv_obj_t* ico = lv_label_create(btn);
+        lv_label_set_text(ico, LV_SYMBOL_DOWN);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(ico, theme::ACCENT, 0);
+        lv_obj_center(ico);
     }
 
     lv_obj_t* msgLbl = lv_label_create(bubble);
@@ -390,6 +415,8 @@ void ScreenHome::_addBubble(int         histIdx,
 
         lv_obj_t* hopLbl = lv_label_create(hopRow);
         lv_label_set_text(hopLbl, hopBuf);
+        lv_obj_set_width(hopLbl, LV_PCT(100));
+        lv_label_set_long_mode(hopLbl, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_font(hopLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(hopLbl, theme::TEXT_MUTED, 0);
     }
@@ -403,11 +430,11 @@ void ScreenHome::_loadChannelHistory(const char* tag)
 {
     if (!ops::sdcard::isMounted()) return;
     for (int i = 0; i < s_loadedTagCnt; i++)
-        if (strncmp(s_loadedTags[i], tag, 15) == 0) return;
+        if (strncmp(s_loadedTags[i], tag, 31) == 0) return;
 
     if (s_loadedTagCnt < 10) {
-        strncpy(s_loadedTags[s_loadedTagCnt], tag, 15);
-        s_loadedTags[s_loadedTagCnt][15] = '\0';
+        strncpy(s_loadedTags[s_loadedTagCnt], tag, 31);
+        s_loadedTags[s_loadedTagCnt][31] = '\0';
         s_loadedTagCnt++;
     }
 
@@ -469,9 +496,9 @@ void ScreenHome::_clearChannelMessages(int chIdx)
 
     // Remove from loadedTags so history can be reloaded if needed
     for (int i = 0; i < s_loadedTagCnt; i++) {
-        if (strncmp(s_loadedTags[i], tag, 15) == 0) {
+        if (strncmp(s_loadedTags[i], tag, 31) == 0) {
             for (int j = i; j < s_loadedTagCnt - 1; j++)
-                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 16);
+                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 32);
             s_loadedTagCnt--;
             break;
         }
@@ -581,7 +608,9 @@ void ScreenHome::appendMessage(const RxMessage& msg)
             ops::sound::playNotification();
     }
 
-    if (s_mode == MODE_CHAT && strcmp(tag, _getViewTag()) == 0) {
+    const char* viewTag = _getViewTag();
+    OPS_LOG("Chat", "appendMessage: tag='%s' viewTag='%s' mode=%d", tag, viewTag, (int)s_mode);
+    if (s_mode == MODE_CHAT && strcmp(tag, viewTag) == 0) {
         _addBubble(s_histCount - 1, false,
                    msg.senderName, msg.text, msg.hops, msg.timestamp, msg.rssi, false,
                    msg.pathStr);
@@ -1597,7 +1626,7 @@ void ScreenHome::_onDMPickerClose(lv_event_t* e)
     s_dmPickerOverlay = nullptr;
 }
 
-// ── Add-contact from bubble ───────────────────────────────────────────
+// ── Bubble action menu (Reply / Add Contact) ─────────────────────────
 
 void ScreenHome::_onBubbleClick(lv_event_t* e)
 {
@@ -1606,10 +1635,99 @@ void ScreenHome::_onBubbleClick(lv_event_t* e)
     const MsgEntry& entry = s_history[histIdx];
     if (entry.sent) return;
 
-    // Capture sender identity into file-scope statics for the dialog callbacks.
     strncpy(s_pendingContactName, entry.senderName, sizeof(s_pendingContactName) - 1);
     s_pendingContactName[sizeof(s_pendingContactName) - 1] = '\0';
     memcpy(s_pendingContactKey, entry.pubKeyPrefix, 4);
+    _openBubbleActionMenu();
+}
+
+void ScreenHome::_openBubbleActionMenu()
+{
+    if (s_addContactOverlay) { lv_obj_del(s_addContactOverlay); s_addContactOverlay = nullptr; }
+
+    bool hasKey = s_pendingContactKey[0] || s_pendingContactKey[1] ||
+                  s_pendingContactKey[2] || s_pendingContactKey[3];
+    bool alreadySaved = hasKey && ops::contacts::findByKey(s_pendingContactKey, nullptr);
+
+    s_addContactOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_addContactOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_addContactOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_addContactOverlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_addContactOverlay, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_addContactOverlay, 0, 0);
+    lv_obj_clear_flag(s_addContactOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* box = lv_obj_create(s_addContactOverlay);
+    lv_obj_set_size(box, 220, LV_SIZE_CONTENT);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(box, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 6, 0);
+    lv_obj_set_style_pad_all(box, 10, 0);
+    lv_obj_set_style_pad_row(box, 6, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* nameLbl = lv_label_create(box);
+    lv_label_set_text(nameLbl, s_pendingContactName);
+    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(nameLbl, 200);
+
+    char keyHint[12];
+    snprintf(keyHint, sizeof(keyHint), "%02X%02X%02X%02X",
+             s_pendingContactKey[0], s_pendingContactKey[1],
+             s_pendingContactKey[2], s_pendingContactKey[3]);
+    lv_obj_t* keyLbl = lv_label_create(box);
+    lv_label_set_text(keyLbl, keyHint);
+    lv_obj_set_style_text_color(keyLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(keyLbl, &lv_font_montserrat_10, 0);
+
+    auto mkBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb, bool disabled) {
+        lv_obj_t* btn = lv_btn_create(box);
+        lv_group_remove_obj(btn);
+        lv_obj_set_size(btn, 200, 30);
+        lv_obj_set_style_bg_color(btn, disabled ? theme::BG : bg, 0);
+        lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        if (!disabled)
+            lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        else
+            lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl, disabled ? theme::TEXT_MUTED : theme::TEXT, 0);
+        lv_obj_center(lbl);
+    };
+
+    mkBtn(LV_SYMBOL_LEFT " Reply", theme::PRIMARY, _onBubbleReply, false);
+    if (hasKey)
+        mkBtn(alreadySaved ? LV_SYMBOL_OK " Already in Contacts" : LV_SYMBOL_PLUS " Add Contact",
+              alreadySaved ? theme::BG : theme::PRIMARY,
+              _onBubbleAddContact,
+              alreadySaved);
+    mkBtn("Close", theme::BG, _onAddContactCancel, false);
+}
+
+void ScreenHome::_onBubbleReply(lv_event_t* /*e*/)
+{
+    if (s_addContactOverlay) { lv_obj_del(s_addContactOverlay); s_addContactOverlay = nullptr; }
+    if (!_textarea) return;
+    char prefix[36];
+    snprintf(prefix, sizeof(prefix), "@%s ", s_pendingContactName);
+    lv_textarea_set_text(_textarea, prefix);
+    lv_textarea_set_cursor_pos(_textarea, LV_TEXTAREA_CURSOR_LAST);
+}
+
+void ScreenHome::_onBubbleAddContact(lv_event_t* /*e*/)
+{
     _openAddContactPopup();
 }
 

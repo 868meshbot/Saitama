@@ -312,6 +312,7 @@ void ScreenFinder::_onScan(lv_event_t* /*e*/)
     s_resultCount    = 0;
     s_scanDeadlineMs = millis() + 10000;
 
+    ops::MeshService::instance().suspendDutyCycle(true);
     ops::MeshService::instance().sendDiscoverReq(0x06);  // Chat + Repeater
 
     if (_statusLbl) {
@@ -321,13 +322,18 @@ void ScreenFinder::_onScan(lv_event_t* /*e*/)
     if (_scanBtnLbl) lv_label_set_text(_scanBtnLbl, LV_SYMBOL_REFRESH " Scanning...");
 
     _rebuildList();
-    OPS_LOG("Finder", "Scan started");
+    OPS_LOG("Finder", "Scan started — duty cycle suspended");
 }
 
 // ── _onBack() ────────────────────────────────────────────────────────
 void ScreenFinder::_onBack(lv_event_t* /*e*/)
 {
     if (s_popup) { lv_obj_del(s_popup); s_popup = nullptr; s_popupIdx = -1; }
+    if (s_scanDeadlineMs > 0) {
+        s_scanDeadlineMs = 0;
+        ops::MeshService::instance().suspendDutyCycle(false);
+        OPS_LOG("Finder", "Scan cancelled — duty cycle restored");
+    }
     ScreenLauncher::show();
 }
 
@@ -465,6 +471,8 @@ void ScreenFinder::tick()
     if (s_scanDeadlineMs == 0) return;
     if (millis() > s_scanDeadlineMs) {
         s_scanDeadlineMs = 0;
+        ops::MeshService::instance().suspendDutyCycle(false);
+        OPS_LOG("Finder", "Scan complete — duty cycle restored");
         if (_scanBtnLbl)
             lv_label_set_text(_scanBtnLbl, LV_SYMBOL_REFRESH " Scan Nearby Nodes");
         if (_statusLbl) {

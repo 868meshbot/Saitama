@@ -298,7 +298,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /get radio");
         appendLine("  /card");
         appendLine("  /import {biz card}");
-        appendLine("  /clock");
+        appendLine("  /clock [analog]");
         appendLine("  /time <epoch-seconds>");
         appendLine("  /memory");
         appendLine("  /battery");
@@ -352,6 +352,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
                  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                  t->tm_hour, t->tm_min, t->tm_sec);
         appendLine(buf);
+        bool analog = (strcmp(args, "analog") == 0);
+        ops::ui::activateScreensaver(analog);
         return;
     }
 

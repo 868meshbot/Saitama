@@ -263,11 +263,11 @@ void ScreenPower::_sample() {
   // SX1262 current estimates:
   //   TX: 30 mA @ 10 dBm → ~112 mA @ 22 dBm
   //   RX power-saving gain: ~4.6 mA  |  RX boosted gain: ~5.3 mA (+0.7 mA)
-  //   Duty cycle idle: ~0.6 mA avg   |  Continuous standby: ~2 mA
+  //   Duty cycle idle: ~2.3 mA avg (50% duty)  |  Continuous standby: ~4.6 mA
   int8_t txdBm  = (cfg.radioTX > 0) ? cfg.radioTX : 17;
   float  txMA   = 30.0f + (float)(txdBm - 10) * 7.5f;
   float  rxMA   = cfg.rxBoost ? 5.3f : 4.6f;
-  float  idleMA = stats.loraDutyCycleActive ? 0.6f : 2.0f;
+  float  idleMA = stats.loraDutyCycleActive ? 2.3f : rxMA;
   float  loraMA = txF * txMA + rxF * rxMA + (1.0f - txF - rxF) * idleMA;
 
   if (_loraLbl) {

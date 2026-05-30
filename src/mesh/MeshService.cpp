@@ -154,17 +154,14 @@ static StaticPoolPacketManager   pkt_mgr(32);
 static SimpleMeshTables          mesh_tables;
 
 // ── LoRa duty cycle state ─────────────────────────────────────────
-// Declared before OPSMesh so getStats() can reference s_dcApplied inline.
-// SX1262 hardware duty cycle: radio sleeps most of the time and wakes on
-// preamble detection via DIO1 interrupt — MeshCore's STATE_RX is never cleared.
-// RX window 50 ms covers the 33 ms 8-symbol preamble at SF8/BW62.5 with margin.
-// Duty cycle ~10 % → ~0.6 mA average idle vs ~6 mA continuous RX.
 static uint32_t s_dcLastPacketMs  = 0;
 static uint32_t s_dcLastRecvCount = 0;
 static uint32_t s_dcLastSentCount = 0;
 static bool     s_dcApplied       = false;
-static constexpr uint32_t DC_RX_US  = 100000;  // 100 ms RX window
-static constexpr uint32_t DC_SLP_US = 450000;  // 450 ms sleep
+static bool     s_dcSuspended     = false;
+static constexpr uint32_t DC_RX_US  = 250000;  // 250 ms RX — 50 % duty cycle
+static constexpr uint32_t DC_SLP_US = 250000;  // 250 ms sleep
+static constexpr uint32_t DC_ARM_MS = 10000;   // arm after 10 s idle (less aggressive)
 
 // ── OPSMesh ────────────────────────────────────────────────────────
 class OPSMesh : public BaseChatMesh {
@@ -322,11 +319,15 @@ class OPSMesh : public BaseChatMesh {
                 // a full NVS save — position persists on the next natural save().
                 int idx = -1;
                 if (contact.type == 2) {
-                    if (ops::repeaters::findByKey(contact.id.pub_key, &idx))
+                    if (ops::repeaters::findByKey(contact.id.pub_key, &idx)) {
                         ops::repeaters::setPosition(idx, contact.gps_lat, contact.gps_lon);
+                        ops::repeaters::setFullKey(idx, contact.id.pub_key);
+                    }
                 } else {
-                    if (ops::contacts::findByKey(contact.id.pub_key, &idx))
+                    if (ops::contacts::findByKey(contact.id.pub_key, &idx)) {
                         ops::contacts::setPosition(idx, contact.gps_lat, contact.gps_lon);
+                        ops::contacts::setFullKey(idx, contact.id.pub_key);
+                    }
                 }
                 return;
             }
@@ -954,6 +955,7 @@ class OPSMesh : public BaseChatMesh {
             if (ci) {
                 if (pkt->path_len == 0) ci->out_path_len = 0;
                 else _applyReverseOutPath(*ci, pkt->path, pkt->path_len);
+                _persistContactPath(*ci);
             }
         }
         RxMessage msg{};
@@ -1784,7 +1786,9 @@ public:
             MeshService::deriveChannelPsk(chName, psk64, sizeof(psk64));
         }
         if (_channels[cfgSlot]) {
-            // Already registered — update secret and recompute hash in place
+            // Already registered — update name, secret and recompute hash in place
+            strncpy(_channels[cfgSlot]->name, chName, 31);
+            _channels[cfgSlot]->name[31] = '\0';
             memset(_channels[cfgSlot]->channel.secret, 0, sizeof(_channels[cfgSlot]->channel.secret));
             int len = _b64decode(psk64, _channels[cfgSlot]->channel.secret,
                                  (int)sizeof(_channels[cfgSlot]->channel.secret));
@@ -1792,7 +1796,7 @@ public:
                 mesh::Utils::sha256(_channels[cfgSlot]->channel.hash,
                                     sizeof(_channels[cfgSlot]->channel.hash),
                                     _channels[cfgSlot]->channel.secret, len);
-                OPS_LOG("Mesh", "Channel %d synced in place (len=%d)", cfgSlot, len);
+                OPS_LOG("Mesh", "Channel %d synced in place: '%s' (len=%d)", cfgSlot, chName, len);
             } else {
                 OPS_LOG("Mesh", "Channel %d sync: decode failed (len=%d psk=%s)", cfgSlot, len, psk64);
             }
@@ -2098,12 +2102,12 @@ static void _tickDutyCycle() {
     }
     if (sentNow != s_dcLastSentCount) {
         s_dcLastSentCount = sentNow;
-        s_dcApplied       = false;  // TX finished; MeshCore will call startReceive() shortly
+        s_dcLastPacketMs  = millis();  // reset idle timer so we don't re-arm immediately after TX
+        s_dcApplied       = false;     // TX finished; MeshCore will call startReceive() shortly
     }
 
-    if (!cfg.loraDutyCycle) {
+    if (!cfg.loraDutyCycle || s_dcSuspended) {
         if (s_dcApplied) {
-            // Restore continuous RX without touching MeshCore's state variable.
             sx1262.startReceive();
             s_dcApplied = false;
             OPS_LOG("Mesh", "LoRa duty cycle disarmed");
@@ -2111,12 +2115,12 @@ static void _tickDutyCycle() {
         return;
     }
 
-    // Arm duty cycle after 3 s of no received packets (3-hop flood repeat window).
+    // Arm after DC_ARM_MS of no TX/RX activity.
     if (!s_dcApplied && radio_driver.isInRecvMode()) {
-        if (millis() - s_dcLastPacketMs >= 3000UL) {
+        if (millis() - s_dcLastPacketMs >= DC_ARM_MS) {
             sx1262.startReceiveDutyCycle(DC_RX_US, DC_SLP_US);
             s_dcApplied = true;
-            OPS_LOG("Mesh", "LoRa duty cycle armed (Rx:100ms Sleep:450ms)");
+            OPS_LOG("Mesh", "LoRa duty cycle armed (250ms/250ms)");
         }
     }
 }
@@ -2156,6 +2160,11 @@ void MeshService::tick() {
     the_mesh.loop();
     the_mesh.checkSerialInterface();
     _tickDutyCycle();
+}
+
+void MeshService::suspendDutyCycle(bool suspend)
+{
+    s_dcSuspended = suspend;
 }
 
 bool MeshService::sendChannel(int chIdx, const char* text) {

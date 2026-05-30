@@ -32,6 +32,7 @@
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <time.h>
+#include <cmath>
 
 // ── CPU governor ───────────────────────────────────────────────────
 // Frequency table [governor 0-3][state: 0=active, 1=screensaver, 2=screen-off]
@@ -89,6 +90,9 @@ static lv_obj_t* s_notifyPopup       = nullptr;
 static bool      s_touchDismiss      = false;  // set in touch_read, consumed in tick()
 static bool      s_screenOff         = false;  // backlight fully off (beyond screensaver)
 static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(), consumed in tick()
+static bool      s_ssAnalog          = false;  // true = analog clock screensaver
+static lv_obj_t* s_ssCanvas          = nullptr;
+static void*     s_ssCanvasBuf       = nullptr;
 
 // Touch calibration
 static constexpr lv_coord_t kCalTx1 = 40,  kCalTy1 = 40;
@@ -308,8 +312,74 @@ namespace ops { namespace ui {
 
 // ---------- Screensaver helpers ----------
 
+static constexpr lv_coord_t SS_CANVAS_W = 180;
+static constexpr lv_coord_t SS_CANVAS_H = 180;
+static constexpr lv_coord_t SS_CLOCK_CX = 90;
+static constexpr lv_coord_t SS_CLOCK_CY = 90;
+static constexpr lv_coord_t SS_CLOCK_R  = 75;
+
+static void _drawAnalogClock()
+{
+    if (!s_ssCanvas || !s_ssCanvasBuf) return;
+    lv_canvas_fill_bg(s_ssCanvas, lv_color_black(), LV_OPA_COVER);
+
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.color = lv_color_white();
+    arc.width = 2;
+    arc.opa   = LV_OPA_COVER;
+    lv_canvas_draw_arc(s_ssCanvas, SS_CLOCK_CX, SS_CLOCK_CY, SS_CLOCK_R, 0, 360, &arc);
+
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = lv_color_white();
+    line.opa   = LV_OPA_COVER;
+    for (int i = 0; i < 12; i++) {
+        float ang  = i * (float)(2.0 * M_PI / 12.0);
+        float outr = (float)(SS_CLOCK_R - 2);
+        float inr  = (float)(SS_CLOCK_R - (i % 3 == 0 ? 10 : 6));
+        lv_point_t pts[2] = {
+            { (lv_coord_t)(SS_CLOCK_CX + outr * sinf(ang)), (lv_coord_t)(SS_CLOCK_CY - outr * cosf(ang)) },
+            { (lv_coord_t)(SS_CLOCK_CX + inr  * sinf(ang)), (lv_coord_t)(SS_CLOCK_CY - inr  * cosf(ang)) }
+        };
+        line.width = (i % 3 == 0) ? 2 : 1;
+        lv_canvas_draw_line(s_ssCanvas, pts, 2, &line);
+    }
+
+    time_t t = ops::config::localEpoch();
+    struct tm lt;
+    gmtime_r(&t, &lt);
+    float h_ang = ((lt.tm_hour % 12) * 60 + lt.tm_min) * (float)(2.0 * M_PI / 720.0);
+    float m_ang = lt.tm_min * (float)(2.0 * M_PI / 60.0);
+
+    float hr = SS_CLOCK_R * 0.55f;
+    line.width = 3;
+    lv_point_t hpts[2] = {
+        { SS_CLOCK_CX, SS_CLOCK_CY },
+        { (lv_coord_t)(SS_CLOCK_CX + hr * sinf(h_ang)), (lv_coord_t)(SS_CLOCK_CY - hr * cosf(h_ang)) }
+    };
+    lv_canvas_draw_line(s_ssCanvas, hpts, 2, &line);
+
+    float mr = SS_CLOCK_R * 0.80f;
+    line.width = 2;
+    lv_point_t mpts[2] = {
+        { SS_CLOCK_CX, SS_CLOCK_CY },
+        { (lv_coord_t)(SS_CLOCK_CX + mr * sinf(m_ang)), (lv_coord_t)(SS_CLOCK_CY - mr * cosf(m_ang)) }
+    };
+    lv_canvas_draw_line(s_ssCanvas, mpts, 2, &line);
+
+    lv_draw_rect_dsc_t dot;
+    lv_draw_rect_dsc_init(&dot);
+    dot.bg_color     = lv_color_white();
+    dot.bg_opa       = LV_OPA_COVER;
+    dot.radius       = LV_RADIUS_CIRCLE;
+    dot.border_width = 0;
+    lv_canvas_draw_rect(s_ssCanvas, SS_CLOCK_CX - 3, SS_CLOCK_CY - 3, 6, 6, &dot);
+}
+
 static void _updateSsTime()
 {
+    if (s_ssAnalog) { _drawAnalogClock(); return; }
     if (!s_ssTimeLbl) return;
     time_t t = ops::config::localEpoch();
     struct tm lt;
@@ -329,49 +399,71 @@ static void _deactivateScreensaver()
     s_screensaverScreen = nullptr;
     s_ssTimeLbl         = nullptr;
     s_ssNameLbl         = nullptr;
+    s_ssCanvas          = nullptr;
+    s_ssAnalog          = false;
     if (s_prevScreen) {
         lv_scr_load(s_prevScreen);
         s_prevScreen = nullptr;
     }
     if (sav) lv_obj_del(sav);
+    if (s_ssCanvasBuf) { free(s_ssCanvasBuf); s_ssCanvasBuf = nullptr; }
     Board::instance().setDisplayBrightness(
         (uint8_t)ops::config::get().brightness);
     _applyGovFreq(0);  // restore active-screen frequency
 }
 
-static void _activateScreensaver()
+static void _activateScreensaver(bool analog = false)
 {
     if (s_screensaverActive) return;
+    s_ssAnalog          = analog;
     s_prevScreen        = lv_scr_act();
     s_screensaverScreen = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_screensaverScreen, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_screensaverScreen, LV_OPA_COVER, LV_PART_MAIN);
 
-    // Flex-column container so time + name centre as a single group
-    lv_obj_t* col = lv_obj_create(s_screensaverScreen);
-    lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(col, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(col, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(col, 4, LV_PART_MAIN);
-    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_center(col);
+    if (analog) {
+        s_ssCanvasBuf = ps_malloc((size_t)SS_CANVAS_W * SS_CANVAS_H * sizeof(lv_color_t));
+        s_ssCanvas    = lv_canvas_create(s_screensaverScreen);
+        lv_canvas_set_buffer(s_ssCanvas, s_ssCanvasBuf,
+                             SS_CANVAS_W, SS_CANVAS_H, LV_IMG_CF_TRUE_COLOR);
+        lv_obj_align(s_ssCanvas, LV_ALIGN_TOP_MID, 0, 15);
+        _drawAnalogClock();
 
-    s_ssTimeLbl = lv_label_create(col);
-    lv_obj_set_style_text_font(s_ssTimeLbl, &lv_font_montserrat_36, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ssTimeLbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ssTimeLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    _updateSsTime();
+        s_ssNameLbl = lv_label_create(s_screensaverScreen);
+        lv_obj_set_style_text_font(s_ssNameLbl, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
+        lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_align(s_ssNameLbl, LV_ALIGN_BOTTOM_MID, 0, -8);
+        const char* name = ops::config::get().callsign[0]
+                           ? ops::config::get().callsign : "OPS-NODE";
+        lv_label_set_text(s_ssNameLbl, name);
+    } else {
+        // Flex-column container so time + name centre as a single group
+        lv_obj_t* col = lv_obj_create(s_screensaverScreen);
+        lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(col, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(col, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_row(col, 4, LV_PART_MAIN);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_center(col);
 
-    s_ssNameLbl = lv_label_create(col);
-    lv_obj_set_style_text_font(s_ssNameLbl, &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    const char* name = ops::config::get().callsign[0]
-                       ? ops::config::get().callsign : "OPS-NODE";
-    lv_label_set_text(s_ssNameLbl, name);
+        s_ssTimeLbl = lv_label_create(col);
+        lv_obj_set_style_text_font(s_ssTimeLbl, &lv_font_montserrat_36, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ssTimeLbl, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_text_align(s_ssTimeLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        _updateSsTime();
+
+        s_ssNameLbl = lv_label_create(col);
+        lv_obj_set_style_text_font(s_ssNameLbl, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
+        lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        const char* name = ops::config::get().callsign[0]
+                           ? ops::config::get().callsign : "OPS-NODE";
+        lv_label_set_text(s_ssNameLbl, name);
+    }
 
     lv_scr_load(s_screensaverScreen);
     s_screensaverActive = true;
@@ -882,6 +974,11 @@ void showLauncher() {
 
 void applyGovernorNow() {
     s_govApplyPending = true;
+}
+
+void activateScreensaver(bool analog)
+{
+    _activateScreensaver(analog);
 }
 
 void startTouchCalibration()

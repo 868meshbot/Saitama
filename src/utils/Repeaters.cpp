@@ -11,8 +11,9 @@
 
 namespace ops {
 
-static Repeater s_reps[repeaters::CAPACITY];
-static int      s_count = 0;
+static Repeater* s_reps     = nullptr;  // PSRAM; allocated in init()
+static Repeater* s_repsSnap = nullptr;  // PSRAM rollback buffer for reloadFromSD()
+static int       s_count = 0;
 
 // ── SD JSON helpers ────────────────────────────────────────────────
 
@@ -155,6 +156,11 @@ static void _clearLegacyNvs()
 
 void repeaters::init()
 {
+    if (!s_reps) {
+        s_reps     = (Repeater*)ps_malloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
+        s_repsSnap = (Repeater*)ps_malloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
+        memset(s_reps, 0, (size_t)repeaters::CAPACITY * sizeof(Repeater));
+    }
     // ── SD is always authoritative ────────────────────────────────────────
     // SD JSON is named-key and more reliable than NVS: previous firmware's
     // save() wrote to SD even when NVS putBytes was failing, so SD is always
@@ -198,12 +204,11 @@ void repeaters::init()
 int repeaters::reloadFromSD()
 {
     if (!sdcard::isMounted()) return -1;
-    static Repeater snap[CAPACITY];
     int snapN = s_count;
-    if (snapN > 0) memcpy(snap, s_reps, (size_t)snapN * sizeof(Repeater));
+    if (snapN > 0) memcpy(s_repsSnap, s_reps, (size_t)snapN * sizeof(Repeater));
     if (!_loadFromSD()) {
         s_count = snapN;
-        if (snapN > 0) memcpy(s_reps, snap, (size_t)snapN * sizeof(Repeater));
+        if (snapN > 0) memcpy(s_reps, s_repsSnap, (size_t)snapN * sizeof(Repeater));
         return -1;
     }
     save();
@@ -265,6 +270,17 @@ void repeaters::remove(int idx)
         s_reps[i] = s_reps[i + 1];
     s_count--;
     save();
+}
+
+void repeaters::setFullKey(int idx, const uint8_t* pubKey32)
+{
+    if (idx < 0 || idx >= s_count || !pubKey32) return;
+    bool alreadySet = false;
+    for (int b = 0; b < 32; b++) if (s_reps[idx].pubKey[b]) { alreadySet = true; break; }
+    if (alreadySet) return;
+    memcpy(s_reps[idx].pubKey, pubKey32, 32);
+    save();
+    OPS_LOG("Repeaters", "Full key set: %s", s_reps[idx].name);
 }
 
 void repeaters::setPath(int idx, uint8_t pathLen, const uint8_t* path)

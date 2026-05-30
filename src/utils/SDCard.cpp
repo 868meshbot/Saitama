@@ -76,9 +76,9 @@ bool sdcard::readFile(const char* path, uint8_t* buf, size_t maxLen, size_t* out
 
 static void _buildMsgPath(const char* tag, char* path, size_t pathSize)
 {
-    char safe[13] = {};
+    char safe[32] = {};
     int j = 0;
-    for (int i = 0; tag[i] && j < 12; i++) {
+    for (int i = 0; tag[i] && j < 31; i++) {
         char c = tag[i];
         if (c == '/' || c == '\\' || c == ':' || c == '?' || c == '*' ||
             c == '"' || c == '<'  || c == '>' || c == '|') c = '_';
@@ -91,10 +91,15 @@ bool sdcard::appendMsgLine(const char* tag, const char* json)
 {
     if (!s_mounted) return false;
     if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
-    char path[40];
+    char path[52];
     _buildMsgPath(tag, path, sizeof(path));
+    if (!SD.exists(path)) {
+        File fc = SD.open(path, FILE_WRITE);
+        if (!fc) { OPS_LOG("SD", "appendMsgLine create failed: %s", path); return false; }
+        fc.close();
+    }
     File f = SD.open(path, FILE_APPEND);
-    if (!f) { OPS_LOG("SD", "appendMsgLine failed: %s", path); return false; }
+    if (!f) { OPS_LOG("SD", "appendMsgLine open failed: %s", path); return false; }
     f.println(json);
     f.close();
     return true;
@@ -103,7 +108,7 @@ bool sdcard::appendMsgLine(const char* tag, const char* json)
 size_t sdcard::readMsgLog(const char* tag, char* buf, size_t bufSize)
 {
     if (!s_mounted || !buf || bufSize < 2) return 0;
-    char path[40];
+    char path[52];
     _buildMsgPath(tag, path, sizeof(path));
     File f = SD.open(path, FILE_READ);
     if (!f) return 0;
@@ -118,7 +123,7 @@ size_t sdcard::readMsgLog(const char* tag, char* buf, size_t bufSize)
 bool sdcard::deleteMsgLog(const char* tag)
 {
     if (!s_mounted) return false;
-    char path[40];
+    char path[52];
     _buildMsgPath(tag, path, sizeof(path));
     if (!SD.exists(path)) return true;
     bool ok = SD.remove(path);

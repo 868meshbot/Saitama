@@ -63,7 +63,6 @@ struct RadioStats {
     // Cumulative airtime in milliseconds (from Dispatcher)
     uint32_t airtimeTxMs;
     uint32_t airtimeRxMs;
-    // True while SX1262 hardware duty cycle is armed (46ms RX / 469ms sleep)
     bool     loraDutyCycleActive;
 };
 
@@ -166,6 +165,7 @@ public:
     bool pollLoginResult(bool& ok);
 
     // ── Radio control / stats ─────────────────────────────────────────
+    void suspendDutyCycle(bool suspend);
     RadioStats radioStats() const;
     void  setActive(bool active);
     bool  isActive() const;

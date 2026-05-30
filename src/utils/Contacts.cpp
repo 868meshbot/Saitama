@@ -11,8 +11,9 @@
 
 namespace ops {
 
-static Contact s_contacts[contacts::CAPACITY];
-static int     s_count = 0;
+static Contact* s_contacts     = nullptr;  // PSRAM; allocated in init()
+static Contact* s_contactsSnap = nullptr;  // PSRAM rollback buffer for reloadFromSD()
+static int      s_count = 0;
 
 // ── SD JSON helpers ────────────────────────────────────────────────
 
@@ -199,6 +200,11 @@ static void _clearLegacyNvs();
 
 void contacts::init()
 {
+    if (!s_contacts) {
+        s_contacts     = (Contact*)ps_malloc((size_t)contacts::CAPACITY * sizeof(Contact));
+        s_contactsSnap = (Contact*)ps_malloc((size_t)contacts::CAPACITY * sizeof(Contact));
+        memset(s_contacts, 0, (size_t)contacts::CAPACITY * sizeof(Contact));
+    }
     // ── SD is always authoritative ────────────────────────────────────────
     // SD JSON is named-key and survives firmware updates. It is also more
     // reliable than NVS here: previous firmware's save() wrote to SD even
@@ -325,12 +331,11 @@ static void _clearLegacyNvs()
 int contacts::reloadFromSD()
 {
     if (!sdcard::isMounted()) return -1;
-    static Contact snap[CAPACITY];
     int snapN = s_count;
-    if (snapN > 0) memcpy(snap, s_contacts, (size_t)snapN * sizeof(Contact));
+    if (snapN > 0) memcpy(s_contactsSnap, s_contacts, (size_t)snapN * sizeof(Contact));
     if (!_loadFromSD()) {
         s_count = snapN;
-        if (snapN > 0) memcpy(s_contacts, snap, (size_t)snapN * sizeof(Contact));
+        if (snapN > 0) memcpy(s_contacts, s_contactsSnap, (size_t)snapN * sizeof(Contact));
         return -1;
     }
     save();
@@ -342,6 +347,17 @@ void contacts::setPosition(int idx, int32_t lat, int32_t lon)
     if (idx < 0 || idx >= s_count) return;
     s_contacts[idx].lat = lat;
     s_contacts[idx].lon = lon;
+}
+
+void contacts::setFullKey(int idx, const uint8_t* pubKey32)
+{
+    if (idx < 0 || idx >= s_count || !pubKey32) return;
+    bool alreadySet = false;
+    for (int b = 0; b < 32; b++) if (s_contacts[idx].pubKey[b]) { alreadySet = true; break; }
+    if (alreadySet) return;
+    memcpy(s_contacts[idx].pubKey, pubKey32, 32);
+    save();
+    OPS_LOG("Contacts", "Full key set: %s", s_contacts[idx].name);
 }
 
 void contacts::setPath(int idx, uint8_t pathLen, const uint8_t* path)

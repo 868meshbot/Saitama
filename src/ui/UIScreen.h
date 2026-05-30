@@ -20,6 +20,10 @@ void showLauncher();
 // Call after changing cfg.cpuGovernor so the new setting takes effect immediately.
 void applyGovernorNow();
 
+// Activate the screensaver immediately. Pass analog=true for the analog clock face.
+// Any input will dismiss it as usual. Called from the /clock terminal command.
+void activateScreensaver(bool analog = false);
+
 // Launch the 2-point touch calibration routine.
 // Creates an LVGL overlay; tap the crosshair twice; coefficients are saved to Config.
 // Backspace/ESC cancels. Called from the /touch-cali terminal command.

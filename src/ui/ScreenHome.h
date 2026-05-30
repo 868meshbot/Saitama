@@ -72,7 +72,7 @@ private:
     static lv_obj_t* _emojiPanel;  // emoji picker overlay (nullptr = hidden)
 
     // ── SD log state ──────────────────────────────────────────────────
-    static char s_loadedTags[10][16];
+    static char s_loadedTags[10][32];
     static int  s_loadedTagCnt;
     static bool s_loadingFromSD;
 
@@ -103,6 +103,7 @@ private:
     static void _clearChannelMessages(int chIdx);
     static void _deleteChannel      (int chIdx);
     static void _openDMPicker();
+    static void _openBubbleActionMenu();
     static void _openAddContactPopup();
 
     // ── Event callbacks ───────────────────────────────────────────────
@@ -126,9 +127,11 @@ private:
     static void _onSend        (lv_event_t* e);
     static void _onDMPickerRow     (lv_event_t* e);
     static void _onDMPickerClose   (lv_event_t* e);
-    static void _onBubbleClick     (lv_event_t* e);
-    static void _onAddContactSave  (lv_event_t* e);
-    static void _onAddContactCancel(lv_event_t* e);
+    static void _onBubbleClick      (lv_event_t* e);
+    static void _onBubbleReply      (lv_event_t* e);
+    static void _onBubbleAddContact (lv_event_t* e);
+    static void _onAddContactSave   (lv_event_t* e);
+    static void _onAddContactCancel (lv_event_t* e);
     static void _onEmojiToggle     (lv_event_t* e);
     static void _onEmojiInsert     (lv_event_t* e);
 };
