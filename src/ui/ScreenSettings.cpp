@@ -6,7 +6,7 @@
 //   ┌──────────────────────────────────────┐  y = 0
 //   │ [⌂ Home]    Settings          12:34 │  top bar  28 px
 //   ├──────────────────────────────────────┤  y = 28
-//   │ Device Name          OPS-0001  >    │  \
+//   │ Device Name          OMS-0001  >    │  \
 //   │ Channel 1            Public    >    │   |
 //   │ Channel 2            CH2       >    │   | scrollable
 //   │ Channel 3            Disabled  >    │   |  list
@@ -28,6 +28,9 @@
 #include "../utils/Config.h"
 #include "../utils/Keymap.h"
 #include "../utils/Log.h"
+#include "../utils/Sound.h"
+#include "../utils/SDCard.h"
+#include <SD.h>
 #include "../mesh/MeshService.h"
 #include "../hardware/Board.h"
 #include "../utils/GpsMgr.h"
@@ -213,6 +216,13 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     char brightBuf[8];
     snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
     _addRow(_list, "Brightness", brightBuf, 26);
+    static const char* kThemeNames[] = {
+        "Default", "Green", "Dracula", "Tokyo Night",
+        "Catp Frappe", "Catp Mocha", "Synthwave 84",
+        "Kaolin", "One Dark", "Neovim", "Nyx", "Rat Dark"
+    };
+    int themeIdx = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
+    _addRow(_list, "Theme", kThemeNames[themeIdx], 31);
     _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "On" : "Off", 7);
     _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "On" : "Off", 8);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
@@ -263,6 +273,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, "Show Hops",          cfg.showHops        ? "On" : "Off", 15);
     _addRow(_list, "Show RSSI",          cfg.showRssi        ? "On" : "Off", 19);
     _addRow(_list, "Location Sharing",   cfg.locationSharing ? "On" : "Off", 17);
+    _addRow(_list, "Backup & Restore",   "", 30);
 
     s_listPtr = _list;
 }
@@ -389,23 +400,23 @@ static void _openNameDialog() {
     // Save button
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onModalSave, LV_EVENT_CLICKED, modal);
 
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     // Exit button
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -612,8 +623,8 @@ static void _openChannelsDialog() {
     // [✕ Exit]
     lv_obj_t* exitBtn = lv_btn_create(navRow);
     lv_obj_set_size(exitBtn, 72, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -870,22 +881,22 @@ static void _openEditChannelDialog(int ch) {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 100, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onEditChSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(saveBtn, _onEditChKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 80, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1049,21 +1060,21 @@ static void _openAutoAddDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onAASave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1241,22 +1252,22 @@ static void _openSetTimeDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onSTSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(saveBtn, _onSTKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1371,21 +1382,21 @@ static void _openNotificationsDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onNSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1503,21 +1514,21 @@ static void _openTimezoneDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onTzSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1638,21 +1649,21 @@ static void _openTimeoutDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onToSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1772,21 +1783,21 @@ static void _openScreenOffDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onSoSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -1908,21 +1919,21 @@ static void _openKbBrightDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(row);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onKbSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(row);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2075,21 +2086,21 @@ static void _openTxPowerDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onTxPowerSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2212,21 +2223,21 @@ static void _openBrightnessDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onBrightSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2388,8 +2399,8 @@ static void _openRadioDialog() {
     // Exit button (below the scroll container, inside panel)
     lv_obj_t* exitBtn = lv_btn_create(panel);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2509,22 +2520,22 @@ static void _openKbLayoutDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onKbLSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(saveBtn, _onKbLKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2559,6 +2570,10 @@ static void _onNSDSave(lv_event_t* /*e*/) {
     lv_obj_del(s_nsCtx.modal);
     ScreenSettings::show();
 }
+static void _onNSDPreview(lv_event_t* /*e*/) {
+    uint8_t sel = (uint8_t)lv_dropdown_get_selected(s_nsCtx.dd);
+    ops::sound::playPreview(sel);
+}
 static void _onNSDExit(lv_event_t* /*e*/) { lv_obj_del(s_nsCtx.modal); }
 static void _onNSDKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
@@ -2580,17 +2595,19 @@ static void _openNotifSoundDialog() {
     lv_obj_add_event_cb(modal, _onNSDKey, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 140);
+    lv_obj_set_width(panel, 240);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_radius(panel, 6, 0);
     lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel,
-        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* title = lv_label_create(panel);
     lv_label_set_text(title, "Notification Sound");
@@ -2619,29 +2636,47 @@ static void _openNotifSoundDialog() {
     lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btnRow, 0, 0);
     lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_style_pad_column(btnRow, 4, 0);
     lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btnRow,
         LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    // Preview — plays the currently selected sound without saving
+    lv_obj_t* prevBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(prevBtn, 64, 26);
+    lv_obj_set_style_bg_color(prevBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(prevBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(prevBtn, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(prevBtn, 1, 0);
+    lv_obj_set_style_radius(prevBtn, 4, 0);
+    lv_obj_set_style_shadow_width(prevBtn, 0, 0);
+    lv_obj_add_event_cb(prevBtn, _onNSDPreview, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(prevBtn, _onNSDKey,     LV_EVENT_KEY,     nullptr);
+    lv_obj_t* prevLbl = lv_label_create(prevBtn);
+    lv_label_set_text(prevLbl, LV_SYMBOL_PLAY " Play");
+    lv_obj_set_style_text_color(prevLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(prevLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(prevLbl);
+
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
-    lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_size(saveBtn, 64, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onNSDSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(saveBtn, _onNSDKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
-    lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_size(exitBtn, 64, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2657,6 +2692,7 @@ static void _openNotifSoundDialog() {
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, dd);
+        lv_group_add_obj(g, prevBtn);
         lv_group_add_obj(g, saveBtn);
         lv_group_add_obj(g, exitBtn);
         lv_group_focus_obj(dd);
@@ -2754,22 +2790,22 @@ static void _openCpuGovDialog() {
 
     lv_obj_t* saveBtn = lv_btn_create(btnRow);
     lv_obj_set_size(saveBtn, 90, 26);
-    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_radius(saveBtn, 4, 0);
     lv_obj_set_style_shadow_width(saveBtn, 0, 0);
     lv_obj_add_event_cb(saveBtn, _onCGSave, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(saveBtn, _onCGKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
-    lv_obj_set_style_text_color(saveLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
     lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(saveLbl);
 
     lv_obj_t* exitBtn = lv_btn_create(btnRow);
     lv_obj_set_size(exitBtn, 90, 26);
-    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
-    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
     lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
     lv_obj_set_style_border_width(exitBtn, 1, 0);
     lv_obj_set_style_radius(exitBtn, 4, 0);
@@ -2790,6 +2826,9 @@ static void _openCpuGovDialog() {
         lv_group_focus_obj(dd);
     }
 }
+
+static void _openBackupRestoreDialog();  // defined after _onItemClick
+static void _openThemeDialog();          // defined after _onItemClick
 
 // ── _onItemClick() ───────────────────────────────────────────────────
 void ScreenSettings::_onItemClick(lv_event_t* e) {
@@ -2920,10 +2959,334 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openCpuGovDialog();
             return;
 
+        case 30:  // Backup & Restore
+            _openBackupRestoreDialog();
+            return;
+
+        case 31:  // Theme
+            _openThemeDialog();
+            return;
+
         default: return;
     }
 
     _refreshList();
+}
+
+// ── Backup & Restore dialog ───────────────────────────────────────────
+// Copies /ops/*.json  →  /ops/*.bak  (backup)
+// Copies /ops/*.bak   →  /ops/*.json (restore)
+// Files: contacts, repeaters, settings (identity.bin is already auto-backed up)
+
+static lv_obj_t* s_brModal   = nullptr;
+static lv_obj_t* s_brStatus  = nullptr;
+
+static void _brClose(lv_event_t* /*e*/)
+{
+    if (s_brModal) { lv_obj_del_async(s_brModal); s_brModal = nullptr; }
+}
+
+static bool _copyFile(const char* src, const char* dst)
+{
+    File in = SD.open(src, FILE_READ);
+    if (!in) return false;
+    File out = SD.open(dst, FILE_WRITE);
+    if (!out) { in.close(); return false; }
+    uint8_t buf[512];
+    while (true) {
+        int n = (int)in.read(buf, sizeof(buf));
+        if (n <= 0) break;
+        out.write(buf, (size_t)n);
+    }
+    in.close();
+    out.close();
+    return true;
+}
+
+static const char* _runBackup()
+{
+    if (!ops::sdcard::isMounted()) {
+        if (!ops::sdcard::tryMount()) return "SD not mounted";
+    }
+    static const char* kSrc[] = {
+        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json"
+    };
+    static const char* kDst[] = {
+        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak"
+    };
+    int ok = 0;
+    for (int i = 0; i < 3; i++) {
+        if (SD.exists(kSrc[i]))
+            ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
+    }
+    // Also backup identity.bin → identity.bak
+    if (SD.exists("/ops/identity.bin"))
+        _copyFile("/ops/identity.bin", "/ops/identity.bak");
+    if (ok == 0) return "No files to back up";
+    static char msg[32];
+    snprintf(msg, sizeof(msg), "Backed up %d file(s)", ok);
+    return msg;
+}
+
+static const char* _runRestore()
+{
+    if (!ops::sdcard::isMounted()) {
+        if (!ops::sdcard::tryMount()) return "SD not mounted";
+    }
+    static const char* kSrc[] = {
+        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak"
+    };
+    static const char* kDst[] = {
+        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json"
+    };
+    int ok = 0;
+    for (int i = 0; i < 3; i++) {
+        if (SD.exists(kSrc[i]))
+            ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
+    }
+    if (SD.exists("/ops/identity.bak"))
+        _copyFile("/ops/identity.bak", "/ops/identity.bin");
+    if (ok == 0) return "No .bak files found";
+    static char msg[40];
+    snprintf(msg, sizeof(msg), "Restored %d file(s) - reboot advised", ok);
+    return msg;
+}
+
+static void _onBRBackup(lv_event_t* /*e*/)
+{
+    const char* result = _runBackup();
+    OPS_LOG("Backup", "%s", result);
+    if (s_brStatus) lv_label_set_text(s_brStatus, result);
+}
+
+static void _onBRRestore(lv_event_t* /*e*/)
+{
+    const char* result = _runRestore();
+    OPS_LOG("Backup", "%s", result);
+    if (s_brStatus) lv_label_set_text(s_brStatus, result);
+}
+
+static void _openBackupRestoreDialog()
+{
+    if (s_brModal) return;
+
+    s_brModal = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_brModal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_brModal, 0, 0);
+    lv_obj_set_style_bg_color(s_brModal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_brModal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_brModal, 0, 0);
+    lv_obj_set_style_pad_all(s_brModal, 0, 0);
+    lv_obj_clear_flag(s_brModal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* panel = lv_obj_create(s_brModal);
+    lv_obj_set_width(panel, 260);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 10, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Backup & Restore");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* sub = lv_label_create(panel);
+    lv_label_set_text(sub, "contacts / repeaters / settings");
+    lv_obj_set_style_text_color(sub, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+
+    // Status line
+    s_brStatus = lv_label_create(panel);
+    lv_label_set_text(s_brStatus, "");
+    lv_label_set_long_mode(s_brStatus, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_brStatus, 236);
+    lv_obj_set_style_text_color(s_brStatus, theme::GREEN, 0);
+    lv_obj_set_style_text_font(s_brStatus, &lv_font_montserrat_10, 0);
+
+    // Button row
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 236, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_style_pad_column(btnRow, 4, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto makeBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb) {
+        lv_obj_t* btn = lv_btn_create(btnRow);
+        lv_obj_set_size(btn, 72, 26);
+        lv_obj_set_style_bg_color(btn, bg, 0);
+        lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_group_remove_obj(btn);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(lbl);
+    };
+
+    makeBtn("Backup",  theme::PRIMARY, _onBRBackup);
+    makeBtn("Restore", theme::ORANGE,  _onBRRestore);
+    makeBtn("Close",   theme::BG,      _brClose);
+
+    // Style Close with border
+    lv_obj_t* closeBtn = lv_obj_get_child(btnRow, 2);
+    lv_obj_set_style_border_color(closeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(closeBtn, 1, 0);
+}
+
+// ── Theme dialog ─────────────────────────────────────────────────────
+// Saves cfg.theme and restarts so all LVGL objects redraw with new colours.
+
+struct ThemeCtx { lv_obj_t* modal; lv_obj_t* dd; lv_obj_t* note; };
+static ThemeCtx s_thCtx;
+
+static void _onThemeSave(lv_event_t* /*e*/) {
+    int sel = (int)lv_dropdown_get_selected(s_thCtx.dd);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    if (sel != cfg.theme) {
+        cfg.theme = sel;
+        ops::config::save();
+        if (s_thCtx.note) lv_label_set_text(s_thCtx.note, "Restarting...");
+        lv_task_handler();
+        delay(400);
+        ESP.restart();
+    }
+    lv_obj_del(s_thCtx.modal);
+}
+static void _onThemeExit(lv_event_t* /*e*/) { lv_obj_del(s_thCtx.modal); }
+static void _onThemeKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_thCtx.modal);
+}
+
+static void _openThemeDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_thCtx.modal = modal;
+    s_thCtx.note  = nullptr;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onThemeKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_width(panel, 240);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Theme");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* dd = lv_dropdown_create(panel);
+    s_thCtx.dd = dd;
+    lv_dropdown_set_options(dd,
+        "Default\nGreen\nDracula\nTokyo Night\n"
+        "Catp Frappe\nCatp Mocha\nSynthwave 84\n"
+        "Kaolin\nOne Dark\nNeovim\nNyx\nRat Dark");
+    int cur = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
+    lv_dropdown_set_selected(dd, (uint16_t)cur);
+    lv_obj_set_width(dd, 210);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+
+    lv_obj_t* ddList = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(ddList, theme::BG_CARD, 0);
+    lv_obj_set_style_text_color(ddList, theme::TEXT, 0);
+    lv_obj_set_style_text_font(ddList, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(ddList, theme::BORDER, 0);
+
+    s_thCtx.note = lv_label_create(panel);
+    lv_label_set_text(s_thCtx.note, "Device restarts on save.");
+    lv_obj_set_style_text_color(s_thCtx.note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_thCtx.note, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Save — ACCENT background (bright, positive action; works across all themes)
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(saveBtn, 0, 0);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onThemeSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onThemeKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    // Cancel — muted card background
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onThemeExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onThemeKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Cancel");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, dd);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, exitBtn);
+        lv_group_focus_obj(dd);
+    }
 }
 
 // ── _onHomeClick() ───────────────────────────────────────────────────

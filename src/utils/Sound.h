@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — MIT License
 
 #pragma once
+#include <stdint.h>
 
 namespace ops {
 namespace sound {
@@ -17,6 +18,10 @@ namespace sound {
 
     // Play the raw default ping (A5, 150 ms). Use playNotification() at call sites.
     void playPing();
+
+    // Play a specific sound choice immediately, bypassing the notifySound gate.
+    // Only gated by speakerEnabled. Intended for settings previews.
+    void playPreview(uint8_t choice);
 
     // Returns true while DMA is still draining audio (approximately).
     // Used by the CPU governor to avoid lowering APB below 80 MHz mid-playback.

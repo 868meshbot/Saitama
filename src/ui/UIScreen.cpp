@@ -435,7 +435,7 @@ static void _activateScreensaver(bool analog = false)
         lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_align(s_ssNameLbl, LV_ALIGN_BOTTOM_MID, 0, -8);
         const char* name = ops::config::get().callsign[0]
-                           ? ops::config::get().callsign : "OPS-NODE";
+                           ? ops::config::get().callsign : "OMS-NODE";
         lv_label_set_text(s_ssNameLbl, name);
     } else {
         // Flex-column container so time + name centre as a single group
@@ -461,7 +461,7 @@ static void _activateScreensaver(bool analog = false)
         lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
         lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         const char* name = ops::config::get().callsign[0]
-                           ? ops::config::get().callsign : "OPS-NODE";
+                           ? ops::config::get().callsign : "OMS-NODE";
         lv_label_set_text(s_ssNameLbl, name);
     }
 
@@ -597,7 +597,8 @@ void init() {
     lv_group_set_default(g);   // screens use lv_group_get_default() to add widgets
     lv_indev_set_group(s_indev, g);
 
-    // Apply theme
+    // Apply theme colours then init LVGL default theme
+    theme::applyTheme((uint8_t)ops::config::get().theme);
     theme::apply(s_disp);
 
     // Probe GT911 (sets s_gt911 address, s_touchOk flag, logs product ID)

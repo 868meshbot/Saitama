@@ -255,7 +255,8 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     lv_obj_set_style_radius(box, 6, 0);
     lv_obj_set_style_pad_all(box, 8, 0);
     lv_obj_set_style_pad_row(box, 5, 0);
-    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(box, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(box, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 

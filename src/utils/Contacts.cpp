@@ -216,6 +216,17 @@ void contacts::init()
         return;
     }
 
+    // SD may not have been mounted at boot (improper unmount / card absent).
+    // Attempt a single remount and retry before falling back to NVS.
+    if (!sdcard::isMounted()) {
+        OPS_LOG("Contacts", "SD not mounted at init, attempting remount");
+        if (sdcard::tryMount() && _loadFromSD()) {
+            OPS_LOG("Contacts", "Loaded %d from SD after remount", s_count);
+            _clearLegacyNvs();
+            return;
+        }
+    }
+
     // ── NVS fallback (SD absent or no file yet) ───────────────────────────
     // Read legacy per-blob NVS data with full version migration, write to SD,
     // then clear the namespace so it is never written again.
@@ -242,6 +253,7 @@ void contacts::init()
         uint8_t  _pad[3];
     };
     static_assert(sizeof(PreLatLonContact) == 80, "pre-lat/lon size assumption wrong");
+
     // v2 layout (88 bytes) — before path fields
     struct PrePathContact {
         char     name[32];

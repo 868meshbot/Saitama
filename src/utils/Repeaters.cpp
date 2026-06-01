@@ -171,6 +171,17 @@ void repeaters::init()
         return;
     }
 
+    // SD may not have been mounted at boot (improper unmount / card absent).
+    // Attempt a single remount and retry before falling back to NVS.
+    if (!sdcard::isMounted()) {
+        OPS_LOG("Repeaters", "SD not mounted at init, attempting remount");
+        if (sdcard::tryMount() && _loadFromSD()) {
+            OPS_LOG("Repeaters", "Loaded %d from SD after remount", s_count);
+            _clearLegacyNvs();
+            return;
+        }
+    }
+
     // ── NVS fallback (SD absent or no file yet) ───────────────────────────
     // One-time migration: read legacy per-blob NVS data, write to SD, clear namespace.
     Preferences prefs;

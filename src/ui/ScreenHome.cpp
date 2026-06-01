@@ -498,7 +498,7 @@ void ScreenHome::_clearChannelMessages(int chIdx)
     for (int i = 0; i < s_loadedTagCnt; i++) {
         if (strncmp(s_loadedTags[i], tag, 31) == 0) {
             for (int j = i; j < s_loadedTagCnt - 1; j++)
-                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 32);
+                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 16);
             s_loadedTagCnt--;
             break;
         }
@@ -1384,7 +1384,7 @@ void ScreenHome::_onSend(lv_event_t* /*e*/)
         lv_obj_set_style_pad_all(row, 2, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t* lbl = lv_label_create(row);
-        lv_label_set_text(lbl, "Radio not ready \xe2\x80\x94 not sent");
+        lv_label_set_text(lbl, "Radio not ready - not sent");
         lv_obj_set_style_text_color(lbl, theme::RED, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
         lv_obj_set_width(lbl, LV_PCT(100));
@@ -1419,8 +1419,8 @@ void ScreenHome::_onSend(lv_event_t* /*e*/)
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t* lbl = lv_label_create(row);
         const char* errMsg = (s_sendMode == 10)
-            ? "Contact not reachable \xe2\x80\x94 not sent"
-            : "Send failed \xe2\x80\x94 not sent";
+            ? "Contact not reachable - not sent"
+            : "Send failed - not sent";
         lv_label_set_text(lbl, errMsg);
         lv_obj_set_style_text_color(lbl, theme::RED, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
@@ -1671,6 +1671,7 @@ void ScreenHome::_openBubbleActionMenu()
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    // Sender name + key hint
     lv_obj_t* nameLbl = lv_label_create(box);
     lv_label_set_text(nameLbl, s_pendingContactName);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
@@ -1699,7 +1700,7 @@ void ScreenHome::_openBubbleActionMenu()
         if (!disabled)
             lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
         else
-            lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);  // keep clickable but no cb
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, label);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
@@ -1723,6 +1724,7 @@ void ScreenHome::_onBubbleReply(lv_event_t* /*e*/)
     char prefix[36];
     snprintf(prefix, sizeof(prefix), "@%s ", s_pendingContactName);
     lv_textarea_set_text(_textarea, prefix);
+    // Move cursor to end so the user types after the mention.
     lv_textarea_set_cursor_pos(_textarea, LV_TEXTAREA_CURSOR_LAST);
 }
 

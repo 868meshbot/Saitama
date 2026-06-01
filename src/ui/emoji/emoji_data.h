@@ -24,6 +24,23 @@ extern const lv_img_dsc_t emoji_cry;
 extern const lv_img_dsc_t emoji_skull;
 extern const lv_img_dsc_t emoji_wave;
 extern const lv_img_dsc_t emoji_check;
+extern const lv_img_dsc_t emoji_frog;
+extern const lv_img_dsc_t emoji_sparkles;
+extern const lv_img_dsc_t emoji_wales;
+extern const lv_img_dsc_t emoji_ireland;
+extern const lv_img_dsc_t emoji_cat_joy;
+extern const lv_img_dsc_t emoji_dog;
+extern const lv_img_dsc_t emoji_satellite;
+extern const lv_img_dsc_t emoji_us_flag;
+extern const lv_img_dsc_t emoji_house;
+extern const lv_img_dsc_t emoji_dizzy;
+extern const lv_img_dsc_t emoji_robot;
+extern const lv_img_dsc_t emoji_car;
+extern const lv_img_dsc_t emoji_moto;
+extern const lv_img_dsc_t emoji_plane;
+extern const lv_img_dsc_t emoji_ship;
+extern const lv_img_dsc_t emoji_palm;
+extern const lv_img_dsc_t emoji_house2;
 
 #ifdef __cplusplus
 }
@@ -47,5 +64,22 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F480u, &emoji_skull },
     { 0x1F44Bu, &emoji_wave },
     { 0x02705u, &emoji_check },
+    { 0x1F438u, &emoji_frog },
+    { 0x02728u, &emoji_sparkles },
+    { 0x1F3F4u, &emoji_wales },
+    { 0x1F1EEu, &emoji_ireland },
+    { 0x1F639u, &emoji_cat_joy },
+    { 0x1F415u, &emoji_dog },
+    { 0x1F4E1u, &emoji_satellite },
+    { 0x1F1FAu, &emoji_us_flag },
+    { 0x1F3E0u, &emoji_house },
+    { 0x1F4ABu, &emoji_dizzy },
+    { 0x1F916u, &emoji_robot },
+    { 0x1F697u, &emoji_car },
+    { 0x1F3CDu, &emoji_moto },
+    { 0x02708u, &emoji_plane },
+    { 0x1F6A2u, &emoji_ship },
+    { 0x1F334u, &emoji_palm },
+    { 0x1F3E1u, &emoji_house2 },
 };
-static const int kOpsEmojiCount = 15;
+static const int kOpsEmojiCount = 32;

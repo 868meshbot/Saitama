@@ -231,6 +231,21 @@ void sound::playNotification()
     }
 }
 
+void sound::playPreview(uint8_t choice)
+{
+    if (!ops::config::get().speakerEnabled) return;
+    if (!s_initialized) return;
+    if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
+    s_soundEndMs = millis() + 300;
+    size_t written = 0;
+    switch (choice) {
+        case 1: i2s_write(SPK_I2S_PORT, s_pluckBuf,  sizeof(s_pluckBuf),  &written, pdMS_TO_TICKS(50)); break;
+        case 2: i2s_write(SPK_I2S_PORT, s_clearBuf,  sizeof(s_clearBuf),  &written, pdMS_TO_TICKS(50)); break;
+        case 3: i2s_write(SPK_I2S_PORT, s_whooshBuf, sizeof(s_whooshBuf), &written, pdMS_TO_TICKS(50)); break;
+        default: i2s_write(SPK_I2S_PORT, s_pingBuf,  sizeof(s_pingBuf),   &written, pdMS_TO_TICKS(50)); break;
+    }
+}
+
 void sound::playStartupJingle()
 {
     if (!s_initialized) return;

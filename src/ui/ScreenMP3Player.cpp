@@ -150,20 +150,24 @@ void ScreenMP3Player::_buildScreen()
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_pad_hor(bar, 4, 0);
     lv_obj_set_style_pad_ver(bar, 2, 0);
+    lv_obj_set_style_pad_column(bar, 6, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* homeBtn = lv_btn_create(bar);
-    lv_obj_set_size(homeBtn, 56, 22);
-    lv_obj_align(homeBtn, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_group_remove_obj(homeBtn);
+    lv_obj_set_height(homeBtn, TOP_H - 6);
     lv_obj_set_style_bg_color(homeBtn, theme::BG, 0);
     lv_obj_set_style_bg_color(homeBtn, theme::PRIMARY, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(homeBtn, 1, 0);
     lv_obj_set_style_border_color(homeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(homeBtn, 1, 0);
     lv_obj_set_style_radius(homeBtn, 4, 0);
     lv_obj_set_style_shadow_width(homeBtn, 0, 0);
+    lv_obj_set_style_pad_hor(homeBtn, 5, 0);
     lv_obj_add_event_cb(homeBtn, _onHome, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* homeLbl = lv_label_create(homeBtn);
-    lv_label_set_text(homeLbl, LV_SYMBOL_HOME " Home");
+    lv_label_set_text(homeLbl, LV_SYMBOL_HOME);
     lv_obj_set_style_text_color(homeLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(homeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(homeLbl);
@@ -171,8 +175,7 @@ void ScreenMP3Player::_buildScreen()
     lv_obj_t* title = lv_label_create(bar);
     lv_label_set_text(title, LV_SYMBOL_AUDIO " MP3 Player");
     lv_obj_set_style_text_color(title, theme::TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
 
     // ── Content area (y = TOP_H, height = OPS_SCREEN_H - TOP_H) ──────
     int cy = TOP_H + PAD;   // current y cursor

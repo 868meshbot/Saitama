@@ -18,6 +18,7 @@
 #include "ScreenLauncher.h"
 #include "ScreenMP3Player.h"
 #include "ScreenPower.h"
+#include "ScreenFileManager.h"
 #include "UIScreen.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
@@ -109,22 +110,25 @@ void ScreenTerminal::_buildTopBar(lv_obj_t* parent) {
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_pad_hor(bar, 4, 0);
     lv_obj_set_style_pad_ver(bar, 2, 0);
-    lv_obj_set_scrollbar_mode(bar, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_pad_column(bar, 6, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* homeBtn = lv_btn_create(bar);
-    lv_obj_set_size(homeBtn, 56, 22);
-    lv_obj_align(homeBtn, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_group_remove_obj(homeBtn);
+    lv_obj_set_height(homeBtn, TOP_H - 6);
     lv_obj_set_style_bg_color(homeBtn, theme::BG, 0);
     lv_obj_set_style_bg_color(homeBtn, theme::PRIMARY, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(homeBtn, 1, 0);
     lv_obj_set_style_border_color(homeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(homeBtn, 1, 0);
     lv_obj_set_style_radius(homeBtn, 4, 0);
     lv_obj_set_style_shadow_width(homeBtn, 0, 0);
+    lv_obj_set_style_pad_hor(homeBtn, 5, 0);
     lv_obj_add_event_cb(homeBtn, _onHomeClick, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* homeLbl = lv_label_create(homeBtn);
-    lv_label_set_text(homeLbl, LV_SYMBOL_HOME " Home");
+    lv_label_set_text(homeLbl, LV_SYMBOL_HOME);
     lv_obj_set_style_text_color(homeLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(homeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(homeLbl);
@@ -132,8 +136,7 @@ void ScreenTerminal::_buildTopBar(lv_obj_t* parent) {
     lv_obj_t* title = lv_label_create(bar);
     lv_label_set_text(title, LV_SYMBOL_KEYBOARD " Terminal");
     lv_obj_set_style_text_color(title, theme::TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
 }
 
 // ── _buildLog() ──────────────────────────────────────────────────────
@@ -1358,7 +1361,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
 
         if (strcmp(sub, "ls") == 0) {
-            const char* path = sub_args[0] ? sub_args : "/ops";
+            const char* path = sub_args[0] ? sub_args : "/oms";
             static char lsbuf[1024];
             size_t n = ops::sdcard::listDir(path, lsbuf, sizeof(lsbuf));
             if (n == 0) { appendLine("(empty or not found)"); return; }
@@ -1735,11 +1738,17 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
-    // ── play [path] ─ hidden easter egg, not in /help ────────────────
+    // ── play [path] ─ hidden, not in /help ───────────────────────────
     // /play         → open the MP3 player screen (file browser)
     // /play <path>  → open the screen and immediately start that file
     if (strcmp(cmd, "play") == 0) {
         ops::ui::ScreenMP3Player::show(args[0] ? args : nullptr);
+        return;
+    }
+
+    // ── filemgr ─ hidden, not in /help ───────────────────────────────
+    if (strcmp(cmd, "filemgr") == 0) {
+        ops::ui::ScreenFileManager::show();
         return;
     }
 
@@ -1773,7 +1782,7 @@ void ScreenTerminal::tickSerial() {
             Serial.println(_serialBuf);        // echo the completed command
             _dispatch(_serialBuf);
             _serialLen = 0;
-            Serial.print("OPS> ");             // re-print prompt
+            Serial.print("OMS> ");             // re-print prompt
         } else if ((c == 8 || c == 127) && _serialLen > 0) {
             // Backspace / DEL — erase last character
             _serialLen--;
