@@ -4,6 +4,18 @@ Open-source standalone firmware for LoRa mesh devices. Built on [MeshCore](https
 
 **A phone in your pocket, without the phone, and without the paywall.**
 
+---
+
+| Home | Chat | Channels |
+|:----:|:----:|:--------:|
+| ![Home screen — app launcher](screenshots/home.png) | ![Chat — public channel messages](screenshots/chat.png) | ![Channels — channel and DM list](screenshots/channels.png) |
+
+| Map | MP3 Player |
+|:---:|:----------:|
+| ![Map — offline tile map with mesh nodes](screenshots/maps.png) | ![MP3 Player — audio playback from SD](screenshots/mp3player.png) |
+
+---
+
 ## What Is This?
 
 Saitama is a free, open-source firmware that turns affordable LoRa devices into powerful standalone mesh communicators. It provides smartphone-grade messaging, GPS maps, encrypted comms, and more, all running directly on the device with no phone, no internet, and no license fees required.
