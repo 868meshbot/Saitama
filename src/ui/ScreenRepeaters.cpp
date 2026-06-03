@@ -996,7 +996,7 @@ void ScreenRepeaters::_onRetryLogin(lv_event_t* e)
 // ─────────────────────────────────────────────────────────────────────
 
 static constexpr int ADM_TOP_H  = 28;
-static constexpr int ADM_BTN_H  = 36;
+static constexpr int ADM_BTN_H  = 68;   // two wrapped rows of buttons
 static constexpr int ADM_RESP_Y = ADM_TOP_H + ADM_BTN_H;
 static constexpr int ADM_RESP_H = OPS_SCREEN_H - ADM_RESP_Y;
 
@@ -1063,7 +1063,7 @@ void ScreenRepeaters::_showAdminPanel()
     lv_obj_set_style_pad_ver(btnRow, 4, 0);
     lv_obj_set_style_pad_column(btnRow, 6, 0);
     lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(btnRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     // Helper: add a small action button to the button row.
@@ -1091,10 +1091,12 @@ void ScreenRepeaters::_showAdminPanel()
         return btn;
     };
 
-    makeAdminBtn(LV_SYMBOL_REFRESH " Status", theme::ACCENT,    _onAdminStatus);
-    makeAdminBtn(LV_SYMBOL_LOOP    " Clk",    theme::TEXT_MUTED, _onAdminClockSync);
-    makeAdminBtn(LV_SYMBOL_WIFI    " Advert", theme::TEXT_MUTED, _onAdminAdvert);
-    makeAdminBtn(LV_SYMBOL_LIST    " Nbrs",   theme::TEXT_MUTED, _onAdminNbrs);
+    makeAdminBtn(LV_SYMBOL_REFRESH  " Status", theme::ACCENT,     _onAdminStatus);
+    makeAdminBtn(LV_SYMBOL_LOOP     " Clk",    theme::TEXT_MUTED, _onAdminClockSync);
+    makeAdminBtn(LV_SYMBOL_WIFI     " Advert", theme::TEXT_MUTED, _onAdminAdvert);
+    makeAdminBtn(LV_SYMBOL_LIST     " Nbrs",   theme::TEXT_MUTED, _onAdminNbrs);
+    makeAdminBtn(LV_SYMBOL_KEYBOARD " Term",   theme::TEXT_MUTED, _onAdminTerminal);
+    makeAdminBtn(LV_SYMBOL_POWER    " Reboot", theme::RED,        _onAdminReboot);
 
     // ── Response area ─────────────────────────────────────────────────
     lv_obj_t* respArea = lv_obj_create(s_adminScreen);
@@ -1180,6 +1182,108 @@ void ScreenRepeaters::_onAdminNbrs(lv_event_t* /*e*/)
     }
     ops::MeshService::instance().sendRepeaterNeighboursReq(s_adminPrefix);
     OPS_LOG("Admin", "Neighbours request sent to %s", s_adminName);
+}
+
+// ── _onAdminTerminal() — open Terminal with this repeater as admin target ──
+void ScreenRepeaters::_onAdminTerminal(lv_event_t* /*e*/)
+{
+    ScreenTerminal::setAdminTarget(s_adminPrefix, s_adminName);
+    ScreenTerminal::show();
+}
+
+// ── _onAdminReboot() — show confirmation dialog before rebooting ──────
+void ScreenRepeaters::_onAdminReboot(lv_event_t* /*e*/)
+{
+    if (!s_adminScreen) return;
+
+    // Dim overlay
+    lv_obj_t* overlay = lv_obj_create(s_adminScreen);
+    lv_obj_set_size(overlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_make(0, 0, 0), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_set_style_radius(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Confirmation box
+    lv_obj_t* box = lv_obj_create(overlay);
+    lv_obj_set_size(box, 200, 90);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(box, theme::RED, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 6, 0);
+    lv_obj_set_style_pad_all(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 6, 0);
+    lv_obj_set_style_pad_column(box, 6, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    char msg[52];
+    snprintf(msg, sizeof(msg), "Reboot %s?", s_adminName);
+    lv_obj_t* msgLbl = lv_label_create(box);
+    lv_label_set_text(msgLbl, msg);
+    lv_label_set_long_mode(msgLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(msgLbl, 180);
+    lv_obj_set_style_text_color(msgLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(msgLbl, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(box);
+    lv_obj_set_size(btnRow, 184, 30);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_style_pad_column(btnRow, 8, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto mkBtn = [&](const char* label, lv_color_t col, lv_event_cb_t cb)
+    {
+        lv_obj_t* btn = lv_btn_create(btnRow);
+        lv_group_remove_obj(btn);
+        lv_obj_set_size(btn, 84, 26);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, col, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, overlay);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_color(lbl, col, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(lbl);
+    };
+    mkBtn("Cancel",             theme::TEXT_MUTED, _onAdminRebootCancel);
+    mkBtn(LV_SYMBOL_POWER " Reboot", theme::RED,   _onAdminRebootConfirm);
+}
+
+// ── _onAdminRebootCancel() ────────────────────────────────────────────
+void ScreenRepeaters::_onAdminRebootCancel(lv_event_t* e)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    if (overlay) lv_obj_del(overlay);
+}
+
+// ── _onAdminRebootConfirm() ───────────────────────────────────────────
+void ScreenRepeaters::_onAdminRebootConfirm(lv_event_t* e)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    if (overlay) lv_obj_del(overlay);
+
+    bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "reboot");
+    OPS_LOG("Admin", "Reboot cmd %s to %s", ok ? "sent" : "FAILED", s_adminName);
+
+    if (s_adminRespLbl) {
+        lv_label_set_text(s_adminRespLbl,
+            ok ? "Reboot command sent." : "Reboot FAILED — not reachable.");
+        lv_obj_set_style_text_color(s_adminRespLbl,
+            ok ? theme::ORANGE : theme::RED, 0);
+    }
 }
 
 // ── _onAdminKey() — backspace / ESC closes admin panel ────────────────

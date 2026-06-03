@@ -15,6 +15,9 @@
 #include "ScreenRepeaters.h"
 #include "ScreenMap.h"
 #include "ScreenPower.h"
+#include "ScreenSpectrum.h"
+#include "ScreenSigGen.h"
+#include "ScreenChanScan.h"
 #include "Theme.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -30,9 +33,16 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 #include <Wire.h>
+#include <SD.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include <cmath>
+
+// LodePNG encoder is compiled via LV_USE_PNG=1; only the declaration is needed.
+extern "C" {
+unsigned lodepng_encode24(unsigned char** out, size_t* outsize,
+                           const unsigned char* image, unsigned w, unsigned h);
+}
 
 // ── CPU governor ───────────────────────────────────────────────────
 // Frequency table [governor 0-3][state: 0=active, 1=screensaver, 2=screen-off]
@@ -649,6 +659,12 @@ void tick() {
         } else if (ScreenMap::isActive()) {
             // Route raw trackball delta directly to map pan (8 px per encoder tick).
             if (dx || dy) ScreenMap::navigate(dx * 8, dy * 8);
+        } else if (ScreenSpectrum::isActive()) {
+            if (dx || dy) ScreenSpectrum::navigate(dx, dy);
+        } else if (ScreenSigGen::isActive()) {
+            if (dx || dy) ScreenSigGen::navigate(dx, dy);
+        } else if (ScreenChanScan::isActive()) {
+            if (dx || dy) ScreenChanScan::navigate(dx, dy);
         } else {
             // dy (up/down) always changes group focus.
             // dx (left/right) moves a focused slider, or changes focus otherwise.
@@ -828,6 +844,9 @@ void tick() {
     ScreenTrace::tick();
     ScreenFinder::tick();
     ScreenPower::tick();
+    ScreenSpectrum::update();
+    ScreenSigGen::update();
+    ScreenChanScan::update();
 
     // Drain discover results → ScreenFinder
     {
@@ -992,5 +1011,59 @@ void startTouchCalibration()
     s_calDismissAt   = 0;
     _calBuildOverlay(kCalTx1, kCalTy1, "Touch calibration\nTap the crosshair (1/2)");
 }
+
+bool takeScreenshot(const char* path)
+{
+    constexpr int W = OPS_SCREEN_W;  // 320
+    constexpr int H = OPS_SCREEN_H;  // 240
+
+    // Render current screen into an off-screen LVGL buffer.
+    const size_t snapBytes = (size_t)W * H * sizeof(lv_color_t);
+    lv_color_t* snapBuf = (lv_color_t*)ps_malloc(snapBytes);
+    if (!snapBuf) { OPS_LOG("Screenshot", "ps_malloc snap failed"); return false; }
+
+    lv_img_dsc_t dsc{};
+    lv_res_t res = lv_snapshot_take_to_buf(lv_scr_act(), LV_IMG_CF_TRUE_COLOR,
+                                            &dsc, snapBuf, snapBytes);
+    if (res != LV_RES_OK) {
+        OPS_LOG("Screenshot", "snapshot failed");
+        free(snapBuf);
+        return false;
+    }
+
+    // Convert RGB565 → RGB888 for LodePNG.
+    const size_t rgbBytes = (size_t)W * H * 3;
+    uint8_t* rgb = (uint8_t*)ps_malloc(rgbBytes);
+    if (!rgb) { OPS_LOG("Screenshot", "ps_malloc rgb failed"); free(snapBuf); return false; }
+
+    for (int i = 0; i < W * H; i++) {
+        const lv_color_t c = snapBuf[i];
+        rgb[i * 3 + 0] = (uint8_t)((c.ch.red   << 3) | (c.ch.red   >> 2));
+        rgb[i * 3 + 1] = (uint8_t)((c.ch.green << 2) | (c.ch.green >> 4));
+        rgb[i * 3 + 2] = (uint8_t)((c.ch.blue  << 3) | (c.ch.blue  >> 2));
+    }
+    free(snapBuf);
+
+    // Encode to PNG (CONFIG_SPIRAM_USE_MALLOC=1 routes large lodepng allocs to PSRAM).
+    unsigned char* png  = nullptr;
+    size_t         pngLen = 0;
+    unsigned err = lodepng_encode24(&png, &pngLen, rgb, (unsigned)W, (unsigned)H);
+    free(rgb);
+    if (err || !png) { OPS_LOG("Screenshot", "encode failed err=%u", err); return false; }
+
+    // Write to SD card.
+    File f = SD.open(path, FILE_WRITE);
+    bool ok = false;
+    if (f) {
+        ok = (f.write(png, pngLen) == pngLen);
+        f.close();
+    }
+    free(png);
+
+    if (ok) OPS_LOG("Screenshot", "saved %s (%zu B)", path, pngLen);
+    else    OPS_LOG("Screenshot", "write failed: %s", path);
+    return ok;
+}
+
 
 }}  // namespace ops::ui

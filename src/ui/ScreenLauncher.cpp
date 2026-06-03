@@ -13,6 +13,11 @@
 #include "ScreenTrace.h"
 #include "ScreenFinder.h"
 #include "ScreenMap.h"
+#include "ScreenMP3Player.h"
+#include "ScreenFileManager.h"
+#include "ScreenSpectrum.h"
+#include "ScreenChanScan.h"
+#include "ScreenSigGen.h"
 #include "Theme.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
@@ -39,37 +44,32 @@ lv_obj_t* ScreenLauncher::_satLbl     = nullptr;
 lv_obj_t* ScreenLauncher::_radioLbl   = nullptr;
 lv_obj_t* ScreenLauncher::_speakerLbl = nullptr;
 
-// ── 2-D navigation state ─────────────────────────────────────────────
+// ── Page 1 state ─────────────────────────────────────────────────────
 static lv_obj_t* s_tiles[12]          = {};
 static lv_obj_t* s_homeBtn            = nullptr;
-static lv_obj_t* s_contactsUnreadDot  = nullptr;  // red dot on Contacts tile
+static lv_obj_t* s_contactsUnreadDot  = nullptr;
+static int8_t    s_selRow     = 0;
+static int8_t    s_selCol     = 0;
+static bool      s_homeSel    = false;
+
+// ── Page 2 state ─────────────────────────────────────────────────────
+static lv_obj_t* s_tiles2[5]          = {};
+static int8_t    s_selRow2    = 0;
+static int8_t    s_selCol2    = 0;
+
+// ── Paging state ─────────────────────────────────────────────────────
+static lv_obj_t* s_pageContainer  = nullptr;
+static lv_obj_t* s_pageDot[2]     = {};
+static int       s_activePage     = 0;   // 0 = page 1, 1 = page 2
+
+// ── Advertise screen (page 1 action) ─────────────────────────────────
 static lv_obj_t* s_advertScreen       = nullptr;
 static lv_obj_t* s_advertTimeLbl      = nullptr;
-static lv_obj_t* s_advertList         = nullptr;  // scrollable repeater-response list
-static lv_obj_t* s_advertModeDropdown = nullptr;  // Zero Hop / Flood selector
-static uint32_t  s_advertSentAt       = 0;         // unix time of last sendAdvert(); 0 = not yet sent
-static int8_t    s_selRow     = 0;       // 0-2
-static int8_t    s_selCol     = 0;       // 0-3
-static bool      s_homeSel    = false;   // true when Home button focused
-
-static void _updateHighlight() {
-    for (int i = 0; i < 12; i++) {
-        if (s_tiles[i]) lv_obj_clear_state(s_tiles[i], LV_STATE_FOCUSED);
-    }
-    if (s_homeBtn) lv_obj_clear_state(s_homeBtn, LV_STATE_FOCUSED);
-
-    if (s_homeSel) {
-        if (s_homeBtn) lv_obj_add_state(s_homeBtn, LV_STATE_FOCUSED);
-    } else {
-        lv_obj_t* t = s_tiles[s_selRow * 4 + s_selCol];
-        if (t) lv_obj_add_state(t, LV_STATE_FOCUSED);
-    }
-}
+static lv_obj_t* s_advertList         = nullptr;
+static lv_obj_t* s_advertModeDropdown = nullptr;
+static uint32_t  s_advertSentAt       = 0;
 
 // ── App grid descriptors ─────────────────────────────────────────────
-// Each entry has an LVGL symbol string and a display label.
-// Symbols are UTF-8 glyphs from the built-in LVGL symbol font
-// (automatically included with any Montserrat font size ≥ 14).
 struct AppItem { const char* symbol; const char* label; };
 
 static const AppItem kApps[12] = {
@@ -87,9 +87,15 @@ static const AppItem kApps[12] = {
     { LV_SYMBOL_WIFI,      "Signal"    },
 };
 
-// ── Grid column / row descriptors ────────────────────────────────────
-// Must be static (LVGL holds a pointer to these arrays).
-// LV_GRID_FR(1) = "1 fractional unit" — equal share of remaining space.
+static const AppItem kApps2[5] = {
+    { LV_SYMBOL_PLAY,    "MP3"      },  // row 0
+    { LV_SYMBOL_SD_CARD, "Files"    },
+    { LV_SYMBOL_UP,      "Spectrum" },
+    { LV_SYMBOL_LOOP,    "ChanScan" },
+    { LV_SYMBOL_TINT,    "SigGen"   },  // row 1, col 0
+};
+
+// ── Grid descriptors (shared by both pages) ──────────────────────────
 static const lv_coord_t kColDsc[] = {
     LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
     LV_GRID_TEMPLATE_LAST
@@ -99,13 +105,61 @@ static const lv_coord_t kRowDsc[] = {
     LV_GRID_TEMPLATE_LAST
 };
 
+// ── Page helpers ─────────────────────────────────────────────────────
+
+static void _updatePageDots()
+{
+    if (!s_pageDot[0] || !s_pageDot[1]) return;
+    lv_obj_set_style_bg_color(s_pageDot[0],
+        s_activePage == 0 ? theme::ACCENT : lv_color_make(50, 50, 50), 0);
+    lv_obj_set_style_bg_color(s_pageDot[1],
+        s_activePage == 1 ? theme::ACCENT : lv_color_make(50, 50, 50), 0);
+}
+
+static void _updateHighlight()
+{
+    for (int i = 0; i < 12; i++) {
+        if (s_tiles[i])  lv_obj_clear_state(s_tiles[i],  LV_STATE_FOCUSED);
+    }
+    for (int i = 0; i < 5; i++) {
+        if (s_tiles2[i]) lv_obj_clear_state(s_tiles2[i], LV_STATE_FOCUSED);
+    }
+    if (s_homeBtn) lv_obj_clear_state(s_homeBtn, LV_STATE_FOCUSED);
+
+    if (s_activePage == 0) {
+        if (s_homeSel) {
+            if (s_homeBtn) lv_obj_add_state(s_homeBtn, LV_STATE_FOCUSED);
+        } else {
+            lv_obj_t* t = s_tiles[s_selRow * 4 + s_selCol];
+            if (t) lv_obj_add_state(t, LV_STATE_FOCUSED);
+        }
+    } else {
+        int idx = s_selRow2 * 4 + s_selCol2;
+        if (idx < 5 && s_tiles2[idx]) lv_obj_add_state(s_tiles2[idx], LV_STATE_FOCUSED);
+    }
+}
+
+static void _onScrollEnd(lv_event_t*)
+{
+    if (!s_pageContainer) return;
+    lv_coord_t x = lv_obj_get_scroll_x(s_pageContainer);
+    s_activePage = (x > OPS_SCREEN_W / 2) ? 1 : 0;
+    _updatePageDots();
+    _updateHighlight();
+}
+
+static void _showPage(int page)
+{
+    s_activePage = page;
+    lv_obj_scroll_to_x(s_pageContainer, page * OPS_SCREEN_W, LV_ANIM_ON);
+    _updatePageDots();
+    _updateHighlight();
+}
 
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenLauncher::show() {
-    // Lazy-create: build the screen once, then just reload on re-entry.
-    // LVGL keeps all objects alive; we just switch the active screen.
     if (!_screen) {
-        _screen = lv_obj_create(nullptr);   // nullptr = top-level screen
+        _screen = lv_obj_create(nullptr);
         lv_obj_set_size(_screen, OPS_SCREEN_W, OPS_SCREEN_H);
         lv_obj_set_style_bg_color(_screen, theme::BG, 0);
         lv_obj_set_style_pad_all(_screen, 0, 0);
@@ -115,7 +169,6 @@ void ScreenLauncher::show() {
         _buildGrid(_screen);
         _buildBottomBar(_screen);
 
-        // Populate dynamic content on first build
         refreshClock();
         auto& b = Board::instance();
         refreshBattery(b.batteryPercent(), b.batteryCharging());
@@ -123,7 +176,6 @@ void ScreenLauncher::show() {
         refreshSpeaker(ops::config::get().speakerEnabled);
     }
 
-    // Update Contacts unread dot
     if (s_contactsUnreadDot) {
         if (ops::contacts::anyUnread())
             lv_obj_clear_flag(s_contactsUnreadDot, LV_OBJ_FLAG_HIDDEN);
@@ -131,8 +183,14 @@ void ScreenLauncher::show() {
             lv_obj_add_flag(s_contactsUnreadDot, LV_OBJ_FLAG_HIDDEN);
     }
 
+    // Always land on page 1 — scroll snap can latch to grid2 on first render
+    s_activePage = 0;
+    s_selRow = 0; s_selCol = 0; s_homeSel = false;
+    if (s_pageContainer) lv_obj_scroll_to_x(s_pageContainer, 0, LV_ANIM_OFF);
+    _updatePageDots();
+
     lv_scr_load(_screen);
-    _updateHighlight();  // restore selection highlight on every visit
+    _updateHighlight();
     OPS_LOG("UI", "Launcher shown");
 }
 
@@ -149,21 +207,15 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
     lv_obj_set_style_pad_column(bar, 4, 0);
     lv_obj_set_scrollbar_mode(bar, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Flex row: items fill left-to-right, centred vertically
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar,
-        LV_FLEX_ALIGN_START,   // main axis: left-aligned
-        LV_FLEX_ALIGN_CENTER,  // cross axis: vertically centred
-        LV_FLEX_ALIGN_CENTER);
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // ── Helper: create a small compact button in the top bar ──────────
-    // Returns the button object so the caller can adjust if needed.
     auto mkBtn = [](lv_obj_t* par, const char* text,
                     lv_color_t bg, lv_event_cb_t cb, void* ud) -> lv_obj_t*
     {
         lv_obj_t* btn = lv_btn_create(par);
-        lv_group_remove_obj(btn);  // top bar is not encoder-navigable
+        lv_group_remove_obj(btn);
         lv_obj_set_height(btn, TOP_H - 6);
         lv_obj_set_style_bg_color(btn, bg, 0);
         lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
@@ -173,7 +225,6 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
         lv_obj_set_style_border_width(btn, 0, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
         if (cb) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ud);
-
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, text);
         lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
@@ -182,20 +233,17 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
         return btn;
     };
 
-    // Home button — highlighted because we ARE home; selectable by trackball
     s_homeBtn = mkBtn(bar, LV_SYMBOL_HOME, theme::PRIMARY, nullptr, nullptr);
     lv_obj_set_style_border_color(s_homeBtn, theme::ACCENT, LV_STATE_FOCUSED);
     lv_obj_set_style_border_width(s_homeBtn, 2, LV_STATE_FOCUSED);
 
-    // Flex spacer — grows to push the clock all the way to the right
     lv_obj_t* spacer = lv_obj_create(bar);
     lv_obj_set_size(spacer, 1, 1);
     lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(spacer, 0, 0);
     lv_obj_set_style_pad_all(spacer, 0, 0);
-    lv_obj_set_flex_grow(spacer, 1);  // consume all remaining width
+    lv_obj_set_flex_grow(spacer, 1);
 
-    // Clock label (right-aligned via spacer)
     _timeLbl = lv_label_create(bar);
     lv_label_set_text(_timeLbl, "--:--");
     lv_obj_set_style_text_color(_timeLbl, theme::TEXT, 0);
@@ -204,31 +252,45 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
 }
 
 // ── _buildGrid() ─────────────────────────────────────────────────────
+// Creates a horizontally-scrollable page container and builds both pages.
 void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
-    lv_obj_t* grid = lv_obj_create(parent);
-    lv_obj_set_size(grid, OPS_SCREEN_W, GRID_H);
-    lv_obj_align(grid, LV_ALIGN_TOP_LEFT, 0, TOP_H);
-    lv_obj_set_style_bg_color(grid, theme::BG, 0);
-    lv_obj_set_style_border_width(grid, 0, 0);
-    lv_obj_set_style_radius(grid, 0, 0);
-    lv_obj_set_style_pad_all(grid, 2, 0);      // outer padding
-    lv_obj_set_style_pad_row(grid, 2, 0);      // gap between rows
-    lv_obj_set_style_pad_column(grid, 2, 0);   // gap between columns
-    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Activate LVGL grid layout and apply 4-col / 3-row descriptors
-    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
-    lv_obj_set_grid_dsc_array(grid, kColDsc, kRowDsc);
+    // ── Page container ────────────────────────────────────────────────
+    s_pageContainer = lv_obj_create(parent);
+    lv_obj_set_size(s_pageContainer, OPS_SCREEN_W, GRID_H);
+    lv_obj_align(s_pageContainer, LV_ALIGN_TOP_LEFT, 0, TOP_H);
+    lv_obj_set_style_bg_color(s_pageContainer, theme::BG, 0);
+    lv_obj_set_style_border_width(s_pageContainer, 0, 0);
+    lv_obj_set_style_radius(s_pageContainer, 0, 0);
+    lv_obj_set_style_pad_all(s_pageContainer, 0, 0);
+    lv_obj_set_scroll_dir(s_pageContainer, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(s_pageContainer, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(s_pageContainer, LV_SCROLL_SNAP_START);
+    lv_obj_add_event_cb(s_pageContainer, _onScrollEnd, LV_EVENT_SCROLL_END, nullptr);
 
-    // Create one cell per app
+    // ── Page 1 grid ───────────────────────────────────────────────────
+    lv_obj_t* grid1 = lv_obj_create(s_pageContainer);
+    lv_obj_set_size(grid1, OPS_SCREEN_W, GRID_H);
+    lv_obj_set_pos(grid1, 0, 0);
+    lv_obj_add_flag(grid1, LV_OBJ_FLAG_SNAPPABLE);
+    lv_obj_set_style_bg_color(grid1, theme::BG, 0);
+    lv_obj_set_style_border_width(grid1, 0, 0);
+    lv_obj_set_style_radius(grid1, 0, 0);
+    lv_obj_set_style_pad_all(grid1, 2, 0);
+    lv_obj_set_style_pad_row(grid1, 2, 0);
+    lv_obj_set_style_pad_column(grid1, 2, 0);
+    lv_obj_set_scrollbar_mode(grid1, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(grid1, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(grid1, LV_LAYOUT_GRID);
+    lv_obj_set_grid_dsc_array(grid1, kColDsc, kRowDsc);
+
     for (int i = 0; i < 12; i++) {
         int col = i % 4;
         int row = i / 4;
 
-        lv_obj_t* cell = lv_btn_create(grid);
+        lv_obj_t* cell = lv_btn_create(grid1);
         s_tiles[i] = cell;
-        lv_group_remove_obj(cell);  // 2D nav handles this; encoder must not tab into tiles
+        lv_group_remove_obj(cell);
         lv_obj_set_style_bg_color(cell, theme::BG_CARD,  0);
         lv_obj_set_style_bg_color(cell, theme::PRIMARY,  LV_STATE_PRESSED);
         lv_obj_set_style_bg_color(cell, theme::BG_CARD,  LV_STATE_FOCUSED);
@@ -238,34 +300,24 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
         lv_obj_set_style_radius(cell, 6, 0);
         lv_obj_set_style_shadow_width(cell, 0, 0);
         lv_obj_set_style_pad_all(cell, 4, 0);
-
-        // Place this cell in the correct grid column and row.
-        // LV_GRID_ALIGN_STRETCH = fill the entire cell area.
         lv_obj_set_grid_cell(cell,
-            LV_GRID_ALIGN_STRETCH, col, 1,   // column position + span
-            LV_GRID_ALIGN_STRETCH, row, 1);  // row position + span
-
-        // Flex column inside the cell: icon centred on top, label below
+            LV_GRID_ALIGN_STRETCH, col, 1,
+            LV_GRID_ALIGN_STRETCH, row, 1);
         lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(cell,
-            LV_FLEX_ALIGN_CENTER,  // main axis (vertical)
-            LV_FLEX_ALIGN_CENTER,  // cross axis (horizontal)
-            LV_FLEX_ALIGN_CENTER);
+            LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-        // Icon — uses the LVGL built-in symbol font
         lv_obj_t* icon = lv_label_create(cell);
         lv_label_set_text(icon, kApps[i].symbol);
         lv_obj_set_style_text_color(icon, theme::ACCENT, 0);
         lv_obj_set_style_text_font(icon, &lv_font_montserrat_14, 0);
 
-        // App name label
         lv_obj_t* lbl = lv_label_create(cell);
         lv_label_set_text(lbl, kApps[i].label);
         lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
 
-        // Unread dot on the Contacts tile (index 1)
-        if (i == 1) {
+        if (i == 1) {  // Contacts unread dot
             lv_obj_t* dot = lv_obj_create(cell);
             lv_obj_set_size(dot, 8, 8);
             lv_obj_set_style_bg_color(dot, theme::RED, 0);
@@ -280,9 +332,61 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
             s_contactsUnreadDot = dot;
         }
 
-        // Pass the app label string as click user-data
         lv_obj_add_event_cb(cell, _onIconClick, LV_EVENT_CLICKED,
             (void*)kApps[i].label);
+    }
+
+    // ── Page 2 grid ───────────────────────────────────────────────────
+    lv_obj_t* grid2 = lv_obj_create(s_pageContainer);
+    lv_obj_set_size(grid2, OPS_SCREEN_W, GRID_H);
+    lv_obj_set_pos(grid2, OPS_SCREEN_W, 0);
+    lv_obj_add_flag(grid2, LV_OBJ_FLAG_SNAPPABLE);
+    lv_obj_set_style_bg_color(grid2, theme::BG, 0);
+    lv_obj_set_style_border_width(grid2, 0, 0);
+    lv_obj_set_style_radius(grid2, 0, 0);
+    lv_obj_set_style_pad_all(grid2, 2, 0);
+    lv_obj_set_style_pad_row(grid2, 2, 0);
+    lv_obj_set_style_pad_column(grid2, 2, 0);
+    lv_obj_set_scrollbar_mode(grid2, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(grid2, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(grid2, LV_LAYOUT_GRID);
+    lv_obj_set_grid_dsc_array(grid2, kColDsc, kRowDsc);
+
+    for (int i = 0; i < 5; i++) {
+        int col = i % 4;
+        int row = i / 4;
+
+        lv_obj_t* cell = lv_btn_create(grid2);
+        s_tiles2[i] = cell;
+        lv_group_remove_obj(cell);
+        lv_obj_set_style_bg_color(cell, theme::BG_CARD,  0);
+        lv_obj_set_style_bg_color(cell, theme::PRIMARY,  LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(cell, theme::BG_CARD,  LV_STATE_FOCUSED);
+        lv_obj_set_style_border_color(cell, theme::ACCENT,  LV_STATE_FOCUSED);
+        lv_obj_set_style_border_width(cell, 1,            0);
+        lv_obj_set_style_border_color(cell, theme::BORDER, 0);
+        lv_obj_set_style_radius(cell, 6, 0);
+        lv_obj_set_style_shadow_width(cell, 0, 0);
+        lv_obj_set_style_pad_all(cell, 4, 0);
+        lv_obj_set_grid_cell(cell,
+            LV_GRID_ALIGN_STRETCH, col, 1,
+            LV_GRID_ALIGN_STRETCH, row, 1);
+        lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(cell,
+            LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* icon = lv_label_create(cell);
+        lv_label_set_text(icon, kApps2[i].symbol);
+        lv_obj_set_style_text_color(icon, theme::ACCENT, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_14, 0);
+
+        lv_obj_t* lbl = lv_label_create(cell);
+        lv_label_set_text(lbl, kApps2[i].label);
+        lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_add_event_cb(cell, _onIconClick, LV_EVENT_CLICKED,
+            (void*)kApps2[i].label);
     }
 }
 
@@ -303,42 +407,64 @@ void ScreenLauncher::_buildBottomBar(lv_obj_t* parent) {
     lv_obj_set_flex_align(bar,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Device callsign (left — fixed, no change needed after build)
+    // Callsign (left)
     lv_obj_t* nameLbl = lv_label_create(bar);
     const char* cs = ops::config::get().callsign;
     lv_label_set_text(nameLbl, cs[0] ? cs : "Saitama");
     lv_obj_set_style_text_color(nameLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
 
-    // Flex spacer — pushes status icons + battery to the right
-    lv_obj_t* spacer = lv_obj_create(bar);
-    lv_obj_set_size(spacer, 1, 1);
-    lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(spacer, 0, 0);
-    lv_obj_set_style_pad_all(spacer, 0, 0);
-    lv_obj_set_flex_grow(spacer, 1);
+    // Left spacer — pushes dots to center
+    lv_obj_t* lSpacer = lv_obj_create(bar);
+    lv_obj_set_size(lSpacer, 1, 1);
+    lv_obj_set_style_bg_opa(lSpacer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(lSpacer, 0, 0);
+    lv_obj_set_style_pad_all(lSpacer, 0, 0);
+    lv_obj_set_flex_grow(lSpacer, 1);
 
-    // Single GPS/satellite indicator — hidden when GPS disabled
+    // Page indicator dots (centered)
+    for (int i = 0; i < 2; i++) {
+        s_pageDot[i] = lv_obj_create(bar);
+        lv_obj_set_size(s_pageDot[i], 6, 6);
+        lv_obj_set_style_radius(s_pageDot[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(s_pageDot[i], 0, 0);
+        lv_obj_set_style_shadow_width(s_pageDot[i], 0, 0);
+        lv_obj_set_style_bg_opa(s_pageDot[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(s_pageDot[i],
+            i == 0 ? theme::ACCENT : lv_color_make(50, 50, 50), 0);
+        lv_obj_set_style_pad_all(s_pageDot[i], 0, 0);
+        if (i == 0) lv_obj_set_style_pad_right(s_pageDot[i], 3, 0);
+    }
+
+    // Right spacer
+    lv_obj_t* rSpacer = lv_obj_create(bar);
+    lv_obj_set_size(rSpacer, 1, 1);
+    lv_obj_set_style_bg_opa(rSpacer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(rSpacer, 0, 0);
+    lv_obj_set_style_pad_all(rSpacer, 0, 0);
+    lv_obj_set_flex_grow(rSpacer, 1);
+
+    // GPS/satellite indicator
     _satLbl = lv_label_create(bar);
     lv_label_set_text(_satLbl, LV_SYMBOL_GPS "--");
     lv_obj_set_style_text_color(_satLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(_satLbl, &lv_font_montserrat_10, 0);
     lv_obj_add_flag(_satLbl, LV_OBJ_FLAG_HIDDEN);
 
-    // Speaker mute/volume icon — always shown, colour reflects cfg.speakerEnabled
+    // Speaker icon
     _speakerLbl = lv_label_create(bar);
     lv_label_set_text(_speakerLbl, LV_SYMBOL_MUTE);
     lv_obj_set_style_text_color(_speakerLbl, theme::RED, 0);
     lv_obj_set_style_text_font(_speakerLbl, &lv_font_montserrat_10, 0);
 
-    // LoRa radio status — updated by refreshRadio(), hidden until initialized
+    // LoRa radio status
     _radioLbl = lv_label_create(bar);
     lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " RX");
     lv_obj_set_style_text_color(_radioLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(_radioLbl, &lv_font_montserrat_10, 0);
     lv_obj_add_flag(_radioLbl, LV_OBJ_FLAG_HIDDEN);
 
-    // Battery indicator — updated by refreshBattery()
+    // Battery indicator
     _battLbl = lv_label_create(bar);
     lv_label_set_text(_battLbl, LV_SYMBOL_BATTERY_FULL " --%");
     lv_obj_set_style_text_color(_battLbl, theme::GREEN, 0);
@@ -348,7 +474,6 @@ void ScreenLauncher::_buildBottomBar(lv_obj_t* parent) {
 // ── refreshClock() ───────────────────────────────────────────────────
 void ScreenLauncher::refreshClock() {
     if (!_timeLbl) return;
-
     time_t now = ops::config::localEpoch();
     if (now < 1700000000UL) {
         lv_label_set_text(_timeLbl, "--:--");
@@ -364,7 +489,6 @@ void ScreenLauncher::refreshClock() {
 // ── refreshBattery() ─────────────────────────────────────────────────
 void ScreenLauncher::refreshBattery(int percent, bool charging) {
     if (!_battLbl) return;
-
     const char* sym;
     lv_color_t  col;
     if (charging) {
@@ -375,7 +499,6 @@ void ScreenLauncher::refreshBattery(int percent, bool charging) {
     else if   (percent >= 25) { sym = LV_SYMBOL_BATTERY_2;     col = theme::ORANGE; }
     else if   (percent >=  5) { sym = LV_SYMBOL_BATTERY_1;     col = theme::ORANGE; }
     else                      { sym = LV_SYMBOL_BATTERY_EMPTY; col = theme::RED;    }
-
     char buf[20];
     if (charging)
         snprintf(buf, sizeof(buf), "%s CHG", sym);
@@ -392,18 +515,15 @@ void ScreenLauncher::refreshStatus(uint8_t gpsMode, bool hasFix, int satellites)
     char buf[12];
     lv_color_t col;
     if (gpsMode == 0) {
-        // Off — show red GPS icon
         snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "Off");
         col = theme::RED;
     } else if (gpsMode == 1) {
-        // Intermittent — orange; show sat count when available
         if (hasFix && satellites > 0)
             snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
         else
             snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "--");
         col = theme::ORANGE;
     } else {
-        // On — green with fix, muted without
         if (hasFix && satellites > 0)
             snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
         else
@@ -483,9 +603,9 @@ static void _advertRebuildList()
     for (int i = 0; i < svc.peerCount(); i++) {
         ops::PeerInfo p;
         if (!svc.getPeer(i, p))          continue;
-        if (p.type != 2)                 continue;  // repeaters only
-        if (s_advertSentAt == 0)         continue;  // nothing sent yet
-        if (p.lastSeen < s_advertSentAt) continue;  // only post-advert responses
+        if (p.type != 2)                 continue;
+        if (s_advertSentAt == 0)         continue;
+        if (p.lastSeen < s_advertSentAt) continue;
 
         lv_obj_t* row = lv_obj_create(s_advertList);
         lv_obj_set_size(row, lv_pct(100), 22);
@@ -565,7 +685,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_pad_all(s_advertScreen, 0, 0);
         lv_obj_clear_flag(s_advertScreen, LV_OBJ_FLAG_SCROLLABLE);
 
-        // ── Title bar ─────────────────────────────────────────────────
         lv_obj_t* titleBar = lv_obj_create(s_advertScreen);
         lv_obj_set_size(titleBar, OPS_SCREEN_W, TOP_H);
         lv_obj_align(titleBar, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -602,8 +721,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_14, 0);
 
-        // ── Info row: callsign (left) + sent time (right) ─────────────
-        // y = TOP_H (28), h = 24
         lv_obj_t* infoRow = lv_obj_create(s_advertScreen);
         lv_obj_set_size(infoRow, OPS_SCREEN_W, 24);
         lv_obj_align(infoRow, LV_ALIGN_TOP_LEFT, 0, TOP_H);
@@ -623,7 +740,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_color(csLbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(csLbl, &lv_font_montserrat_14, 0);
 
-        // Spacer pushes sent-time to the right, matching top-bar pattern
         lv_obj_t* iSpacer = lv_obj_create(infoRow);
         lv_obj_set_size(iSpacer, 1, 1);
         lv_obj_set_style_bg_opa(iSpacer, LV_OPA_TRANSP, 0);
@@ -637,8 +753,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_font(s_advertTimeLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_pad_right(s_advertTimeLbl, 2, 0);
 
-        // ── Button row ─────────────────────────────────────────────────
-        // y = TOP_H + 24 (52), h = 40
         lv_obj_t* btnRow = lv_obj_create(s_advertScreen);
         lv_obj_set_size(btnRow, OPS_SCREEN_W, 40);
         lv_obj_align(btnRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 24);
@@ -653,7 +767,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_flex_align(btnRow,
             LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-        // Mode dropdown: Zero Hop / Flood
         s_advertModeDropdown = lv_dropdown_create(btnRow);
         lv_obj_set_size(s_advertModeDropdown, 158, 30);
         lv_dropdown_set_options(s_advertModeDropdown, "Zero Hop\nFlood");
@@ -663,7 +776,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_border_color(s_advertModeDropdown, theme::BORDER, 0);
         lv_obj_set_style_text_color(s_advertModeDropdown, theme::TEXT, 0);
 
-        // Send button
         lv_obj_t* sendBtn = lv_btn_create(btnRow);
         lv_obj_set_size(sendBtn, 112, 30);
         lv_obj_set_style_bg_color(sendBtn, theme::PRIMARY, 0);
@@ -678,9 +790,6 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_font(sendLbl, &lv_font_montserrat_12, 0);
         lv_obj_center(sendLbl);
 
-
-        // ── Repeater response list ─────────────────────────────────────
-        // y = TOP_H + 24 + 40 (92), fills remaining height (148 px)
         static constexpr lv_coord_t LIST_Y = TOP_H + 24 + 40;
         s_advertList = lv_obj_create(s_advertScreen);
         lv_obj_set_size(s_advertList, OPS_SCREEN_W, OPS_SCREEN_H - LIST_Y);
@@ -713,18 +822,23 @@ void ScreenLauncher::_onIconClick(lv_event_t* e) {
     const char* name = static_cast<const char*>(lv_event_get_user_data(e));
     OPS_LOG("UI", "Launch: %s", name);
 
-    if      (strcmp(name, "Chat")     == 0) { ScreenHome::show();     return; }
-    else if (strcmp(name, "Terminal") == 0) { ScreenTerminal::show(); return; }
-    else if (strcmp(name, "Settings") == 0) { ScreenSettings::show(); return; }
-    else if (strcmp(name, "Heard")    == 0) { ScreenHeard::show();    return; }
-    else if (strcmp(name, "Contacts")  == 0) { ScreenContacts::show();  return; }
+    if      (strcmp(name, "Chat")      == 0) { ScreenHome::show();         return; }
+    else if (strcmp(name, "Terminal")  == 0) { ScreenTerminal::show();     return; }
+    else if (strcmp(name, "Settings")  == 0) { ScreenSettings::show();     return; }
+    else if (strcmp(name, "Heard")     == 0) { ScreenHeard::show();        return; }
+    else if (strcmp(name, "Contacts")  == 0) { ScreenContacts::show();     return; }
     else if (strcmp(name, "Repeaters") == 0) { ScreenRepeaters::show();    return; }
     else if (strcmp(name, "Trace")     == 0) { ScreenTrace::show();        return; }
-    else if (strcmp(name, "Advertise") == 0) { _showAdvertiseScreen();    return; }
-    else if (strcmp(name, "Signal")    == 0) { ScreenSignal::show();      return; }
-    else if (strcmp(name, "Finder")    == 0) { ScreenFinder::show();      return; }
-    else if (strcmp(name, "Map")       == 0) { ScreenMap::show();         return; }
-    // Unimplemented tiles show a placeholder
+    else if (strcmp(name, "Advertise") == 0) { _showAdvertiseScreen();     return; }
+    else if (strcmp(name, "Signal")    == 0) { ScreenSignal::show();       return; }
+    else if (strcmp(name, "Finder")    == 0) { ScreenFinder::show();       return; }
+    else if (strcmp(name, "Map")       == 0) { ScreenMap::show();          return; }
+    // Page 2 tools
+    else if (strcmp(name, "MP3")       == 0) { ScreenMP3Player::show();    return; }
+    else if (strcmp(name, "Files")     == 0) { ScreenFileManager::show();  return; }
+    else if (strcmp(name, "Spectrum")  == 0) { ScreenSpectrum::show();     return; }
+    else if (strcmp(name, "ChanScan")  == 0) { ScreenChanScan::show();     return; }
+    else if (strcmp(name, "SigGen")    == 0) { ScreenSigGen::show();       return; }
     ScreenPlaceholder::show(name);
 }
 
@@ -736,26 +850,37 @@ bool ScreenLauncher::isActive() {
 void ScreenLauncher::navigate(int dx, int dy) {
     if (!_screen) return;
 
+    if (s_activePage == 1) {
+        // Page 2: row 0 has 4 tiles (cols 0-3), row 1 has 1 tile (col 0)
+        if (dy < 0 && s_selRow2 > 0) {
+            s_selRow2--;
+        } else if (dy > 0 && s_selRow2 < 1) {
+            s_selRow2++;
+            s_selCol2 = 0;  // row 1 only has col 0
+        }
+        if (s_selRow2 == 0) {
+            s_selCol2 = (int8_t)((s_selCol2 + dx + 4) % 4);
+        }
+        _updateHighlight();
+        return;
+    }
+
+    // Page 1
     if (s_homeSel) {
-        // From Home button: down returns to the grid at (0,0)
         if (dy > 0) {
             s_homeSel = false;
             s_selRow = 0;
             s_selCol = 0;
         }
-        // left/right ignored — Home is the only navigable top-bar item
     } else {
         if (dy < 0 && s_selRow == 0) {
-            // Up from top row → Home button
             s_homeSel = true;
         } else if (dy < 0 && s_selRow > 0) {
             s_selRow--;
         } else if (dy > 0 && s_selRow < 2) {
             s_selRow++;
         }
-
         if (!s_homeSel) {
-            // Wrap left/right within the row
             s_selCol = (int8_t)((s_selCol + dx + 4) % 4);
         }
     }
@@ -765,6 +890,13 @@ void ScreenLauncher::navigate(int dx, int dy) {
 
 void ScreenLauncher::confirmSelect() {
     if (!_screen) return;
+
+    if (s_activePage == 1) {
+        int idx = s_selRow2 * 4 + s_selCol2;
+        if (idx < 5 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
+        return;
+    }
+
     lv_obj_t* target = s_homeSel ? s_homeBtn
                                  : s_tiles[s_selRow * 4 + s_selCol];
     if (target) lv_event_send(target, LV_EVENT_CLICKED, nullptr);

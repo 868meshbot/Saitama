@@ -57,6 +57,11 @@ void ScreenHeard::onPeersUpdated() {
     return;
   if (s_dialogOpen)
     return; // don't rebuild while a save dialog is visible
+  // If a screensaver or other overlay is covering this screen, skip the rebuild.
+  // Deleting _screen while the screensaver's s_prevScreen still points to it
+  // causes a LoadProhibited crash when the screensaver tries to restore it.
+  if (_screen && lv_scr_act() != _screen)
+    return;
   lv_obj_t *old = _screen;
   _screen = nullptr;
   _build(); // creates _screen, calls lv_scr_load

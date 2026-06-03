@@ -48,9 +48,13 @@ private:
     static void _onRetryLogin   (lv_event_t* e);
 
     // Admin panel action button callbacks
-    static void _onAdminClockSync(lv_event_t* e);
-    static void _onAdminAdvert   (lv_event_t* e);
-    static void _onAdminNbrs     (lv_event_t* e);
+    static void _onAdminClockSync    (lv_event_t* e);
+    static void _onAdminAdvert       (lv_event_t* e);
+    static void _onAdminNbrs         (lv_event_t* e);
+    static void _onAdminTerminal     (lv_event_t* e);
+    static void _onAdminReboot       (lv_event_t* e);
+    static void _onAdminRebootConfirm(lv_event_t* e);
+    static void _onAdminRebootCancel (lv_event_t* e);
 
     // Set-path dialog callbacks (user_data = overlay obj)
     static void _onSetPathSave  (lv_event_t* e);

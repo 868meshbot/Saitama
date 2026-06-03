@@ -23,7 +23,7 @@ void sdcard::init() {
         return;
     }
     s_mounted = true;
-    if (!SD.exists("/ops")) SD.mkdir("/ops");
+    if (!SD.exists("/oms")) SD.mkdir("/oms");
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Mounted, %llu MB free", (unsigned long long)free_mb);
     OPS_LOG("SD", "Backups: id=%d contacts=%d repeaters=%d",
@@ -47,7 +47,7 @@ bool sdcard::tryMount()
         return false;
     }
     s_mounted = true;
-    if (!SD.exists("/ops")) SD.mkdir("/ops");
+    if (!SD.exists("/oms")) SD.mkdir("/oms");
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Remounted, %llu MB free", (unsigned long long)free_mb);
     return true;
@@ -81,7 +81,7 @@ static void _buildMsgPath(const char* tag, char* path, size_t pathSize)
     for (int i = 0; tag[i] && j < 31; i++) {
         char c = tag[i];
         if (c == '/' || c == '\\' || c == ':' || c == '?' || c == '*' ||
-            c == '"' || c == '<'  || c == '>' || c == '|') c = '_';
+            c == '"' || c == '<'  || c == '>' || c == '|' || c == ' ') c = '_';
         safe[j++] = c;
     }
     snprintf(path, pathSize, "/ops/msgs/%s.log", safe);

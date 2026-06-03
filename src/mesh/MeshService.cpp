@@ -102,7 +102,7 @@ namespace ops {
 // ── Board shim ─────────────────────────────────────────────────────
 // Extends ESP32Board but skips Wire.begin() (Board.cpp already owns it)
 // and delegates battery millivolts to the Board singleton.
-class OPSBoard : public ESP32Board {
+class OMSBoard : public ESP32Board {
 public:
     uint16_t getBattMilliVolts() override {
         // Board returns 0-100 percent; map to ~3200-4200 mV LiPo range
@@ -143,10 +143,11 @@ static int _b64decode(const char* in, uint8_t* out, int outMax) {
 // Declared in dependency order — C++ initialises statics in declaration
 // order within a translation unit, so each object is ready before
 // anything that references it is constructed.
-static OPSBoard                  ops_board;
+static OMSBoard                  oms_board;
 static SPIClass                  lora_spi(FSPI);
 static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, lora_spi));
-static CustomSX1262Wrapper       radio_driver(sx1262, ops_board);
+static CustomSX1262Wrapper       radio_driver(sx1262, oms_board);
+static bool                      s_sigGenActive = false;
 static ArduinoMillis             ms_clock;
 static StdRNG                    std_rng;
 static ESP32RTCClock             rtc_clock;
@@ -163,8 +164,8 @@ static constexpr uint32_t DC_RX_US  = 250000;  // 250 ms RX — 50 % duty cycle
 static constexpr uint32_t DC_SLP_US = 250000;  // 250 ms sleep
 static constexpr uint32_t DC_ARM_MS = 10000;   // arm after 10 s idle (less aggressive)
 
-// ── OPSMesh ────────────────────────────────────────────────────────
-class OPSMesh : public BaseChatMesh {
+// ── OMSMesh ────────────────────────────────────────────────────────
+class OMSMesh : public BaseChatMesh {
     static constexpr int RX_QUEUE_SIZE = 24;
     static constexpr int MAX_PEERS     = 60;
 
@@ -591,7 +592,7 @@ class OPSMesh : public BaseChatMesh {
             memcpy(&_outFrame[i], &bw, 4); i += 4;
             _outFrame[i++] = 8; // sf
             _outFrame[i++] = 8; // cr
-            const char* name = _callsign[0] ? _callsign : "OPS-NODE";
+            const char* name = _callsign[0] ? _callsign : "OMS-NODE";
             int nlen = (int)strlen(name);
             if (i + nlen > MAX_FRAME_SIZE) nlen = MAX_FRAME_SIZE - i;
             memcpy(&_outFrame[i], name, nlen); i += nlen;
@@ -1488,7 +1489,7 @@ public:
 
     bool hasPathToContact(const uint8_t* prefix4) const {
         // const_cast: lookupContactByPubKey is non-const in BaseChatMesh
-        OPSMesh* self = const_cast<OPSMesh*>(this);
+        OMSMesh* self = const_cast<OMSMesh*>(this);
         ContactInfo* ci = self->lookupContactByPubKey(prefix4, 4);
         return ci && ci->out_path_len != OUT_PATH_UNKNOWN;
     }
@@ -1600,7 +1601,7 @@ public:
         }
     }
 
-    OPSMesh()
+    OMSMesh()
         : BaseChatMesh(radio_driver, ms_clock, std_rng, rtc_clock, pkt_mgr, mesh_tables)
     {}
 
@@ -1967,7 +1968,7 @@ public:
     void getSelfPubKey(uint8_t out[32])       const { memcpy(out, self_id.pub_key, 32); }
 
     bool getContactPathInfo(const uint8_t* prefix4, PathInfo& out) const {
-        OPSMesh* self = const_cast<OPSMesh*>(this);
+        OMSMesh* self = const_cast<OMSMesh*>(this);
         ContactInfo* ci = self->lookupContactByPubKey(prefix4, 4);
         if (!ci) { out = {}; return false; }
         out.found  = true;
@@ -2013,7 +2014,7 @@ public:
     }
 };
 
-static OPSMesh the_mesh;
+static OMSMesh the_mesh;
 
 // ── MeshService utilities ─────────────────────────────────────────
 void MeshService::deriveChannelPsk(const char* name, char* psk_out, int psk_size)
@@ -2144,12 +2145,12 @@ void MeshService::init() {
     OPS_LOG("Mesh", "SX1262 OK %.1f MHz SF%d BW%d", (double)LORA_FREQ, LORA_SF, LORA_BW);
 
     const auto& cfg = ops::config::get();
-    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OPS-NODE");
+    the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OMS-NODE");
 
     applyLoraProfile(cfg.radioProfile);
     applyRadioOverrides();
     if (cfg.rxBoost) sx1262.setRxBoostedGainMode(true);
-    the_mesh.sendSelfAdvert(random(500, 2500));
+    the_mesh.sendSelfAdvert(random(500, 2500), false);  // zero-hop on boot
 
     _initialized = true;
     OPS_LOG("Mesh", "MeshCore ready");
@@ -2157,6 +2158,7 @@ void MeshService::init() {
 
 void MeshService::tick() {
     if (!_initialized) return;
+    if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
     the_mesh.checkSerialInterface();
     _tickDutyCycle();
@@ -2379,7 +2381,7 @@ void MeshService::startCompanionBLE()
 {
     const auto& cfg = ops::config::get();
     ops::BTCompanionService::instance().init(
-        cfg.callsign[0] ? cfg.callsign : "OPS-NODE", 123456);
+        cfg.callsign[0] ? cfg.callsign : "OMS-NODE", 123456);
     if (_initialized)
         the_mesh.startCompanionInterface(
             ops::BTCompanionService::instance().getInterface());
@@ -2408,5 +2410,96 @@ bool MeshService::sendDiscoverReq(uint8_t typeFilter) {
 bool MeshService::pollDiscoverResult(DiscoverEntry& out) {
     return _initialized && the_mesh.pollDiscoverResult(out);
 }
+
+bool MeshService::spectrumScan(float startMHz, float stepMHz, int count, float* rssiOut)
+{
+    if (!_initialized || count <= 0 || !rssiOut) return false;
+
+    // Guard: skip scan if radio is not in RX mode — it may be mid-TX.
+    // Changing frequency during an active transmission corrupts the packet
+    // and leaves the radio in an undefined state.
+    if (!radio_driver.isInRecvMode()) return false;
+
+    // Sweep frequencies using GetRssiInst (SX1262 §9.8: technically FSK/FS/STDBY only,
+    // but confirmed to return valid instantaneous RSSI in LoRa RX on this silicon).
+    // setFrequency() auto-calibrates image rejection on jumps ≥ 20 MHz (RadioLib).
+    // Steps < 20 MHz write the PLL register in-place while in RX — confirmed working.
+    for (int i = 0; i < count; i++) {
+        float f = startMHz + (float)i * stepMHz;
+        if (f < 150.0f) f = 150.0f;
+        if (f > 960.0f) f = 960.0f;
+        sx1262.setFrequency(f);
+        delayMicroseconds(75);           // PLL re-lock (44 µs typical per datasheet)
+        rssiOut[i] = sx1262.getRSSI(false);
+    }
+
+    // Restore mesh frequency and re-enter continuous RX.
+    sx1262.setFrequency(getFreqMHz());
+    sx1262.startReceive();
+    return true;
+}
+
+bool MeshService::cadCheck()
+{
+    if (!_initialized) return false;
+    sx1262.setFrequency(getFreqMHz());
+    int16_t result = sx1262.scanChannel();  // blocks ~4 ms (1 symbol at SF8/BW62.5)
+    sx1262.startReceive();
+    return (result == RADIOLIB_LORA_DETECTED);
+}
+
+bool MeshService::cadSweepChannels(const float* freqs, int count, bool* detectedOut)
+{
+    if (!_initialized || count <= 0 || !freqs || !detectedOut) return false;
+    if (s_sigGenActive) return false;
+    if (!radio_driver.isInRecvMode()) return false;
+
+    for (int i = 0; i < count; i++) {
+        float f = freqs[i];
+        if (f < 150.0f || f > 960.0f) { detectedOut[i] = false; continue; }
+        sx1262.setFrequency(f);
+        detectedOut[i] = (sx1262.scanChannel() == RADIOLIB_LORA_DETECTED);
+    }
+    sx1262.setFrequency(getFreqMHz());
+    sx1262.startReceive();
+    return true;
+}
+
+// ── Signal generator ─────────────────────────────────────────────────────────
+
+bool MeshService::sigGenStart(float freqMHz, int8_t powerDbm, bool loraMode)
+{
+    if (!_initialized || s_sigGenActive) return false;
+    if (powerDbm < -9) powerDbm = -9;
+    if (powerDbm > 22) powerDbm = 22;
+    sx1262.standby();
+    sx1262.setFrequency(freqMHz);
+    sx1262.setOutputPower(powerDbm);
+    // transmitDirect(0) sets the RF switch to TX mode and issues SetTxContinuousWave.
+    sx1262.transmitDirect(0);
+    if (loraMode) {
+        // Override CW with SetTxInfinitePreamble (0xD2) — outputs LoRa chirp symbols
+        // indefinitely.  RF switch is already in TX from transmitDirect().
+        sx1262.getMod()->SPIwriteStream(
+            RADIOLIB_SX126X_CMD_SET_TX_INFINITE_PREAMBLE, nullptr, 0);
+    }
+    s_sigGenActive = true;
+    OPS_LOG("SigGen", "start %.3f MHz %s %+d dBm",
+            (double)freqMHz, loraMode ? "preamble" : "CW", (int)powerDbm);
+    return true;
+}
+
+void MeshService::sigGenStop()
+{
+    if (!_initialized) return;
+    s_sigGenActive = false;
+    sx1262.standby();
+    sx1262.setOutputPower(LORA_TX_POWER);
+    sx1262.setFrequency(getFreqMHz());
+    sx1262.startReceive();
+    OPS_LOG("SigGen", "stopped");
+}
+
+bool MeshService::sigGenActive() const { return s_sigGenActive; }
 
 }  // namespace ops

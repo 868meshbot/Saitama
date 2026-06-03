@@ -16,6 +16,9 @@
 
 #include "ScreenTerminal.h"
 #include "ScreenLauncher.h"
+#include "ScreenSpectrum.h"
+#include "ScreenSigGen.h"
+#include "ScreenChanScan.h"
 #include "ScreenMP3Player.h"
 #include "ScreenPower.h"
 #include "ScreenFileManager.h"
@@ -1746,9 +1749,60 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
+    // ── spectrum ─ hidden, not in /help ──────────────────────────────
+    if (strcmp(cmd, "spectrum") == 0) {
+        ops::ui::ScreenSpectrum::show();
+        return;
+    }
+
+    // ── siggen ─ hidden, not in /help ────────────────────────────────
+    // RF signal generator: CW or LoRa preamble output for antenna testing.
+    if (strcmp(cmd, "siggen") == 0) {
+        ops::ui::ScreenSigGen::show();
+        return;
+    }
+
+    // ── chscan ─ hidden, not in /help ────────────────────────────────
+    // CAD channel scanner across EU868 / US915 standard channel plan.
+    if (strcmp(cmd, "chscan") == 0) {
+        ops::ui::ScreenChanScan::show();
+        return;
+    }
+
     // ── filemgr ─ hidden, not in /help ───────────────────────────────
     if (strcmp(cmd, "filemgr") == 0) {
         ops::ui::ScreenFileManager::show();
+        return;
+    }
+
+    // ── screenshot [filename] ─ hidden, not in /help ──────────────────
+    // Saves a PNG of the current screen to the SD card root.
+    // /screenshot          → /screenshot_001.png (first unused slot)
+    // /screenshot foo      → /foo.png
+    // /screenshot foo.png  → /foo.png
+    if (strcmp(cmd, "screenshot") == 0) {
+        if (!ops::sdcard::isMounted()) { appendLine("[screenshot] SD not mounted"); return; }
+        char path[48];
+        if (args[0]) {
+            const char* base = (args[0] == '/') ? args + 1 : args;
+            const char* dot  = strrchr(base, '.');
+            bool hasPng = dot && (strcmp(dot, ".png") == 0 || strcmp(dot, ".PNG") == 0);
+            snprintf(path, sizeof(path), hasPng ? "/%s" : "/%s.png", base);
+        } else {
+            bool found = false;
+            for (int n = 1; n <= 999 && !found; n++) {
+                snprintf(path, sizeof(path), "/screenshot_%03d.png", n);
+                if (!ops::sdcard::hasFile(path)) found = true;
+            }
+            if (!found) { appendLine("[screenshot] no slot available (delete some screenshots)"); return; }
+        }
+        appendLine("[screenshot] capturing...");
+        char msg[56];
+        if (ops::ui::takeScreenshot(path))
+            snprintf(msg, sizeof(msg), "[screenshot] saved: %s", path);
+        else
+            snprintf(msg, sizeof(msg), "[screenshot] failed");
+        appendLine(msg);
         return;
     }
 

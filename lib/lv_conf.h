@@ -1,5 +1,5 @@
-/* Saitama LVGL 8.3 Configuration
- * Minimal config for T-Deck Plus: 320x240, ESP32-S3, 8MB PSRAM
+/* Saitama LVGL 9 Configuration
+ * Minimal config for T-Deck: 320x240, ESP32-S3, 8MB PSRAM
  */
 
 #ifndef LV_CONF_H
@@ -105,5 +105,8 @@
 
 /* Image-font: maps Unicode codepoints to small lv_img_dsc_t bitmaps (used for emoji). */
 #define LV_USE_IMGFONT 1
+
+/* Screenshot: render active screen to an off-screen buffer (used by /screenshot command). */
+#define LV_USE_SNAPSHOT 1
 
 #endif /* LV_CONF_H */

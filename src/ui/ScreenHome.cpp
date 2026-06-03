@@ -498,7 +498,7 @@ void ScreenHome::_clearChannelMessages(int chIdx)
     for (int i = 0; i < s_loadedTagCnt; i++) {
         if (strncmp(s_loadedTags[i], tag, 31) == 0) {
             for (int j = i; j < s_loadedTagCnt - 1; j++)
-                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 16);
+                memcpy(s_loadedTags[j], s_loadedTags[j + 1], 32);
             s_loadedTagCnt--;
             break;
         }

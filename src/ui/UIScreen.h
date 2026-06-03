@@ -29,4 +29,9 @@ void activateScreensaver(bool analog = false);
 // Backspace/ESC cancels. Called from the /touch-cali terminal command.
 void startTouchCalibration();
 
+// Render the current LVGL screen to a PNG file on the SD card.
+// path should be an absolute SD path such as "/screenshot_001.png".
+// Returns true on success.
+bool takeScreenshot(const char* path);
+
 }}  // namespace ops::ui

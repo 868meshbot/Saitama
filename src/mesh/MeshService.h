@@ -165,6 +165,26 @@ public:
     bool pollLoginResult(bool& ok);
 
     // ── Radio control / stats ─────────────────────────────────────────
+    // Sweep the SX1262 from startMHz in stepMHz increments, storing
+    // instantaneous RSSI (dBm) into rssiOut[count].  Blocks for ~(count*120)µs.
+    // Mesh RX resumes automatically after the sweep.
+    bool spectrumScan(float startMHz, float stepMHz, int count, float* rssiOut);
+
+    // Run one hardware CAD check at the configured mesh frequency (~8 ms at SF8/BW62.5).
+    // Returns true if a LoRa preamble chirp was detected, false if channel is clear.
+    // Leaves radio in RX mode on return.
+    bool cadCheck();
+
+    // Run CAD on each frequency in freqs[count], store results in detectedOut[count].
+    // Restores mesh frequency and RX on return.  Skips if TX or siggen is active.
+    bool cadSweepChannels(const float* freqs, int count, bool* detectedOut);
+
+    // Signal generator: output CW or LoRa infinite preamble.
+    // Mesh operation is paused until sigGenStop() is called.
+    bool sigGenStart(float freqMHz, int8_t powerDbm, bool loraMode);
+    void sigGenStop();
+    bool sigGenActive() const;
+
     void suspendDutyCycle(bool suspend);
     RadioStats radioStats() const;
     void  setActive(bool active);
