@@ -17,6 +17,7 @@ secrets.*
 
 # Firmware binaries (built by CI)
 firmware/
+!firmware/firmware_merged.bin
 *.bin
 *.elf
 *.hex
