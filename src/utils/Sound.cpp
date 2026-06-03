@@ -46,6 +46,23 @@ static constexpr float JINGLE_FREQS[JINGLE_NOTES] = {
 static constexpr int   JINGLE_LENS[JINGLE_NOTES] = { 1600, 640, 640, 640, 640, 640, 640, 4800 };
 static constexpr int   JINGLE_TOTAL = 10240;  // 1600 + 640*6 + 4800
 
+// Applies cfg.speakerVolume (0–100) scaling when writing to I2S DMA.
+// Chunks through a 256-sample stack buffer to avoid a heap allocation.
+static void _writeScaled(const int16_t* buf, int count)
+{
+    const float scale = (float)ops::config::get().speakerVolume / 100.0f;
+    int16_t tmp[256];
+    size_t written;
+    while (count > 0) {
+        int n = (count < 256) ? count : 256;
+        for (int i = 0; i < n; i++)
+            tmp[i] = (int16_t)((float)buf[i] * scale);
+        i2s_write(SPK_I2S_PORT, tmp, (size_t)n * sizeof(int16_t), &written, pdMS_TO_TICKS(100));
+        buf += n;
+        count -= n;
+    }
+}
+
 static int16_t s_pingBuf[PING_SAMPLES];
 static int16_t s_pluckBuf[PLUCK_SAMPLES];
 static int16_t s_clearBuf[CLEAR_SAMPLES];
@@ -199,10 +216,7 @@ void sound::playPing()
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
 
-    size_t written = 0;
-    // 50 ms timeout — DMA ring holds 2048 samples, ping is only 1200, so this
-    // returns well within the timeout (typically < 1 ms transfer to DMA).
-    i2s_write(SPK_I2S_PORT, s_pingBuf, sizeof(s_pingBuf), &written, pdMS_TO_TICKS(50));
+    _writeScaled(s_pingBuf, PING_SAMPLES);
 }
 
 void sound::playNotification()
@@ -214,20 +228,11 @@ void sound::playNotification()
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
 
-    size_t written = 0;
     switch (cfg.notifySoundChoice) {
-        case 1:
-            i2s_write(SPK_I2S_PORT, s_pluckBuf, sizeof(s_pluckBuf), &written, pdMS_TO_TICKS(50));
-            break;
-        case 2:
-            i2s_write(SPK_I2S_PORT, s_clearBuf, sizeof(s_clearBuf), &written, pdMS_TO_TICKS(50));
-            break;
-        case 3:
-            i2s_write(SPK_I2S_PORT, s_whooshBuf, sizeof(s_whooshBuf), &written, pdMS_TO_TICKS(50));
-            break;
-        default:
-            i2s_write(SPK_I2S_PORT, s_pingBuf, sizeof(s_pingBuf), &written, pdMS_TO_TICKS(50));
-            break;
+        case 1:  _writeScaled(s_pluckBuf,  PLUCK_SAMPLES);  break;
+        case 2:  _writeScaled(s_clearBuf,  CLEAR_SAMPLES);  break;
+        case 3:  _writeScaled(s_whooshBuf, WHOOSH_SAMPLES); break;
+        default: _writeScaled(s_pingBuf,   PING_SAMPLES);   break;
     }
 }
 
@@ -237,12 +242,11 @@ void sound::playPreview(uint8_t choice)
     if (!s_initialized) return;
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
-    size_t written = 0;
     switch (choice) {
-        case 1: i2s_write(SPK_I2S_PORT, s_pluckBuf,  sizeof(s_pluckBuf),  &written, pdMS_TO_TICKS(50)); break;
-        case 2: i2s_write(SPK_I2S_PORT, s_clearBuf,  sizeof(s_clearBuf),  &written, pdMS_TO_TICKS(50)); break;
-        case 3: i2s_write(SPK_I2S_PORT, s_whooshBuf, sizeof(s_whooshBuf), &written, pdMS_TO_TICKS(50)); break;
-        default: i2s_write(SPK_I2S_PORT, s_pingBuf,  sizeof(s_pingBuf),   &written, pdMS_TO_TICKS(50)); break;
+        case 1:  _writeScaled(s_pluckBuf,  PLUCK_SAMPLES);  break;
+        case 2:  _writeScaled(s_clearBuf,  CLEAR_SAMPLES);  break;
+        case 3:  _writeScaled(s_whooshBuf, WHOOSH_SAMPLES); break;
+        default: _writeScaled(s_pingBuf,   PING_SAMPLES);   break;
     }
 }
 
@@ -251,13 +255,8 @@ void sound::playStartupJingle()
     if (!s_initialized) return;
     if (!ops::config::get().speakerEnabled) return;
 
-    size_t written = 0;
-    // 10240 samples at 8 kHz = ~1.3 s. DMA ring holds 2048 samples (256 ms).
-    // i2s_write blocks ~1 s while the DMA drains and accepts the full buffer.
-    // Called at boot before ui::init() so blocking here is acceptable; the tail
-    // of the jingle finishes playing in DMA while the UI initialises.
-    i2s_write(SPK_I2S_PORT, s_jingleBuf, sizeof(s_jingleBuf),
-              &written, pdMS_TO_TICKS(2000));
+    // 10240 samples at 8 kHz = ~1.3 s. Called before ui::init() — blocking is acceptable.
+    _writeScaled(s_jingleBuf, JINGLE_TOTAL);
 }
 
 }  // namespace ops

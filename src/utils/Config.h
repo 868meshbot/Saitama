@@ -36,7 +36,8 @@ struct Config {
     // screenTimeoutSec == 0 means always-on display
     int        brightness;        // 0-255 backlight
     int        screenTimeoutSec;  // seconds before screensaver activates (0=off)
-    uint8_t    screenOffMin;      // minutes after screensaver before backlight off (0=never, min 2)
+    uint8_t    screenOffSec;      // seconds after screensaver before backlight off (0=never, 20-120 in 10s steps)
+    uint8_t    speakerVolume;     // 0-100 percent; scales I2S samples at playback
     bool       notifySound;
     uint8_t    notifySoundChoice; // 0=default ping, 1=pluck, 2=clear, 3=whoosh
     char       mapTileDir[32];

@@ -1364,7 +1364,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
 
         if (strcmp(sub, "ls") == 0) {
-            const char* path = sub_args[0] ? sub_args : "/oms";
+            const char* path = sub_args[0] ? sub_args : "/ops";
             static char lsbuf[1024];
             size_t n = ops::sdcard::listDir(path, lsbuf, sizeof(lsbuf));
             if (n == 0) { appendLine("(empty or not found)"); return; }

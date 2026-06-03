@@ -238,6 +238,9 @@ public:
     bool isBLEConnected() const;
 
     bool initialized() const { return _initialized; }
+    // True when the SX1262 BUSY pin (GPIO13) is HIGH — TX or command in progress.
+    // Checked by UIScreen before entering light sleep to avoid racing the radio.
+    bool isTxBusy() const;
 
 private:
     bool _initialized = false;

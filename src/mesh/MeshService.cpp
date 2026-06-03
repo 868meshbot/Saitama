@@ -1998,7 +1998,7 @@ public:
     }
 
     // Reads /mesh/self.id from LittleFS and writes it to NVS ("opsMesh"/"selfId")
-    // and SD (/ops/identity.bin).  Call after every identity load or save.
+    // and SD (/oms/identity.bin).  Call after every identity load or save.
     void _saveIdentityBackups() {
         if (!LittleFS.exists("/mesh/self.id")) return;
         File f = LittleFS.open("/mesh/self.id", "r");
@@ -2287,6 +2287,11 @@ void MeshService::resetContactPath(const uint8_t* prefix4) {
 
 void MeshService::resetAllContactPaths() {
     if (_initialized) the_mesh.resetAllContactPaths();
+}
+
+bool MeshService::isTxBusy() const {
+    if (!_initialized) return false;
+    return digitalRead(P_LORA_BUSY) == HIGH;
 }
 
 float MeshService::getFreqMHz() const {

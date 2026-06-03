@@ -169,8 +169,9 @@ static lv_obj_t* _addRow(lv_obj_t* list, const char* label,
     return btn;
 }
 
-// Forward declaration — defined with the timeout dialog below.
+// Forward declarations — defined with their respective dialogs below.
 static void _fmtTimeoutVal(char* buf, size_t len, int sec);
+static void _fmtScreenOffVal(char* buf, size_t len, int sec);
 
 // ── _buildList() ─────────────────────────────────────────────────────
 void ScreenSettings::_buildList(lv_obj_t* parent) {
@@ -260,10 +261,13 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, "Screen Timeout",     toStr, 13);
     {
         char soStr[12];
-        uint8_t offMin = cfg.screenOffMin;
-        if (offMin < 2) snprintf(soStr, sizeof(soStr), "Off");
-        else            snprintf(soStr, sizeof(soStr), "%d min", (int)offMin);
-        _addRow(_list, "Screen Off",     soStr, 27);
+        _fmtScreenOffVal(soStr, sizeof(soStr), (int)cfg.screenOffSec);
+        _addRow(_list, "Screen Off", soStr, 27);
+    }
+    {
+        char volStr[8];
+        snprintf(volStr, sizeof(volStr), "%d%%", (int)cfg.speakerVolume);
+        _addRow(_list, "Volume", volStr, 32);
     }
     _addRow(_list, "Notifications",      "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
@@ -1602,13 +1606,13 @@ static void _openTimezoneDialog() {
 }
 
 // ── Screen Timeout slider dialog ──────────────────────────────────────
-// lv_slider from 0 (off — screen never sleeps) to 120 s (2 min).
+// Slider steps 2–12 (each step = 10 s) → 20 s – 2 min in 10-second intervals.
 
 struct TimeoutCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
 static TimeoutCtx s_toCtx;
 
 static void _fmtTimeoutVal(char* buf, size_t len, int sec) {
-    if (sec == 0)       snprintf(buf, len, "Off");
+    if (sec <= 0)        snprintf(buf, len, "Off");
     else if (sec < 60)  snprintf(buf, len, "%ds", sec);
     else if (sec == 60) snprintf(buf, len, "1m");
     else if (sec < 120) snprintf(buf, len, "1m %ds", sec - 60);
@@ -1616,16 +1620,16 @@ static void _fmtTimeoutVal(char* buf, size_t len, int sec) {
 }
 
 static void _onToSlide(lv_event_t* /*e*/) {
-    int v = (int)lv_slider_get_value(s_toCtx.slider);
+    int step = (int)lv_slider_get_value(s_toCtx.slider);
     char buf[16];
-    _fmtTimeoutVal(buf, sizeof(buf), v);
+    _fmtTimeoutVal(buf, sizeof(buf), step * 10);
     lv_label_set_text(s_toCtx.valLbl, buf);
 }
 
 static void _onToSave(lv_event_t* /*e*/) {
-    int v = (int)lv_slider_get_value(s_toCtx.slider);
+    int step = (int)lv_slider_get_value(s_toCtx.slider);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
-    cfg.screenTimeoutSec = v;
+    cfg.screenTimeoutSec = step * 10;
     ops::config::save();
     lv_obj_del(s_toCtx.modal);
     ScreenSettings::show();
@@ -1666,20 +1670,24 @@ static void _openTimeoutDialog() {
     lv_obj_set_style_text_color(title, theme::ACCENT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
 
-    // Current value label
-    int curVal = ops::config::get().screenTimeoutSec;
+    // Map current value to step (each step = 10s, range 2–12 → 20s–120s)
+    int curVal  = ops::config::get().screenTimeoutSec;
+    int curStep = curVal / 10;
+    if (curStep < 2)  curStep = 2;
+    if (curStep > 12) curStep = 12;
+
     s_toCtx.valLbl = lv_label_create(panel);
     char initBuf[16];
-    _fmtTimeoutVal(initBuf, sizeof(initBuf), curVal);
+    _fmtTimeoutVal(initBuf, sizeof(initBuf), curStep * 10);
     lv_label_set_text(s_toCtx.valLbl, initBuf);
     lv_obj_set_style_text_color(s_toCtx.valLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(s_toCtx.valLbl, &lv_font_montserrat_12, 0);
 
-    // Slider: 0 = Off (no timeout), 1–120 = seconds (max 2 min)
+    // Slider: steps 2–12 (×10s = 20s–120s, 10-second intervals)
     s_toCtx.slider = lv_slider_create(panel);
     lv_obj_set_width(s_toCtx.slider, 220);
-    lv_slider_set_range(s_toCtx.slider, 0, 120);
-    lv_slider_set_value(s_toCtx.slider, curVal, LV_ANIM_OFF);
+    lv_slider_set_range(s_toCtx.slider, 2, 12);
+    lv_slider_set_value(s_toCtx.slider, curStep, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s_toCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s_toCtx.slider, theme::ACCENT, LV_PART_KNOB);
     lv_obj_set_style_bg_color(s_toCtx.slider, theme::BORDER, LV_PART_MAIN);
@@ -1737,27 +1745,30 @@ static void _openTimeoutDialog() {
 }
 
 // ── Screen Off slider dialog ──────────────────────────────────────────
-// Slider 0–10: 0–1 = Off, 2–10 = minutes before backlight cuts entirely.
+// Slider steps 0–12: 0 = Off, 2–12 = 20s–120s (×10s, 10-second intervals).
 
 struct ScreenOffCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
 static ScreenOffCtx s_soCtx;
 
-static void _fmtScreenOffVal(char* buf, size_t len, int v) {
-    if (v < 2) snprintf(buf, len, "Off");
-    else        snprintf(buf, len, "%d min", v);
+static void _fmtScreenOffVal(char* buf, size_t len, int sec) {
+    if (sec < 20)        snprintf(buf, len, "Off");
+    else if (sec < 60)  snprintf(buf, len, "%ds", sec);
+    else if (sec == 60) snprintf(buf, len, "1m");
+    else if (sec < 120) snprintf(buf, len, "1m %ds", sec - 60);
+    else                snprintf(buf, len, "2m");
 }
 
 static void _onSoSlide(lv_event_t* /*e*/) {
-    int v = (int)lv_slider_get_value(s_soCtx.slider);
+    int step = (int)lv_slider_get_value(s_soCtx.slider);
     char buf[16];
-    _fmtScreenOffVal(buf, sizeof(buf), v);
+    _fmtScreenOffVal(buf, sizeof(buf), step * 10);
     lv_label_set_text(s_soCtx.valLbl, buf);
 }
 
 static void _onSoSave(lv_event_t* /*e*/) {
-    int v = (int)lv_slider_get_value(s_soCtx.slider);
+    int step = (int)lv_slider_get_value(s_soCtx.slider);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
-    cfg.screenOffMin = (v < 2) ? 0 : (uint8_t)v;
+    cfg.screenOffSec = (step < 2) ? 0 : (uint8_t)(step * 10);
     ops::config::save();
     lv_obj_del(s_soCtx.modal);
     ScreenSettings::show();
@@ -1803,18 +1814,23 @@ static void _openScreenOffDialog() {
     lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
 
-    int curVal = (int)ops::config::get().screenOffMin;
+    // Map stored seconds to step (0=Off, 2–12 = 20s–120s)
+    int curSec  = (int)ops::config::get().screenOffSec;
+    int curStep = (curSec < 20) ? 0 : (curSec / 10);
+    if (curStep > 12) curStep = 12;
+
     s_soCtx.valLbl = lv_label_create(panel);
     char initBuf[16];
-    _fmtScreenOffVal(initBuf, sizeof(initBuf), curVal);
+    _fmtScreenOffVal(initBuf, sizeof(initBuf), curStep * 10);
     lv_label_set_text(s_soCtx.valLbl, initBuf);
     lv_obj_set_style_text_color(s_soCtx.valLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(s_soCtx.valLbl, &lv_font_montserrat_12, 0);
 
+    // Slider: 0 = Off, 2–12 (×10s = 20s–120s, 10-second intervals)
     s_soCtx.slider = lv_slider_create(panel);
     lv_obj_set_width(s_soCtx.slider, 220);
-    lv_slider_set_range(s_soCtx.slider, 0, 10);
-    lv_slider_set_value(s_soCtx.slider, curVal, LV_ANIM_OFF);
+    lv_slider_set_range(s_soCtx.slider, 0, 12);
+    lv_slider_set_value(s_soCtx.slider, curStep, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s_soCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s_soCtx.slider, theme::ACCENT, LV_PART_KNOB);
     lv_obj_set_style_bg_color(s_soCtx.slider, theme::BORDER, LV_PART_MAIN);
@@ -2606,6 +2622,114 @@ static void _openKbLayoutDialog() {
     }
 }
 
+// ── Volume slider dialog ──────────────────────────────────────────────
+// Slider 0–100 (percent). Scales I2S samples at playback time.
+
+struct VolCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
+static VolCtx s_volCtx;
+
+static void _onVolSlide(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_volCtx.slider);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", v);
+    lv_label_set_text(s_volCtx.valLbl, buf);
+}
+static void _onVolSave(lv_event_t* /*e*/) {
+    int v = (int)lv_slider_get_value(s_volCtx.slider);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.speakerVolume = (uint8_t)v;
+    ops::config::save();
+    lv_obj_del(s_volCtx.modal);
+    ScreenSettings::show();
+}
+static void _onVolExit(lv_event_t* /*e*/) { lv_obj_del(s_volCtx.modal); }
+static void _onVolKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_volCtx.modal);
+}
+
+static void _openVolumeDialog() {
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_volCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onVolKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 155);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, LV_SYMBOL_VOLUME_MAX " Volume");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    int curVol = (int)ops::config::get().speakerVolume;
+    s_volCtx.valLbl = lv_label_create(panel);
+    char initBuf[8];
+    snprintf(initBuf, sizeof(initBuf), "%d%%", curVol);
+    lv_label_set_text(s_volCtx.valLbl, initBuf);
+    lv_obj_set_style_text_color(s_volCtx.valLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_volCtx.valLbl, &lv_font_montserrat_12, 0);
+
+    s_volCtx.slider = lv_slider_create(panel);
+    lv_obj_set_width(s_volCtx.slider, 220);
+    lv_slider_set_range(s_volCtx.slider, 0, 100);
+    lv_slider_set_value(s_volCtx.slider, curVol, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_volCtx.slider, theme::PRIMARY,  LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_volCtx.slider, theme::ACCENT,   LV_PART_KNOB);
+    lv_obj_set_style_bg_color(s_volCtx.slider, theme::BORDER,   LV_PART_MAIN);
+    lv_obj_add_event_cb(s_volCtx.slider, _onVolSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 220, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto mkBtn = [&](const char* lbl, lv_color_t col, lv_event_cb_t cb) {
+        lv_obj_t* btn = lv_btn_create(row);
+        lv_group_remove_obj(btn);
+        lv_obj_set_size(btn, 96, 26);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, col, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(btn, _onVolKey, LV_EVENT_KEY, nullptr);
+        lv_obj_t* l = lv_label_create(btn);
+        lv_label_set_text(l, lbl);
+        lv_obj_set_style_text_color(l, col, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_center(l);
+    };
+    mkBtn("Cancel", theme::TEXT_MUTED, _onVolExit);
+    mkBtn("Save",   theme::ACCENT,     _onVolSave);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) { lv_group_add_obj(g, s_volCtx.slider); lv_group_focus_obj(s_volCtx.slider); }
+}
+
 // ── Notification Sound dropdown dialog ───────────────────────────────
 
 struct NotifSndCtx { lv_obj_t* modal; lv_obj_t* dd; };
@@ -2971,6 +3095,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openScreenOffDialog();
             return;
 
+        case 32:  // Volume → slider dialog
+            _openVolumeDialog();
+            return;
+
         case 16:  // Notifications → dialog
             _openNotificationsDialog();
             return;
@@ -3027,8 +3155,8 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 }
 
 // ── Backup & Restore dialog ───────────────────────────────────────────
-// Copies /ops/*.json  →  /ops/*.bak  (backup)
-// Copies /ops/*.bak   →  /ops/*.json (restore)
+// Copies /oms/*.json  →  /oms/*.bak  (backup)
+// Copies /oms/*.bak   →  /oms/*.json (restore)
 // Files: contacts, repeaters, settings (identity.bin is already auto-backed up)
 
 static lv_obj_t* s_brModal   = nullptr;

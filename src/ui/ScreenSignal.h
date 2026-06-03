@@ -35,6 +35,7 @@ private:
     static lv_obj_t* s_airtimeRxLbl;
     static lv_obj_t* s_heapLbl;
     static lv_obj_t* s_psramLbl;
+    static lv_obj_t* s_battLbl;
 
     static void _build();
     static void _refresh();

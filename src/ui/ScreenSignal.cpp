@@ -75,7 +75,8 @@ lv_obj_t* ScreenSignal::s_errorLbl     = nullptr;
 lv_obj_t* ScreenSignal::s_airtimeTxLbl = nullptr;
 lv_obj_t* ScreenSignal::s_airtimeRxLbl = nullptr;
 lv_obj_t* ScreenSignal::s_heapLbl      = nullptr;
-lv_obj_t* ScreenSignal::s_psramLbl     = nullptr;
+lv_obj_t* ScreenSignal::s_psramLbl    = nullptr;
+lv_obj_t* ScreenSignal::s_battLbl     = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -281,6 +282,10 @@ void ScreenSignal::_build()
     _addRow(_body, "Heap:",  "--",  &s_heapLbl);
     _addRow(_body, "PSRAM:", "--",  &s_psramLbl);
 
+    // ── POWER ─────────────────────────────────────────────────────────
+    _addSection(_body, "POWER");
+    _addRow(_body, "Battery:", "--", &s_battLbl);
+
     // ── Live-update timer (2 s period) ────────────────────────────────
     if (!_timer)
         _timer = lv_timer_create(_onTimer, 2000, nullptr);
@@ -365,6 +370,23 @@ void ScreenSignal::_refresh()
     else
         snprintf(buf, sizeof(buf), "%u B free", (unsigned)psram);
     lv_label_set_text(s_psramLbl, buf);
+
+    // Battery — average 3 reads to reduce ADC noise
+    auto& board = Board::instance();
+    int battSum = 0;
+    for (int i = 0; i < 3; i++) battSum += board.batteryPercent();
+    int  battPct = battSum / 3;
+    bool charging = board.batteryCharging();
+    if (charging)
+        snprintf(buf, sizeof(buf), "%d%% " LV_SYMBOL_CHARGE, battPct);
+    else
+        snprintf(buf, sizeof(buf), "%d%%", battPct);
+    lv_label_set_text(s_battLbl, buf);
+    lv_color_t bc = charging      ? theme::GREEN  :
+                    battPct >= 50  ? theme::GREEN  :
+                    battPct >= 20  ? theme::ORANGE :
+                                     theme::RED;
+    lv_obj_set_style_text_color(s_battLbl, bc, 0);
 }
 
 // ── show() ────────────────────────────────────────────────────────────

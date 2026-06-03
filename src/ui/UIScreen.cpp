@@ -5,6 +5,8 @@
 // top-level screen lifecycle:  Boot → Launcher → (app screens).
 
 #include "UIScreen.h"
+#include <esp_sleep.h>
+#include <driver/gpio.h>
 #include "ScreenBoot.h"
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
@@ -91,13 +93,14 @@ static int16_t enc_diff = 0;
 
 // Screensaver & notification popup state (file-scope so touch_read can access)
 static uint32_t  s_lastActivityMs    = 0;
+static uint32_t  s_screensaverStartMs = 0;  // millis() when screensaver activated
 static bool      s_screensaverActive = false;
 static lv_obj_t* s_screensaverScreen = nullptr;
 static lv_obj_t* s_ssTimeLbl         = nullptr;
 static lv_obj_t* s_ssNameLbl         = nullptr;
 static lv_obj_t* s_prevScreen        = nullptr;
 static lv_obj_t* s_notifyPopup       = nullptr;
-static bool      s_touchDismiss      = false;  // set in touch_read, consumed in tick()
+// s_touchDismiss removed — touch is suppressed in touch_read during screensaver
 static bool      s_screenOff         = false;  // backlight fully off (beyond screensaver)
 static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(), consumed in tick()
 static bool      s_ssAnalog          = false;  // true = analog clock screensaver
@@ -225,11 +228,14 @@ static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
 
     data->point.x = last_x;
     data->point.y = last_y;
+    // Suppress touch while dimmed/off — prevents blind taps on invisible UI
+    // and accidental wake. Only GPIO0 (trackball click) wakes the display.
+    if (s_screensaverActive) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
     data->state = LV_INDEV_STATE_PRESSED;
-    if (s_screensaverActive)
-        s_touchDismiss = true;
-    else
-        s_lastActivityMs = millis();
+    s_lastActivityMs = millis();
 }
 
 // LVGL 8 flush callback
@@ -476,13 +482,15 @@ static void _activateScreensaver(bool analog = false)
     }
 
     lv_scr_load(s_screensaverScreen);
-    s_screensaverActive = true;
-    s_screenOff         = false;
+    s_screensaverActive  = true;
+    s_screensaverStartMs = millis();
+    s_screenOff          = false;
     _applyGovFreq(1);  // screensaver frequency
-    // Dim to ~12% of configured brightness (min 20) — clock stays readable.
+    // Dim to ~30% of configured brightness (min 60/255) — clock must be clearly visible.
     int cfg_b = ops::config::get().brightness;
-    uint8_t ssDim = (uint8_t)((cfg_b / 5) < 20 ? 20 : cfg_b / 5);
-    Board::instance().setDisplayBrightness(ssDim);
+    int dim   = cfg_b * 30 / 100;
+    if (dim < 60) dim = 60;
+    Board::instance().setDisplayBrightness((uint8_t)dim);
 }
 
 // ---------- Notification popup helpers ----------
@@ -621,6 +629,14 @@ void init() {
     ScreenBoot::show();
 
     s_lastActivityMs = millis();
+
+    // Configure GPIO wakeup sources for light sleep (set once; persist across cycles).
+    // Only GPIO0 (trackball click, active-LOW) and GPIO45 (LoRa DIO1, active-HIGH) wake.
+    // Touch INT and KB_INT are intentionally excluded — only GPIO0 wakes the user.
+    gpio_wakeup_enable(GPIO_NUM_0,  GPIO_INTR_LOW_LEVEL);   // trackball click
+    gpio_wakeup_enable(GPIO_NUM_45, GPIO_INTR_HIGH_LEVEL);  // LoRa DIO1
+    esp_sleep_enable_gpio_wakeup();
+
     OPS_LOG("UI", "Display ready (%dx%d)", OPS_SCREEN_W, OPS_SCREEN_H);
 }
 
@@ -631,20 +647,14 @@ void tick() {
     // GPS power management state machine
     ops::GpsMgr::instance().tick();
 
-    // Touch dismiss flag set by touch_read when screensaver is active
-    if (s_touchDismiss) {
-        s_touchDismiss = false;
-        if (s_screensaverActive) _deactivateScreensaver();
-    }
-
     // Trackball: consume delta + press first so we can intercept for screensaver.
     int16_t dx, dy;
     board.consumeTrackballDelta(dx, dy);
     bool tbPress = board.consumeTrackballPress();
 
     if (s_screensaverActive) {
-        // Any trackball activity wakes the screen; inputs are otherwise discarded.
-        if (dx || dy || tbPress) _deactivateScreensaver();
+        // Only GPIO0 (trackball click) wakes — scrolling and touch are discarded.
+        if (tbPress) _deactivateScreensaver();
     } else if (s_calState != 0) {
         // Calibration active — keep display awake, swallow all trackball input.
         if (dx || dy || tbPress) s_lastActivityMs = now;
@@ -709,7 +719,7 @@ void tick() {
             k           = xlat.ch;
             bool kbRepl = xlat.replace;
             if (s_screensaverActive) {
-                _deactivateScreensaver();
+                // Keyboard during screensaver/off — swallow, only GPIO0 click wakes.
             } else if (s_calState != 0) {
                 // During calibration: backspace/ESC cancels; all other keys swallowed.
                 if (k == 8 || k == 127 || k == 27) {
@@ -791,16 +801,22 @@ void tick() {
     {
         int timeoutSec = ops::config::get().screenTimeoutSec;
         if (!s_screensaverActive && timeoutSec > 0 && s_lastActivityMs > 0) {
-            if (now - s_lastActivityMs >= (uint32_t)timeoutSec * 1000UL)
+            if (now - s_lastActivityMs >= (uint32_t)timeoutSec * 1000UL) {
                 _activateScreensaver();
+                // Anchor start time to this tick's `now` so the screen-off check
+                // below sees elapsed=0 and doesn't underflow into a huge number.
+                // (_activateScreensaver calls millis() which is > now, making the
+                // uint32_t subtraction wrap and firing screen-off immediately.)
+                s_screensaverStartMs = now;
+            }
         }
     }
 
     // Screen off: cut backlight entirely after screenOffMin minutes of screensaver.
     if (s_screensaverActive && !s_screenOff) {
-        uint8_t offMin = ops::config::get().screenOffMin;
-        if (offMin >= 2) {
-            if (now - s_lastActivityMs >= (uint32_t)offMin * 60000UL) {
+        uint8_t offSec = ops::config::get().screenOffSec;
+        if (offSec >= 20) {
+            if (now - s_screensaverStartMs >= (uint32_t)offSec * 1000UL) {
                 s_screenOff = true;
                 Board::instance().setDisplayBrightness(0);
                 _applyGovFreq(2);  // screen-off frequency
@@ -881,19 +897,34 @@ void tick() {
     }
 
     // Periodic clock / battery refresh; also tick screensaver clock.
-    static uint32_t lastClock = 0;
-    static uint32_t lastBatt  = 0;
+    static uint32_t lastClock   = 0;
+    static uint32_t lastBatt    = 0;
+    static uint32_t lastChg     = 0;
+    static int      s_battPct   = -1;   // cached percent from last full poll
+    static bool     s_chgState  = false;
     if (now - lastClock >= 30000UL) {
         lastClock = now;
         ScreenLauncher::refreshClock();
         if (s_screensaverActive) _updateSsTime();
     }
-    if (now - lastBatt >= 60000UL) {
+    // Fast charging-state poll: refresh icon within 2 s of plug/unplug.
+    if (now - lastChg >= 2000UL) {
+        lastChg = now;
+        bool chg = board.batteryCharging();
+        if (chg != s_chgState && s_battPct >= 0) {
+            s_chgState = chg;
+            ScreenLauncher::refreshBattery(s_battPct, chg);
+        }
+    }
+    // Full battery percent poll every 15 s with 3-sample ADC averaging.
+    if (now - lastBatt >= 15000UL) {
         lastBatt = now;
-        int  battPct = board.batteryPercent();
-        bool chg     = board.batteryCharging();
-        OPS_LOG("BATT", "pct=%d charging=%d", battPct, (int)chg);
-        ScreenLauncher::refreshBattery(battPct, chg);
+        int sum = 0;
+        for (int i = 0; i < 3; i++) sum += board.batteryPercent();
+        s_battPct  = sum / 3;
+        s_chgState = board.batteryCharging();
+        OPS_LOG("BATT", "pct=%d charging=%d", s_battPct, (int)s_chgState);
+        ScreenLauncher::refreshBattery(s_battPct, s_chgState);
         ScreenLauncher::refreshSpeaker(ops::config::get().speakerEnabled);
         ScreenLauncher::refreshStatus(
             ops::config::get().gpsMode,
@@ -985,6 +1016,16 @@ void tick() {
     if (now - lastLvgl >= 33UL) {
         lastLvgl = now;
         lv_timer_handler();
+    }
+
+    // Light sleep only when the backlight is fully off (s_screenOff).
+    // We deliberately skip sleep during the dim screensaver phase because the
+    // LEDC PWM peripheral uses APB clock which is gated in light sleep —
+    // the backlight output would drop LOW, making the screensaver invisible.
+    // When s_screenOff is true, backlight is already 0 so the gate is harmless.
+    if (s_screenOff && !ops::MeshService::instance().isTxBusy()) {
+        esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);  // 60s heartbeat
+        esp_light_sleep_start();
     }
 }
 

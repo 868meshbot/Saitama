@@ -17,7 +17,7 @@ static Config      s_cfg;
 static Preferences prefs;
 
 static void setDefaults(Config& c) {
-    strncpy(c.callsign,    "OPS-0001", sizeof(c.callsign));
+    strncpy(c.callsign,    "OMS-0001", sizeof(c.callsign));
     strncpy(c.radioRegion, "EU868",    sizeof(c.radioRegion));
     // All channel slots start empty — user configures name, shortname, PSK explicitly
     strncpy(c.channels[0].name, "Public", sizeof(c.channels[0].name));
@@ -42,8 +42,9 @@ static void setDefaults(Config& c) {
     c.locationSharing   = false;
     c.notifyPopup       = true;
     c.brightness       = 200;
-    c.screenTimeoutSec = 30;
-    c.screenOffMin     = 0;
+    c.screenTimeoutSec = 10;
+    c.screenOffSec     = 0;
+    c.speakerVolume    = 70;
     c.notifySound      = true;
     c.notifySoundChoice = 0;
     strncpy(c.mapTileDir, "/map", sizeof(c.mapTileDir));
@@ -94,7 +95,8 @@ static void _saveToSD() {
     doc["notifyPopup"]  = s_cfg.notifyPopup;
     doc["brightness"]   = s_cfg.brightness;
     doc["screenTimeout"]= s_cfg.screenTimeoutSec;
-    doc["screenOff"]    = s_cfg.screenOffMin;
+    doc["screenOffSec"] = s_cfg.screenOffSec;
+    doc["spkVol"]       = s_cfg.speakerVolume;
     doc["notifySound"]  = s_cfg.notifySound;
     doc["notifySndCh"]  = s_cfg.notifySoundChoice;
     doc["theme"]        = s_cfg.theme;
@@ -165,7 +167,8 @@ static bool _loadFromSD() {
     s_cfg.notifyPopup       = doc["notifyPopup"]  | s_cfg.notifyPopup;
     s_cfg.brightness        = doc["brightness"]   | s_cfg.brightness;
     s_cfg.screenTimeoutSec  = doc["screenTimeout"]| s_cfg.screenTimeoutSec;
-    s_cfg.screenOffMin      = (uint8_t)(doc["screenOff"] | 0);
+    s_cfg.screenOffSec      = (uint8_t)(doc["screenOffSec"] | 0);
+    s_cfg.speakerVolume      = (uint8_t)(doc["spkVol"]      | 70);
     s_cfg.notifySound        = doc["notifySound"]   | s_cfg.notifySound;
     s_cfg.notifySoundChoice  = (uint8_t)(doc["notifySndCh"] | 0);
     s_cfg.theme             = doc["theme"]        | s_cfg.theme;
@@ -227,7 +230,7 @@ void config::init() {
     // Config is stored as a single putBytes("cfg") entry so every save()
     // touches exactly 1 NVS entry instead of 80+, preventing NOT_ENOUGH_SPACE
     // on the 16 KB NVS partition.
-    if (prefs.begin("ops", /*readOnly=*/true)) {
+    if (prefs.begin("oms", /*readOnly=*/true)) {
         size_t loaded = prefs.getBytes("cfg", &s_cfg, sizeof(s_cfg));
         prefs.end();
         // Require an exact size match: sizeof(Config) is the implicit version.
@@ -259,14 +262,14 @@ void config::init() {
     if (sdcard::hasCompleteBackup() && _loadFromSD()) {
         OPS_LOG("Config", "Restored from SD backup: callsign=%s", s_cfg.callsign);
         // Clear old per-key entries and write compact blob.
-        if (prefs.begin("ops", false)) { prefs.clear(); prefs.end(); }
+        if (prefs.begin("oms", false)) { prefs.clear(); prefs.end(); }
         save();
         return;
     }
 
     // ── Legacy individual NVS keys (migration from pre-blob firmware) ───
     // Only reached if SD is absent and the blob is missing/wrong-size.
-    if (prefs.begin("ops", /*readOnly=*/true)) {
+    if (prefs.begin("oms", /*readOnly=*/true)) {
         String region = prefs.getString("radioRegion", s_cfg.radioRegion);
         strncpy(s_cfg.radioRegion, region.c_str(), sizeof(s_cfg.radioRegion) - 1);
         String cs = prefs.getString("callsign", s_cfg.callsign);
@@ -289,7 +292,8 @@ void config::init() {
         s_cfg.notifyPopup       = prefs.getBool("notifyPopup",  s_cfg.notifyPopup);
         s_cfg.brightness        = prefs.getInt("brightness",    s_cfg.brightness);
         s_cfg.screenTimeoutSec  = prefs.getInt("screenTimeout", s_cfg.screenTimeoutSec);
-        s_cfg.screenOffMin      = prefs.getUChar("screenOff",    0);
+        s_cfg.screenOffSec      = prefs.getUChar("screenOffSec", 0);
+        s_cfg.speakerVolume     = prefs.getUChar("spkVol",       70);
         s_cfg.notifySound       = prefs.getBool("notifySound",  s_cfg.notifySound);
         s_cfg.notifySoundChoice = prefs.getUChar("notifySndCh", 0);
         s_cfg.theme             = prefs.getInt("theme",         s_cfg.theme);
@@ -331,7 +335,7 @@ void config::init() {
         }
         prefs.end();
         // Clear old per-key entries and write compact blob.
-        if (prefs.begin("ops", false)) { prefs.clear(); prefs.end(); }
+        if (prefs.begin("oms", false)) { prefs.clear(); prefs.end(); }
         OPS_LOG("Config", "Migrated from legacy NVS keys: callsign=%s", s_cfg.callsign);
         save();
         return;
@@ -345,7 +349,7 @@ void config::init() {
 }
 
 void config::save() {
-    if (!prefs.begin("ops", /*readOnly=*/false)) {
+    if (!prefs.begin("oms", /*readOnly=*/false)) {
         OPS_LOG("Config", "Failed to open NVS for write");
         return;
     }
