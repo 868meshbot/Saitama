@@ -46,6 +46,9 @@ namespace repeaters {
     // Populate pubKey[32] from a live advert if it is not yet set (all zeros).
     // No-op and no save if the key is already known; saves immediately on first fill.
     void setFullKey(int idx, const uint8_t* pubKey32);
+    // Update name, lastSeen, and lastRssi from a live advert/packet without
+    // triggering a full NVS save. Persisted on the next natural save() call.
+    void setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi);
 }
 
 }  // namespace ops

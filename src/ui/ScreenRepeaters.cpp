@@ -224,7 +224,7 @@ void ScreenRepeaters::_build()
 
         lv_obj_t* timeLbl = lv_label_create(row);
         lv_label_set_text(timeLbl, timeBuf);
-        lv_obj_set_width(timeLbl, 84);
+        lv_obj_set_width(timeLbl, 74);
         lv_obj_set_style_text_color(timeLbl, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_align(timeLbl, LV_TEXT_ALIGN_RIGHT, 0);
@@ -1073,7 +1073,7 @@ void ScreenRepeaters::_showAdminPanel()
     {
         lv_obj_t* btn = lv_btn_create(btnRow);
         lv_group_remove_obj(btn);
-        lv_obj_set_height(btn, ADM_BTN_H - 10);
+        lv_obj_set_height(btn, 26);
         lv_obj_set_width(btn, LV_SIZE_CONTENT);
         lv_obj_set_style_bg_color(btn, theme::BG, 0);
         lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);

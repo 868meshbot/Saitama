@@ -161,7 +161,11 @@ void contacts::add(const Contact& c)
 {
     int idx;
     if (findByKey(c.pubKeyPrefix, &idx)) {
+        bool fav      = s_contacts[idx].favourite;
+        bool unread   = s_contacts[idx].hasUnread;
         s_contacts[idx] = c;
+        s_contacts[idx].favourite = fav;
+        s_contacts[idx].hasUnread = unread;
     } else if (s_count < contacts::CAPACITY) {
         s_contacts[s_count++] = c;
     } else {
@@ -359,6 +363,17 @@ void contacts::setPosition(int idx, int32_t lat, int32_t lon)
     if (idx < 0 || idx >= s_count) return;
     s_contacts[idx].lat = lat;
     s_contacts[idx].lon = lon;
+}
+
+void contacts::setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi)
+{
+    if (idx < 0 || idx >= s_count) return;
+    if (name && name[0]) {
+        strncpy(s_contacts[idx].name, name, sizeof(s_contacts[idx].name) - 1);
+        s_contacts[idx].name[sizeof(s_contacts[idx].name) - 1] = '\0';
+    }
+    s_contacts[idx].lastSeen = lastSeen;
+    s_contacts[idx].lastRssi = lastRssi;
 }
 
 void contacts::setFullKey(int idx, const uint8_t* pubKey32)

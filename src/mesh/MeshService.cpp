@@ -319,13 +319,17 @@ class OMSMesh : public BaseChatMesh {
                 // Update position in stored contact/repeater without triggering
                 // a full NVS save — position persists on the next natural save().
                 int idx = -1;
+                uint32_t now = (uint32_t)getRTCClock()->getCurrentTime();
+                float    rssi = radio_driver.getLastRSSI();
                 if (contact.type == 2) {
                     if (ops::repeaters::findByKey(contact.id.pub_key, &idx)) {
+                        ops::repeaters::setLiveData(idx, contact.name, now, rssi);
                         ops::repeaters::setPosition(idx, contact.gps_lat, contact.gps_lon);
                         ops::repeaters::setFullKey(idx, contact.id.pub_key);
                     }
                 } else {
                     if (ops::contacts::findByKey(contact.id.pub_key, &idx)) {
+                        ops::contacts::setLiveData(idx, contact.name, now, rssi);
                         ops::contacts::setPosition(idx, contact.gps_lat, contact.gps_lon);
                         ops::contacts::setFullKey(idx, contact.id.pub_key);
                     }

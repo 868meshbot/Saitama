@@ -57,6 +57,11 @@ lv_obj_t* ScreenHome::_textarea    = nullptr;
 lv_obj_t* ScreenHome::_sendBtn     = nullptr;
 lv_obj_t* ScreenHome::_emojiPanel  = nullptr;
 
+// Emoji picker internals (file-scope — not class state)
+static lv_obj_t* s_emojiGrid      = nullptr;
+static lv_obj_t* s_emojiBtns[200] = {};
+static int       s_emojiBtnCount  = 0;
+
 ScreenHome::MsgEntry ScreenHome::s_history[ScreenHome::HISTORY_MAX];
 int                  ScreenHome::s_histCount = 0;
 lv_obj_t*            ScreenHome::s_metaLabels[ScreenHome::HISTORY_MAX] = {};
@@ -672,6 +677,8 @@ void ScreenHome::_showList()
     _textarea    = nullptr;
     _sendBtn     = nullptr;
     _emojiPanel  = nullptr;
+    s_emojiGrid  = nullptr;
+    s_emojiBtnCount = 0;
     for (int i = 0; i < HISTORY_MAX; i++) s_metaLabels[i] = nullptr;
     for (int i = 0; i < 10; i++) s_rowDots[i] = nullptr;
 
@@ -1721,8 +1728,8 @@ void ScreenHome::_onBubbleReply(lv_event_t* /*e*/)
 {
     if (s_addContactOverlay) { lv_obj_del(s_addContactOverlay); s_addContactOverlay = nullptr; }
     if (!_textarea) return;
-    char prefix[36];
-    snprintf(prefix, sizeof(prefix), "@%s ", s_pendingContactName);
+    char prefix[38];
+    snprintf(prefix, sizeof(prefix), "@[%s] ", s_pendingContactName);
     lv_textarea_set_text(_textarea, prefix);
     // Move cursor to end so the user types after the mention.
     lv_textarea_set_cursor_pos(_textarea, LV_TEXTAREA_CURSOR_LAST);
@@ -1871,29 +1878,81 @@ static void _codeToUtf8(uint32_t cp, char* buf)
     }
 }
 
+static void _onEmojiSearch(lv_event_t* e)
+{
+    if (!s_emojiGrid || !lv_obj_is_valid(s_emojiGrid)) return;
+    const char* q = lv_textarea_get_text((lv_obj_t*)lv_event_get_target(e));
+    for (int i = 0; i < s_emojiBtnCount; i++) {
+        if (!s_emojiBtns[i] || !lv_obj_is_valid(s_emojiBtns[i])) continue;
+        bool show = (!q || !q[0]) || (strstr(kOpsEmoji[i].name, q) != nullptr);
+        if (show) lv_obj_clear_flag(s_emojiBtns[i], LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag  (s_emojiBtns[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
 {
     if (_emojiPanel && lv_obj_is_valid(_emojiPanel)) {
         lv_obj_del(_emojiPanel);
-        _emojiPanel = nullptr;
+        _emojiPanel     = nullptr;
+        s_emojiGrid     = nullptr;
+        s_emojiBtnCount = 0;
         return;
     }
 
+    static constexpr int PANEL_H  = 120;
+    static constexpr int SEARCH_H = 28;
+    static constexpr int GRID_H   = PANEL_H - SEARCH_H;
+
     _emojiPanel = lv_obj_create(_screen);
-    lv_obj_set_size(_emojiPanel, OPS_SCREEN_W, 90);
+    lv_obj_set_size(_emojiPanel, OPS_SCREEN_W, PANEL_H);
     lv_obj_align(_emojiPanel, LV_ALIGN_BOTTOM_LEFT, 0, -36);
     lv_obj_set_style_bg_color(_emojiPanel, theme::BG_CARD, 0);
     lv_obj_set_style_border_width(_emojiPanel, 0, 0);
     lv_obj_set_style_radius(_emojiPanel, 0, 0);
-    lv_obj_set_style_pad_all(_emojiPanel, 2, 0);
-    lv_obj_set_style_pad_row(_emojiPanel, 2, 0);
-    lv_obj_set_style_pad_column(_emojiPanel, 2, 0);
+    lv_obj_set_style_pad_all(_emojiPanel, 0, 0);
     lv_obj_clear_flag(_emojiPanel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(_emojiPanel, LV_FLEX_FLOW_ROW_WRAP);
 
-    for (int i = 0; i < kOpsEmojiCount; i++) {
-        lv_obj_t* btn = lv_btn_create(_emojiPanel);
-        lv_obj_set_size(btn, 60, 26);
+    // ── Search box ────────────────────────────────────────────────────
+    lv_obj_t* searchTa = lv_textarea_create(_emojiPanel);
+    lv_obj_set_size(searchTa, OPS_SCREEN_W, SEARCH_H);
+    lv_obj_set_pos(searchTa, 0, 0);
+    lv_textarea_set_one_line(searchTa, true);
+    lv_textarea_set_placeholder_text(searchTa, "search...");
+    lv_obj_set_style_bg_color(searchTa, theme::BG, 0);
+    lv_obj_set_style_text_color(searchTa, theme::TEXT, 0);
+    lv_obj_set_style_text_font(searchTa, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(searchTa, theme::BORDER, 0);
+    lv_obj_set_style_border_width(searchTa, 1, 0);
+    lv_obj_set_style_radius(searchTa, 0, 0);
+    lv_obj_set_style_pad_hor(searchTa, 6, 0);
+    lv_obj_set_style_pad_ver(searchTa, 6, 0);
+    lv_obj_add_event_cb(searchTa, _onEmojiSearch, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // ── Scrollable emoji grid ─────────────────────────────────────────
+    s_emojiGrid = lv_obj_create(_emojiPanel);
+    lv_obj_set_size(s_emojiGrid, OPS_SCREEN_W, GRID_H);
+    lv_obj_set_pos(s_emojiGrid, 0, SEARCH_H);
+    lv_obj_set_style_bg_color(s_emojiGrid, theme::BG_CARD, 0);
+    lv_obj_set_style_border_width(s_emojiGrid, 0, 0);
+    lv_obj_set_style_radius(s_emojiGrid, 0, 0);
+    lv_obj_set_style_pad_all(s_emojiGrid, 2, 0);
+    lv_obj_set_style_pad_row(s_emojiGrid, 2, 0);
+    lv_obj_set_style_pad_column(s_emojiGrid, 2, 0);
+    lv_obj_set_scroll_dir(s_emojiGrid, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_emojiGrid, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_flex_flow(s_emojiGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(s_emojiGrid,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    s_emojiBtnCount = 0;
+    int limit = (kOpsEmojiCount < 200) ? kOpsEmojiCount : 200;
+    for (int i = 0; i < limit; i++) {
+        lv_obj_t* btn = lv_btn_create(s_emojiGrid);
+        s_emojiBtns[i] = btn;
+        s_emojiBtnCount++;
+
+        lv_obj_set_size(btn, 56, 26);
         lv_obj_set_style_bg_color(btn, theme::BG, 0);
         lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
         lv_obj_set_style_radius(btn, 4, 0);

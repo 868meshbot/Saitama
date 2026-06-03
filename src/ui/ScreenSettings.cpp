@@ -729,6 +729,34 @@ static void _onPskShuffle(lv_event_t* /*e*/)
     lv_textarea_set_text(s_editCtx.pskTa, psk);
 }
 
+static int _b64CharVal(char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return 0;
+}
+
+static void _urlEncodeSettings(const char* src, char* dst, int dstMax)
+{
+    int j = 0;
+    for (int i = 0; src[i] && j < dstMax - 1; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            dst[j++] = (char)c;
+        } else if (c == ' ') {
+            dst[j++] = '+';
+        } else if (j < dstMax - 3) {
+            snprintf(dst + j, 4, "%%%02X", c);
+            j += 3;
+        }
+    }
+    dst[j] = '\0';
+}
+
 static void _onEditChShareQR(lv_event_t* /*e*/)
 {
     if (!s_editCtx.nameTa || !s_editCtx.pskTa) return;
@@ -740,11 +768,32 @@ static void _onEditChShareQR(lv_event_t* /*e*/)
     }
     if (!cleanName[0]) return;
     const char* rawPsk = lv_textarea_get_text(s_editCtx.pskTa);
-    const char* scope  = s_editCtx.scopeTa
-                         ? lv_textarea_get_text(s_editCtx.scopeTa) : "";
+
+    // Decode base64 PSK (24 chars → 16 bytes) then re-encode as 32 lowercase hex
+    char secretHex[33] = {};
+    if (rawPsk && rawPsk[0]) {
+        uint8_t keyBytes[16] = {};
+        int j = 0;
+        const char* p = rawPsk;
+        while (*p && *(p+1) && j < 16) {
+            int a = _b64CharVal(p[0]), b = _b64CharVal(p[1]);
+            int cv = (*(p+2) && *(p+2) != '=') ? _b64CharVal(p[2]) : -1;
+            int d  = (*(p+3) && *(p+3) != '=') ? _b64CharVal(p[3]) : -1;
+            keyBytes[j++] = (uint8_t)((a << 2) | (b >> 4));
+            if (cv >= 0 && j < 16) keyBytes[j++] = (uint8_t)((b << 4) | (cv >> 2));
+            if (d  >= 0 && j < 16) keyBytes[j++] = (uint8_t)((cv << 6) | d);
+            p += 4;
+        }
+        for (int i = 0; i < 16; i++)
+            snprintf(secretHex + i * 2, 3, "%02x", keyBytes[i]);
+    }
+
+    char encodedName[64];
+    _urlEncodeSettings(cleanName, encodedName, sizeof(encodedName));
+
     char data[120];
-    snprintf(data, sizeof(data), "MC:CH:%s/%s/%s",
-             cleanName, rawPsk ? rawPsk : "", scope ? scope : "");
+    snprintf(data, sizeof(data), "meshcore://channel/add?name=%s&secret=%s",
+             encodedName, secretHex);
     char title[48];
     snprintf(title, sizeof(title), "Channel: #%s", cleanName);
     showQrPopup(title, data);
@@ -2845,9 +2894,13 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             ops::MeshService::instance().getSelfPubKey(pubKey);
             char hexBuf[65] = {};
             for (int i = 0; i < 32; i++)
-                snprintf(hexBuf + i * 2, 3, "%02X", pubKey[i]);
-            char data[90];
-            snprintf(data, sizeof(data), "MC:C:%s/%s", hexBuf, cfg.callsign);
+                snprintf(hexBuf + i * 2, 3, "%02x", pubKey[i]);
+            char encodedCs[64];
+            _urlEncodeSettings(cfg.callsign, encodedCs, sizeof(encodedCs));
+            char data[160];
+            snprintf(data, sizeof(data),
+                     "meshcore://contact/add?name=%s&public_key=%s&type=1",
+                     encodedCs, hexBuf);
             char title[40];
             snprintf(title, sizeof(title), "My Contact: %s", cfg.callsign);
             showQrPopup(title, data);

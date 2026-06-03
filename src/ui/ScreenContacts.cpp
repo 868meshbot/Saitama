@@ -383,6 +383,25 @@ void ScreenContacts::_onPopupClose(lv_event_t* e)
     s_pendingContact = -1;
 }
 
+// ── URL-encode a string (spaces→+, others→%XX) ───────────────────────
+static void _urlEncode(const char* src, char* dst, int dstMax)
+{
+    int j = 0;
+    for (int i = 0; src[i] && j < dstMax - 1; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            dst[j++] = (char)c;
+        } else if (c == ' ') {
+            dst[j++] = '+';
+        } else if (j < dstMax - 3) {
+            snprintf(dst + j, 4, "%%%02X", c);
+            j += 3;
+        }
+    }
+    dst[j] = '\0';
+}
+
 // ── _onPopupShareQR() — encode contact as QR code ────────────────────
 void ScreenContacts::_onPopupShareQR(lv_event_t* e)
 {
@@ -400,14 +419,19 @@ void ScreenContacts::_onPopupShareQR(lv_event_t* e)
     bool hasKey = false;
     for (int i = 0; i < 32; i++) if (c.pubKey[i]) { hasKey = true; break; }
 
-    char data[110];
+    char encodedName[96];
+    _urlEncode(c.name, encodedName, sizeof(encodedName));
+
+    char data[160];
     if (hasKey) {
         for (int i = 0; i < 32; i++)
-            snprintf(hexBuf + i * 2, 3, "%02X", c.pubKey[i]);
-        snprintf(data, sizeof(data), "MC:C:%s/%s", hexBuf, c.name);
+            snprintf(hexBuf + i * 2, 3, "%02x", c.pubKey[i]);
+        snprintf(data, sizeof(data),
+                 "meshcore://contact/add?name=%s&public_key=%s&type=1",
+                 encodedName, hexBuf);
     } else {
-        // Full key not yet received — encode 4-byte prefix only
-        snprintf(hexBuf, 9, "%02X%02X%02X%02X",
+        // Full key not yet received — use Saitama prefix-only fallback
+        snprintf(hexBuf, 9, "%02x%02x%02x%02x",
                  c.pubKeyPrefix[0], c.pubKeyPrefix[1],
                  c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
         snprintf(data, sizeof(data), "MC:CP:%s/%s", hexBuf, c.name);

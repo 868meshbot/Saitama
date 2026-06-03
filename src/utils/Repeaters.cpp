@@ -254,7 +254,9 @@ void repeaters::add(const Repeater& r)
     int idx = -1;
     findByKey(r.pubKeyPrefix, &idx);
     if (idx >= 0) {
+        bool fav = s_reps[idx].favourite;
         s_reps[idx] = r;
+        s_reps[idx].favourite = fav;
         OPS_LOG("Repeaters", "Updated: %s", r.name);
     } else if (s_count < CAPACITY) {
         s_reps[s_count++] = r;
@@ -281,6 +283,17 @@ void repeaters::remove(int idx)
         s_reps[i] = s_reps[i + 1];
     s_count--;
     save();
+}
+
+void repeaters::setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi)
+{
+    if (idx < 0 || idx >= s_count) return;
+    if (name && name[0]) {
+        strncpy(s_reps[idx].name, name, sizeof(s_reps[idx].name) - 1);
+        s_reps[idx].name[sizeof(s_reps[idx].name) - 1] = '\0';
+    }
+    s_reps[idx].lastSeen = lastSeen;
+    s_reps[idx].lastRssi = lastRssi;
 }
 
 void repeaters::setFullKey(int idx, const uint8_t* pubKey32)

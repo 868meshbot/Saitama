@@ -9,77 +9,293 @@
 extern "C" {
 #endif
 
-extern const lv_img_dsc_t emoji_joy;
-extern const lv_img_dsc_t emoji_heart;
+extern const lv_img_dsc_t emoji_grinning;
+extern const lv_img_dsc_t emoji_big_smile;
+extern const lv_img_dsc_t emoji_grin;
+extern const lv_img_dsc_t emoji_beam;
+extern const lv_img_dsc_t emoji_squint;
+extern const lv_img_dsc_t emoji_sweat_smile;
 extern const lv_img_dsc_t emoji_rofl;
-extern const lv_img_dsc_t emoji_thumbsup;
-extern const lv_img_dsc_t emoji_sob;
-extern const lv_img_dsc_t emoji_pray;
+extern const lv_img_dsc_t emoji_joy;
 extern const lv_img_dsc_t emoji_smile;
+extern const lv_img_dsc_t emoji_upside_down;
+extern const lv_img_dsc_t emoji_wink;
+extern const lv_img_dsc_t emoji_blush;
+extern const lv_img_dsc_t emoji_halo;
+extern const lv_img_dsc_t emoji_heart_face;
 extern const lv_img_dsc_t emoji_heart_eyes;
-extern const lv_img_dsc_t emoji_fire;
+extern const lv_img_dsc_t emoji_star_struck;
+extern const lv_img_dsc_t emoji_kiss_heart;
+extern const lv_img_dsc_t emoji_kiss;
+extern const lv_img_dsc_t emoji_kiss_closed;
+extern const lv_img_dsc_t emoji_smile_tear;
+extern const lv_img_dsc_t emoji_yum;
+extern const lv_img_dsc_t emoji_tongue;
+extern const lv_img_dsc_t emoji_wink_tongue;
+extern const lv_img_dsc_t emoji_crazy;
+extern const lv_img_dsc_t emoji_squint_tongue;
+extern const lv_img_dsc_t emoji_money_mouth;
+extern const lv_img_dsc_t emoji_hug;
+extern const lv_img_dsc_t emoji_hand_mouth;
+extern const lv_img_dsc_t emoji_shush;
+extern const lv_img_dsc_t emoji_think;
+extern const lv_img_dsc_t emoji_zipper;
+extern const lv_img_dsc_t emoji_woozy;
+extern const lv_img_dsc_t emoji_neutral;
+extern const lv_img_dsc_t emoji_expressionless;
+extern const lv_img_dsc_t emoji_no_mouth;
+extern const lv_img_dsc_t emoji_smirk;
+extern const lv_img_dsc_t emoji_unamused;
+extern const lv_img_dsc_t emoji_eye_roll;
+extern const lv_img_dsc_t emoji_grimace;
+extern const lv_img_dsc_t emoji_lying;
+extern const lv_img_dsc_t emoji_sleeping;
+extern const lv_img_dsc_t emoji_drool;
+extern const lv_img_dsc_t emoji_sleepy;
+extern const lv_img_dsc_t emoji_sick;
+extern const lv_img_dsc_t emoji_hurt;
+extern const lv_img_dsc_t emoji_nausea;
+extern const lv_img_dsc_t emoji_vomit;
+extern const lv_img_dsc_t emoji_sneeze;
+extern const lv_img_dsc_t emoji_hot;
+extern const lv_img_dsc_t emoji_cold;
+extern const lv_img_dsc_t emoji_dizzy_face;
+extern const lv_img_dsc_t emoji_exploding;
+extern const lv_img_dsc_t emoji_yawn;
+extern const lv_img_dsc_t emoji_cowboy;
+extern const lv_img_dsc_t emoji_party;
+extern const lv_img_dsc_t emoji_disguise;
 extern const lv_img_dsc_t emoji_sunglasses;
-extern const lv_img_dsc_t emoji_tada;
+extern const lv_img_dsc_t emoji_nerd;
+extern const lv_img_dsc_t emoji_monocle;
+extern const lv_img_dsc_t emoji_confused;
+extern const lv_img_dsc_t emoji_worried;
+extern const lv_img_dsc_t emoji_frown;
+extern const lv_img_dsc_t emoji_open_mouth;
+extern const lv_img_dsc_t emoji_hushed;
+extern const lv_img_dsc_t emoji_astonished;
+extern const lv_img_dsc_t emoji_flushed;
+extern const lv_img_dsc_t emoji_plead;
+extern const lv_img_dsc_t emoji_fearful;
+extern const lv_img_dsc_t emoji_anxious_sweat;
+extern const lv_img_dsc_t emoji_sad_relief;
 extern const lv_img_dsc_t emoji_cry;
+extern const lv_img_dsc_t emoji_sob;
+extern const lv_img_dsc_t emoji_scream;
+extern const lv_img_dsc_t emoji_confounded;
+extern const lv_img_dsc_t emoji_persevere;
+extern const lv_img_dsc_t emoji_disappoint;
+extern const lv_img_dsc_t emoji_downcast;
+extern const lv_img_dsc_t emoji_weary;
+extern const lv_img_dsc_t emoji_tired;
+extern const lv_img_dsc_t emoji_triumph;
+extern const lv_img_dsc_t emoji_rage;
+extern const lv_img_dsc_t emoji_angry;
+extern const lv_img_dsc_t emoji_swearing;
+extern const lv_img_dsc_t emoji_devil;
+extern const lv_img_dsc_t emoji_imp;
 extern const lv_img_dsc_t emoji_skull;
-extern const lv_img_dsc_t emoji_wave;
-extern const lv_img_dsc_t emoji_check;
-extern const lv_img_dsc_t emoji_frog;
-extern const lv_img_dsc_t emoji_sparkles;
-extern const lv_img_dsc_t emoji_wales;
-extern const lv_img_dsc_t emoji_ireland;
+extern const lv_img_dsc_t emoji_crossbones;
+extern const lv_img_dsc_t emoji_clown;
+extern const lv_img_dsc_t emoji_ogre;
+extern const lv_img_dsc_t emoji_goblin;
+extern const lv_img_dsc_t emoji_poop;
+extern const lv_img_dsc_t emoji_ghost;
+extern const lv_img_dsc_t emoji_alien;
+extern const lv_img_dsc_t emoji_space_invader;
+extern const lv_img_dsc_t emoji_robot;
+extern const lv_img_dsc_t emoji_cat_smile;
 extern const lv_img_dsc_t emoji_cat_joy;
+extern const lv_img_dsc_t emoji_cat_heart;
+extern const lv_img_dsc_t emoji_cat_smirk;
+extern const lv_img_dsc_t emoji_cat_cry;
+extern const lv_img_dsc_t emoji_cat_pout;
+extern const lv_img_dsc_t emoji_thumbsup;
+extern const lv_img_dsc_t emoji_thumbsdown;
+extern const lv_img_dsc_t emoji_wave;
+extern const lv_img_dsc_t emoji_pray;
+extern const lv_img_dsc_t emoji_clap;
+extern const lv_img_dsc_t emoji_ok_hand;
+extern const lv_img_dsc_t emoji_muscle;
+extern const lv_img_dsc_t emoji_heart;
+extern const lv_img_dsc_t emoji_orange_heart;
+extern const lv_img_dsc_t emoji_yellow_heart;
+extern const lv_img_dsc_t emoji_green_heart;
+extern const lv_img_dsc_t emoji_blue_heart;
+extern const lv_img_dsc_t emoji_purple_heart;
+extern const lv_img_dsc_t emoji_broken_heart;
+extern const lv_img_dsc_t emoji_fire;
+extern const lv_img_dsc_t emoji_sparkles;
+extern const lv_img_dsc_t emoji_star;
+extern const lv_img_dsc_t emoji_tada;
+extern const lv_img_dsc_t emoji_dizzy;
+extern const lv_img_dsc_t emoji_100;
+extern const lv_img_dsc_t emoji_boom;
+extern const lv_img_dsc_t emoji_check;
+extern const lv_img_dsc_t emoji_cross;
+extern const lv_img_dsc_t emoji_exclamation;
+extern const lv_img_dsc_t emoji_question;
+extern const lv_img_dsc_t emoji_zzz;
+extern const lv_img_dsc_t emoji_frog;
 extern const lv_img_dsc_t emoji_dog;
 extern const lv_img_dsc_t emoji_satellite;
-extern const lv_img_dsc_t emoji_us_flag;
-extern const lv_img_dsc_t emoji_house;
-extern const lv_img_dsc_t emoji_dizzy;
-extern const lv_img_dsc_t emoji_robot;
+extern const lv_img_dsc_t emoji_plane;
 extern const lv_img_dsc_t emoji_car;
 extern const lv_img_dsc_t emoji_moto;
-extern const lv_img_dsc_t emoji_plane;
 extern const lv_img_dsc_t emoji_ship;
 extern const lv_img_dsc_t emoji_palm;
+extern const lv_img_dsc_t emoji_house;
 extern const lv_img_dsc_t emoji_house2;
+extern const lv_img_dsc_t emoji_wales;
+extern const lv_img_dsc_t emoji_ireland;
+extern const lv_img_dsc_t emoji_us_flag;
 
 #ifdef __cplusplus
 }
 #endif
 
-// Lookup table used by Emoji.cpp
-typedef struct { uint32_t codepoint; const lv_img_dsc_t* img; } OpsEmojiEntry;
+// Lookup table used by Emoji.cpp and ScreenHome.cpp
+typedef struct { uint32_t codepoint; const lv_img_dsc_t* img; const char* name; } OpsEmojiEntry;
 static const OpsEmojiEntry kOpsEmoji[] = {
-    { 0x1F602u, &emoji_joy },
-    { 0x02764u, &emoji_heart },
-    { 0x1F923u, &emoji_rofl },
-    { 0x1F44Du, &emoji_thumbsup },
-    { 0x1F62Du, &emoji_sob },
-    { 0x1F64Fu, &emoji_pray },
-    { 0x1F60Au, &emoji_smile },
-    { 0x1F60Du, &emoji_heart_eyes },
-    { 0x1F525u, &emoji_fire },
-    { 0x1F60Eu, &emoji_sunglasses },
-    { 0x1F389u, &emoji_tada },
-    { 0x1F622u, &emoji_cry },
-    { 0x1F480u, &emoji_skull },
-    { 0x1F44Bu, &emoji_wave },
-    { 0x02705u, &emoji_check },
-    { 0x1F438u, &emoji_frog },
-    { 0x02728u, &emoji_sparkles },
-    { 0x1F3F4u, &emoji_wales },
-    { 0x1F1EEu, &emoji_ireland },
-    { 0x1F639u, &emoji_cat_joy },
-    { 0x1F415u, &emoji_dog },
-    { 0x1F4E1u, &emoji_satellite },
-    { 0x1F1FAu, &emoji_us_flag },
-    { 0x1F3E0u, &emoji_house },
-    { 0x1F4ABu, &emoji_dizzy },
-    { 0x1F916u, &emoji_robot },
-    { 0x1F697u, &emoji_car },
-    { 0x1F3CDu, &emoji_moto },
-    { 0x02708u, &emoji_plane },
-    { 0x1F6A2u, &emoji_ship },
-    { 0x1F334u, &emoji_palm },
-    { 0x1F3E1u, &emoji_house2 },
+    { 0x1F600u, &emoji_grinning, "grinning happy smile" },
+    { 0x1F603u, &emoji_big_smile, "big smile happy grin" },
+    { 0x1F604u, &emoji_grin, "grin happy smile eyes" },
+    { 0x1F601u, &emoji_beam, "beaming smile happy" },
+    { 0x1F606u, &emoji_squint, "squinting laugh happy" },
+    { 0x1F605u, &emoji_sweat_smile, "sweat smile nervous happy" },
+    { 0x1F923u, &emoji_rofl, "rofl rolling floor laughing" },
+    { 0x1F602u, &emoji_joy, "joy laugh cry tears happy" },
+    { 0x1F642u, &emoji_smile, "smile slightly happy" },
+    { 0x1F643u, &emoji_upside_down, "upside down smile silly" },
+    { 0x1F609u, &emoji_wink, "wink flirty smile" },
+    { 0x1F60Au, &emoji_blush, "blush smile happy warm" },
+    { 0x1F607u, &emoji_halo, "halo angel innocent smile" },
+    { 0x1F970u, &emoji_heart_face, "heart face love smiling" },
+    { 0x1F60Du, &emoji_heart_eyes, "heart eyes love smiling" },
+    { 0x1F929u, &emoji_star_struck, "star struck eyes amazed wow" },
+    { 0x1F618u, &emoji_kiss_heart, "kiss heart love" },
+    { 0x1F617u, &emoji_kiss, "kiss" },
+    { 0x1F61Au, &emoji_kiss_closed, "kiss closed eyes" },
+    { 0x1F972u, &emoji_smile_tear, "smile tear grateful happy sad" },
+    { 0x1F60Bu, &emoji_yum, "yum tasty tongue food" },
+    { 0x1F61Bu, &emoji_tongue, "tongue silly playful" },
+    { 0x1F61Cu, &emoji_wink_tongue, "wink tongue cheeky" },
+    { 0x1F92Au, &emoji_crazy, "crazy zany wild" },
+    { 0x1F61Du, &emoji_squint_tongue, "squint tongue silly" },
+    { 0x1F911u, &emoji_money_mouth, "money mouth rich greedy" },
+    { 0x1F917u, &emoji_hug, "hug hugging warm" },
+    { 0x1F92Du, &emoji_hand_mouth, "hand over mouth surprised" },
+    { 0x1F92Bu, &emoji_shush, "shush quiet secret" },
+    { 0x1F914u, &emoji_think, "thinking hmm ponder" },
+    { 0x1F910u, &emoji_zipper, "zipper mouth quiet secret" },
+    { 0x1F974u, &emoji_woozy, "woozy drunk dizzy" },
+    { 0x1F610u, &emoji_neutral, "neutral flat blank" },
+    { 0x1F611u, &emoji_expressionless, "expressionless blank meh" },
+    { 0x1F636u, &emoji_no_mouth, "no mouth silent blank" },
+    { 0x1F60Fu, &emoji_smirk, "smirk smug confident" },
+    { 0x1F612u, &emoji_unamused, "unamused annoyed unimpressed" },
+    { 0x1F644u, &emoji_eye_roll, "eye roll bored annoyed" },
+    { 0x1F62Cu, &emoji_grimace, "grimace awkward nervous teeth" },
+    { 0x1F925u, &emoji_lying, "lying pinocchio nose" },
+    { 0x1F634u, &emoji_sleeping, "sleeping tired zzz" },
+    { 0x1F924u, &emoji_drool, "drooling sleep hungry" },
+    { 0x1F62Au, &emoji_sleepy, "sleepy tired yawn" },
+    { 0x1F912u, &emoji_sick, "sick thermometer ill fever" },
+    { 0x1F915u, &emoji_hurt, "hurt injured bandage" },
+    { 0x1F922u, &emoji_nausea, "nausea sick green ill" },
+    { 0x1F92Eu, &emoji_vomit, "vomit sick ill" },
+    { 0x1F927u, &emoji_sneeze, "sneeze sick cold" },
+    { 0x1F975u, &emoji_hot, "hot sweating overheated" },
+    { 0x1F976u, &emoji_cold, "cold freezing ice" },
+    { 0x1F635u, &emoji_dizzy_face, "dizzy face spiral woozy" },
+    { 0x1F92Fu, &emoji_exploding, "exploding head mind blown" },
+    { 0x1F971u, &emoji_yawn, "yawn tired bored" },
+    { 0x1F920u, &emoji_cowboy, "cowboy hat western" },
+    { 0x1F973u, &emoji_party, "party celebrate hat" },
+    { 0x1F978u, &emoji_disguise, "disguise incognito glasses" },
+    { 0x1F60Eu, &emoji_sunglasses, "sunglasses cool shades" },
+    { 0x1F913u, &emoji_nerd, "nerd glasses smart" },
+    { 0x1F9D0u, &emoji_monocle, "monocle thinking smart" },
+    { 0x1F615u, &emoji_confused, "confused lost uncertain" },
+    { 0x1F61Fu, &emoji_worried, "worried anxious nervous" },
+    { 0x1F641u, &emoji_frown, "frown sad unhappy" },
+    { 0x1F62Eu, &emoji_open_mouth, "open mouth surprised" },
+    { 0x1F62Fu, &emoji_hushed, "hushed surprised quiet" },
+    { 0x1F632u, &emoji_astonished, "astonished shocked wow" },
+    { 0x1F633u, &emoji_flushed, "flushed embarrassed red" },
+    { 0x1F97Au, &emoji_plead, "pleading eyes puppy beg" },
+    { 0x1F628u, &emoji_fearful, "fearful scared afraid" },
+    { 0x1F630u, &emoji_anxious_sweat, "anxious sweat nervous" },
+    { 0x1F625u, &emoji_sad_relief, "sad relieved sweat" },
+    { 0x1F622u, &emoji_cry, "cry tear sad" },
+    { 0x1F62Du, &emoji_sob, "sob cry tears" },
+    { 0x1F631u, &emoji_scream, "scream scared horror" },
+    { 0x1F616u, &emoji_confounded, "confounded stressed fail" },
+    { 0x1F623u, &emoji_persevere, "persevering struggle" },
+    { 0x1F61Eu, &emoji_disappoint, "disappointed sad" },
+    { 0x1F613u, &emoji_downcast, "downcast sweat relieved" },
+    { 0x1F629u, &emoji_weary, "weary tired exhausted" },
+    { 0x1F62Bu, &emoji_tired, "tired exhausted" },
+    { 0x1F624u, &emoji_triumph, "triumph puffing steam angry" },
+    { 0x1F621u, &emoji_rage, "rage angry pouting" },
+    { 0x1F620u, &emoji_angry, "angry mad" },
+    { 0x1F92Cu, &emoji_swearing, "swearing angry cursing" },
+    { 0x1F608u, &emoji_devil, "devil smiling evil" },
+    { 0x1F47Fu, &emoji_imp, "imp devil evil angry" },
+    { 0x1F480u, &emoji_skull, "skull dead bones" },
+    { 0x02620u, &emoji_crossbones, "skull crossbones danger" },
+    { 0x1F921u, &emoji_clown, "clown joker" },
+    { 0x1F479u, &emoji_ogre, "ogre monster" },
+    { 0x1F47Au, &emoji_goblin, "goblin devil red" },
+    { 0x1F4A9u, &emoji_poop, "poop pile smiling" },
+    { 0x1F47Bu, &emoji_ghost, "ghost boo spooky" },
+    { 0x1F47Du, &emoji_alien, "alien ufo extraterrestrial" },
+    { 0x1F47Eu, &emoji_space_invader, "space invader game alien" },
+    { 0x1F916u, &emoji_robot, "robot machine" },
+    { 0x1F638u, &emoji_cat_smile, "cat smile happy" },
+    { 0x1F639u, &emoji_cat_joy, "cat joy laugh tears" },
+    { 0x1F63Bu, &emoji_cat_heart, "cat heart eyes love" },
+    { 0x1F63Cu, &emoji_cat_smirk, "cat smirk wry" },
+    { 0x1F63Fu, &emoji_cat_cry, "cat cry sad" },
+    { 0x1F63Eu, &emoji_cat_pout, "cat pouting angry" },
+    { 0x1F44Du, &emoji_thumbsup, "thumbs up good yes" },
+    { 0x1F44Eu, &emoji_thumbsdown, "thumbs down no bad" },
+    { 0x1F44Bu, &emoji_wave, "wave hand hello bye" },
+    { 0x1F64Fu, &emoji_pray, "pray hands please thanks" },
+    { 0x1F44Fu, &emoji_clap, "clap applause bravo" },
+    { 0x1F44Cu, &emoji_ok_hand, "ok hand perfect" },
+    { 0x1F4AAu, &emoji_muscle, "muscle strong flex" },
+    { 0x02764u, &emoji_heart, "heart love red" },
+    { 0x1F9E1u, &emoji_orange_heart, "orange heart" },
+    { 0x1F49Bu, &emoji_yellow_heart, "yellow heart" },
+    { 0x1F49Au, &emoji_green_heart, "green heart" },
+    { 0x1F499u, &emoji_blue_heart, "blue heart" },
+    { 0x1F49Cu, &emoji_purple_heart, "purple heart" },
+    { 0x1F494u, &emoji_broken_heart, "broken heart sad" },
+    { 0x1F525u, &emoji_fire, "fire hot flame" },
+    { 0x02728u, &emoji_sparkles, "sparkles stars shiny" },
+    { 0x02B50u, &emoji_star, "star gold" },
+    { 0x1F389u, &emoji_tada, "tada party celebrate" },
+    { 0x1F4ABu, &emoji_dizzy, "dizzy stars swirl" },
+    { 0x1F4AFu, &emoji_100, "100 perfect score" },
+    { 0x1F4A5u, &emoji_boom, "boom explosion" },
+    { 0x02705u, &emoji_check, "check done yes green" },
+    { 0x0274Cu, &emoji_cross, "cross no cancel red" },
+    { 0x02757u, &emoji_exclamation, "exclamation important" },
+    { 0x02753u, &emoji_question, "question ask help" },
+    { 0x1F4A4u, &emoji_zzz, "zzz sleep tired" },
+    { 0x1F438u, &emoji_frog, "frog green" },
+    { 0x1F415u, &emoji_dog, "dog puppy" },
+    { 0x1F4E1u, &emoji_satellite, "satellite dish radio antenna" },
+    { 0x02708u, &emoji_plane, "plane airplane travel" },
+    { 0x1F697u, &emoji_car, "car vehicle" },
+    { 0x1F3CDu, &emoji_moto, "motorcycle bike" },
+    { 0x1F6A2u, &emoji_ship, "ship boat sea" },
+    { 0x1F334u, &emoji_palm, "palm tree beach" },
+    { 0x1F3E0u, &emoji_house, "house home" },
+    { 0x1F3E1u, &emoji_house2, "house garden home" },
+    { 0x1F3F4u, &emoji_wales, "wales flag" },
+    { 0x1F1EEu, &emoji_ireland, "ireland flag" },
+    { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
 };
-static const int kOpsEmojiCount = 32;
+static const int kOpsEmojiCount = 140;
