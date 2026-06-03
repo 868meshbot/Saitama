@@ -16,12 +16,12 @@
 secrets.*
 
 # Firmware binaries (built by CI)
-firmware/
-!firmware/firmware_merged.bin
+firmware/*
 *.bin
 *.elf
 *.hex
 *.map
+!firmware/firmware_merged.bin
 
 # Python
 __pycache__/
