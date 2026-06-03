@@ -1,0 +1,60 @@
+name: PlatformIO Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install platformio
+
+    - name: Cache PlatformIO
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.platformio
+          ~/.piocache
+        key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pio-
+
+    - name: Build firmware
+      # downloads deps, builds all targets
+      run: |
+        mkdir -p ~/.piocache
+        export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
+        pio run
+
+    - name: Prepare artifacts
+      run: |
+        mkdir -p renamed_artifacts
+        REPO_NAME=$(basename ${{ github.repository }})
+        GIT_DESC=$(git describe --all --long --tags | sed 's/\//-/g')
+        find .pio/build -name "firmware.bin" | while read -r file; do
+          TARGET=$(basename $(dirname "$file"))
+          cp "$file" "renamed_artifacts/${REPO_NAME}-${TARGET}-${GIT_DESC}.bin"
+        done
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-binaries
+        path: renamed_artifacts/*.bin
