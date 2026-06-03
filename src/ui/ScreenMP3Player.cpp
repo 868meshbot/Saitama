@@ -45,8 +45,8 @@ lv_obj_t*   ScreenMP3Player::_playBtn       = nullptr;
 lv_obj_t*   ScreenMP3Player::_playBtnLbl    = nullptr;
 lv_timer_t* ScreenMP3Player::_timer         = nullptr;
 
-char ScreenMP3Player::_filePaths[ScreenMP3Player::MAX_FILES][128] = {};
-char ScreenMP3Player::_fileNames[ScreenMP3Player::MAX_FILES][64]  = {};
+char (*ScreenMP3Player::_filePaths)[128] = nullptr;
+char (*ScreenMP3Player::_fileNames)[64]  = nullptr;
 int  ScreenMP3Player::_fileCount = 0;
 
 // ── File scanning ─────────────────────────────────────────────────────────────
@@ -64,6 +64,11 @@ static bool _hasAudioExt(const char* name)
 
 void ScreenMP3Player::_scanFiles()
 {
+    if (!_filePaths) {
+        _filePaths = (char (*)[128])ps_malloc((size_t)MAX_FILES * 128);
+        _fileNames = (char (*)[64]) ps_malloc((size_t)MAX_FILES * 64);
+        if (!_filePaths || !_fileNames) { OPS_LOG("MP3Player", "ps_malloc failed"); return; }
+    }
     _fileCount = 0;
     if (!ops::sdcard::isMounted()) {
         OPS_LOG("MP3Player", "SD not mounted — no files found");
@@ -118,12 +123,14 @@ void ScreenMP3Player::_populateDropdown()
         return;
     }
 
-    // Build newline-separated options string (stack-allocated for up to 64 × 64 = 4096 bytes)
-    static char opts[MAX_FILES * 64 + 1];
+    static constexpr size_t OPTS_SIZE = (size_t)MAX_FILES * 64 + 1;
+    static char* opts = nullptr;
+    if (!opts) opts = (char*)ps_malloc(OPTS_SIZE);
+    if (!opts) return;
     opts[0] = '\0';
     for (int i = 0; i < _fileCount; i++) {
-        strncat(opts, _fileNames[i], sizeof(opts) - strlen(opts) - 2);
-        if (i < _fileCount - 1) strncat(opts, "\n", sizeof(opts) - strlen(opts) - 1);
+        strncat(opts, _fileNames[i], OPTS_SIZE - strlen(opts) - 2);
+        if (i < _fileCount - 1) strncat(opts, "\n", OPTS_SIZE - strlen(opts) - 1);
     }
     lv_dropdown_set_options(_dropdown, opts);
     lv_obj_clear_state(_dropdown, LV_STATE_DISABLED);

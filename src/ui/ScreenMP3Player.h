@@ -29,8 +29,8 @@ private:
 
     // File list built from SD root scan
     static constexpr int MAX_FILES = 64;
-    static char  _filePaths[MAX_FILES][128];  // full SD paths
-    static char  _fileNames[MAX_FILES][64];   // basenames for dropdown
+    static char  (*_filePaths)[128];  // ps_malloc'd in _scanFiles(); full SD paths
+    static char  (*_fileNames)[64];   // ps_malloc'd in _scanFiles(); basenames
     static int   _fileCount;
 
     static void _buildScreen();

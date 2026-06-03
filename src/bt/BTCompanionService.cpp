@@ -4,13 +4,39 @@
 #include "BTCompanionService.h"
 #include "../utils/Log.h"
 #include <cstring>
+#include <BLEDevice.h>
+#include <esp_gap_ble_api.h>
+#include <esp_gatts_api.h>
+#include <esp_heap_caps.h>
 
 namespace ops {
+
+// ── GATTS connect hook ───────────────────────────────────────────────
+// Bluedroid callback context: must NOT call any BLE API that re-enters
+// the Bluedroid stack (causes assert emi.c + interrupt WDT crash).
+// Only record the peer BDA; tick() issues esp_ble_set_encryption() safely
+// from the main loop.
+static void _gattsConnectHook(esp_gatts_cb_event_t  event,
+                               esp_gatt_if_t         /*gatts_if*/,
+                               esp_ble_gatts_cb_param_t* param)
+{
+    if (event == ESP_GATTS_CONNECT_EVT)
+        BTCompanionService::instance().scheduleMitmEncrypt(param->connect.remote_bda);
+}
 
 BTCompanionService& BTCompanionService::instance()
 {
     static BTCompanionService s;
     return s;
+}
+
+void BTCompanionService::scheduleMitmEncrypt(const uint8_t* remoteBda)
+{
+    memcpy(_pendingBda, remoteBda, sizeof(_pendingBda));
+    _pendingEnc = true;
+    OPS_LOG("BT", "Connected — free internal DRAM: %u B  PSRAM: %u B",
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
 void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
@@ -19,17 +45,11 @@ void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
         char name[32];
         strncpy(name, deviceName ? deviceName : "OPS-NODE", sizeof(name) - 1);
         name[sizeof(name) - 1] = '\0';
-        _ble.begin("OPS", name, pinCode);
+        _ble.begin("", name, pinCode);
+        BLEDevice::setCustomGattsHandler(_gattsConnectHook);
         _bleInited = true;
-        OPS_LOG("BT", "BLE stack init as 'OPS %s'", name);
-        // First call: enable() is invoked by startCompanionInterface() next,
-        // which starts the GATT service and advertising for the first time.
+        OPS_LOG("BT", "BLE stack init as '%s' (PIN: %lu)", name, (unsigned long)pinCode);
     } else {
-        // Second+ call: GATT service is already registered.
-        // enable() (called next by startCompanionInterface) has an internal
-        // guard — if (_isEnabled) return — so it is a safe no-op here because
-        // we never call disable(), keeping _isEnabled true at all times.
-        // Restart advertising directly so the device becomes discoverable again.
         BLEDevice::getAdvertising()->start();
         OPS_LOG("BT", "BLE advertising restarted");
     }
@@ -39,16 +59,17 @@ void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
 void BTCompanionService::stop()
 {
     if (!_bleInited) return;
-    // Stop advertising via BLEDevice::getAdvertising() instead of _ble.disable().
-    // _ble.disable() calls pService->stop() (GATT layer teardown); the next
-    // _ble.enable() then calls pService->start() which re-registers already-
-    // registered characteristics and corrupts the ESP32 BLE heap —
-    // observed as "Malloc failed" / "hash_map_set" assert on the second connect.
-    // stopCompanionInterface() has already nulled _btSerial, preventing
-    // checkRecvFrame() from running and suppressing the auto-restart timer.
     BLEDevice::getAdvertising()->stop();
-    _running = false;
+    _pendingEnc = false;
+    _running    = false;
     OPS_LOG("BT", "BLE advertising stopped");
+}
+
+void BTCompanionService::tick()
+{
+    if (!_pendingEnc) return;
+    _pendingEnc = false;
+    esp_ble_set_encryption(_pendingBda, ESP_BLE_SEC_ENCRYPT_MITM);
 }
 
 bool BTCompanionService::isConnected() const

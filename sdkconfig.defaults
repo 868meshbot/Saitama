@@ -1,0 +1,16 @@
+# Saitama sdkconfig overrides
+# Requires a full clean rebuild to take effect:
+#   pio run -e t-deck --target clean && pio run -e t-deck
+
+# Bluedroid BLE connection pool — default is 4 simultaneous connections.
+# We only ever pair with one phone at a time, so 1 is sufficient.
+# Each extra slot reserves ~15-20 KB of internal DRAM for Bluedroid buffers;
+# dropping from 4→1 frees ~45-60 KB, giving the BLE OSI timer/hash allocations
+# enough headroom to survive at connection time.
+CONFIG_BT_ACL_CONNECTIONS=1
+CONFIG_BT_BLE_MAX_CONNECTIONS=1
+
+# Allow FreeRTOS task stacks to live in PSRAM when created with
+# pvPortMallocCaps(size, MALLOC_CAP_SPIRAM). Tasks pinned to core 0
+# that don't need fast stack access can opt in.
+CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y

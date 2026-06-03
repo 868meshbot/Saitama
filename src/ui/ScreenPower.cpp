@@ -66,13 +66,14 @@ static lv_obj_t *_axisLbl(lv_obj_t *parent, int y, const char *txt) {
 // ── callbacks ────────────────────────────────────────────────────────
 void ScreenPower::_onHome(lv_event_t * /*e*/) { ScreenLauncher::show(); }
 
-void ScreenPower::_onKey(lv_event_t *e) {
-  uint32_t key = *(uint32_t *)lv_event_get_param(e);
-  if (key == LV_KEY_ESC) {
-    ScreenLauncher::show();
-  } else if (key == (uint32_t)'t') {
-    _cycleTimescale();
-  }
+void ScreenPower::_onKey(lv_event_t* e)
+{
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
+        ScreenLauncher::show();
+    } else if (key == (uint32_t)'t') {
+        _cycleTimescale();
+    }
 }
 
 // ── _cycleTimescale() ────────────────────────────────────────────────

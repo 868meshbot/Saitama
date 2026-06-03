@@ -238,6 +238,11 @@ void ScreenMap::_build()
     lv_group_add_obj(lv_group_get_default(), _canvas);
     lv_group_focus_obj(_canvas);
 
+    // Touch drag → pan. LV_OBJ_FLAG_CLICKABLE is required for the canvas
+    // (lv_img subclass) to receive pointer events.
+    lv_obj_add_flag(_canvas, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_canvas, _onTouch, LV_EVENT_PRESSING, nullptr);
+
 
     // ── Floating zoom buttons ────────────────────────────────────────────
     // Sit over the map canvas bottom-right; right edge x=226 clears the GT911
@@ -470,6 +475,17 @@ void ScreenMap::_onKey(lv_event_t* e)
     uint32_t* key = (uint32_t*)lv_event_get_param(e);
     if (key && (*key == LV_KEY_ESC))
         ScreenLauncher::show();
+}
+
+void ScreenMap::_onTouch(lv_event_t* /*e*/)
+{
+    lv_indev_t* indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t vect;
+    lv_indev_get_vect(indev, &vect);
+    // Negate: dragging finger right moves the map right (center shifts west).
+    if (vect.x != 0 || vect.y != 0)
+        navigate(-vect.x, -vect.y);
 }
 
 // ── SD remount dialog ─────────────────────────────────────────────────

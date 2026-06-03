@@ -74,6 +74,8 @@ lv_obj_t* ScreenSignal::s_directRxLbl  = nullptr;
 lv_obj_t* ScreenSignal::s_errorLbl     = nullptr;
 lv_obj_t* ScreenSignal::s_airtimeTxLbl = nullptr;
 lv_obj_t* ScreenSignal::s_airtimeRxLbl = nullptr;
+lv_obj_t* ScreenSignal::s_freqLbl      = nullptr;
+lv_obj_t* ScreenSignal::s_profileLbl  = nullptr;
 lv_obj_t* ScreenSignal::s_heapLbl      = nullptr;
 lv_obj_t* ScreenSignal::s_psramLbl    = nullptr;
 lv_obj_t* ScreenSignal::s_battLbl     = nullptr;
@@ -250,29 +252,10 @@ void ScreenSignal::_build()
     _addRow(_body, "TX:",  "0s",  &s_airtimeTxLbl);
     _addRow(_body, "RX:",  "0s",  &s_airtimeRxLbl);
 
-    // ── RADIO CONFIG (static) ─────────────────────────────────────────
+    // ── RADIO CONFIG (live — refreshed every 2 s) ────────────────────
     _addSection(_body, "RADIO CONFIG");
-    {
-        const auto& cfg = ops::config::get();
-        char freqBuf[24];
-        snprintf(freqBuf, sizeof(freqBuf), "%.3f MHz", (double)MeshService::instance().getFreqMHz());
-        _addRow(_body, "Freq:", freqBuf);
-
-        static const char* kProfiles[14] = {
-            "Australia",       "Australia Vic.", "EU/UK Narrow",  "EU/UK Long Range",
-            "EU/UK Medium",    "Czech Narrow",   "EU 433 LR",     "New Zealand",
-            "NZ Narrow",       "Portugal 433",   "Portugal 868",  "Switzerland",
-            "USA/Canada",      "Vietnam",
-        };
-        uint8_t p = (cfg.radioProfile < 14) ? cfg.radioProfile : 2;
-        char profBuf[32];
-        if (cfg.radioCustom)
-            snprintf(profBuf, sizeof(profBuf), "%.22s+cust", kProfiles[p]);
-        else
-            snprintf(profBuf, sizeof(profBuf), "%s", kProfiles[p]);
-        _addRow(_body, "Profile:", profBuf);
-        _addRow(_body, "Region:", cfg.radioRegion[0] ? cfg.radioRegion : "?");
-    }
+    _addRow(_body, "Freq:",    "--", &s_freqLbl);
+    _addRow(_body, "Profile:", "--", &s_profileLbl);
 
     // ── HARDWARE (partly live: heap/PSRAM) ───────────────────────────
     _addSection(_body, "HARDWARE");
@@ -352,6 +335,25 @@ void ScreenSignal::_refresh()
 
     fmtAirtime(st.airtimeRxMs, buf, sizeof(buf));
     lv_label_set_text(s_airtimeRxLbl, buf);
+
+    // Radio config (profile can change in Settings while this screen is cached)
+    {
+        static const char* kProfileNames[14] = {
+            "Australia",     "Australia Vic.", "EU/UK Narrow",  "EU/UK Long Range",
+            "EU/UK Medium",  "Czech Narrow",   "EU 433 LR",     "New Zealand",
+            "NZ Narrow",     "Portugal 433",   "Portugal 868",  "Switzerland",
+            "USA/Canada",    "Vietnam",
+        };
+        const auto& cfg = ops::config::get();
+        uint8_t p = (cfg.radioProfile < 14) ? cfg.radioProfile : 2;
+        snprintf(buf, sizeof(buf), "%.3f MHz", (double)MeshService::instance().getFreqMHz());
+        lv_label_set_text(s_freqLbl, buf);
+        if (cfg.radioCustom)
+            snprintf(buf, sizeof(buf), "%.22s+cust", kProfileNames[p]);
+        else
+            snprintf(buf, sizeof(buf), "%s", kProfileNames[p]);
+        lv_label_set_text(s_profileLbl, buf);
+    }
 
     // Heap / PSRAM
     size_t heap  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);

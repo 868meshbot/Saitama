@@ -59,9 +59,11 @@ static constexpr ZoomLevel kZooms[] = {
 static constexpr int ZOOM_COUNT = 3;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-static float  s_rssi[SPEC_W]          = {};
-static float  s_peak[SPEC_W]          = {};
-static int8_t s_wf[WF_ROWS][SPEC_W]  = {};
+// PSRAM-backed buffers — allocated on first show() to free ~17 KB of internal
+// DRAM. s_wf is a flattened WF_ROWS×SPEC_W array; access with s_wf[row*SPEC_W+col].
+static float*  s_rssi = nullptr;
+static float*  s_peak = nullptr;
+static int8_t* s_wf   = nullptr;
 static int    s_wfRow      = 0;
 static float  s_center     = 869.0f;
 static int    s_zoom       = 1;
@@ -131,7 +133,7 @@ void ScreenSpectrum::_redrawCanvas()
         int histIdx  = (s_wfRow + row) % WF_ROWS;
         int cy0      = row * 2;
         for (int x = 0; x < SPEC_W; x++) {
-            lv_color_t c = _rssiToWfColor((float)s_wf[histIdx][x]);
+            lv_color_t c = _rssiToWfColor((float)s_wf[histIdx * SPEC_W + x]);
             _canvasBuf[ cy0      * CANVAS_W + x] = c;
             _canvasBuf[(cy0 + 1) * CANVAS_W + x] = c;
         }
@@ -281,7 +283,7 @@ void ScreenSpectrum::update()
         float r = s_rssi[x];
         if (r < -128.0f) r = -128.0f;
         if (r >   -1.0f) r =   -1.0f;
-        s_wf[s_wfRow][x] = (int8_t)r;
+        s_wf[s_wfRow * SPEC_W + x] = (int8_t)r;
     }
     s_wfRow = (s_wfRow + 1) % WF_ROWS;
 
@@ -407,6 +409,12 @@ void ScreenSpectrum::_buildScreen()
 // ── show() ────────────────────────────────────────────────────────────────────
 void ScreenSpectrum::show()
 {
+    if (!s_rssi) {
+        s_rssi = (float*)ps_malloc(SPEC_W * sizeof(float));
+        s_peak = (float*)ps_malloc(SPEC_W * sizeof(float));
+        s_wf   = (int8_t*)ps_malloc((size_t)WF_ROWS * SPEC_W * sizeof(int8_t));
+        if (!s_rssi || !s_peak || !s_wf) { OPS_LOG("Spectrum", "ps_malloc failed"); return; }
+    }
     if (!_screen) _buildScreen();
     if (!_screen || !_canvas) { OPS_LOG("Spectrum", "build failed"); return; }
 
@@ -423,7 +431,7 @@ void ScreenSpectrum::show()
     }
 
     for (int i = 0; i < SPEC_W; i++) { s_rssi[i] = RSSI_MIN; s_peak[i] = RSSI_MIN; }
-    memset(s_wf, -128, sizeof(s_wf));
+    memset(s_wf, -128, (size_t)WF_ROWS * SPEC_W * sizeof(int8_t));
     s_wfRow = 0;
 
     _updateInfo();

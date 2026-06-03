@@ -15,6 +15,8 @@
 namespace ops { namespace ui {
 
 lv_obj_t* ScreenPlaceholder::_screen = nullptr;
+static bool     s_isGPS          = false;
+static uint32_t s_gpsLastRefreshMs = 0;
 
 // ── GPS screen builder ────────────────────────────────────────────────
 // Layout (320 × 212 body below 28 px top bar):
@@ -259,11 +261,13 @@ static void _buildGPSBody(lv_obj_t* screen) {
 
 // ── show() ────────────────────────────────────────────────────────────
 void ScreenPlaceholder::show(const char* title) {
-    // Always delete and rebuild so live data refreshes on every visit.
-    if (_screen) {
-        lv_obj_del(_screen);
-        _screen = nullptr;
-    }
+    // Build the new screen first, load it, then delete the old one.
+    // Deleting the active screen before lv_scr_load() leaves LVGL's internal
+    // active-screen pointer dangling; LVGL accesses it during lv_obj_create()
+    // calls (style/theme lookups via lv_disp_get_scr_act()), causing a
+    // LoadProhibited crash when show() is called from outside lv_timer_handler()
+    // (e.g. the 3 s auto-refresh tick) where lv_obj_del is not deferred.
+    lv_obj_t* old = _screen;
 
     _screen = lv_obj_create(nullptr);
     lv_obj_set_size(_screen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -315,8 +319,11 @@ void ScreenPlaceholder::show(const char* title) {
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
 
+    s_isGPS = (strcmp(title, "GPS") == 0);
+    s_gpsLastRefreshMs = millis();
+
     // ── Body ────────────────────────────────────────────────────────
-    if (strcmp(title, "GPS") == 0) {
+    if (s_isGPS) {
         _buildGPSBody(_screen);
     } else {
         lv_obj_t* icon = lv_label_create(_screen);
@@ -333,11 +340,21 @@ void ScreenPlaceholder::show(const char* title) {
     }
 
     lv_scr_load(_screen);
+    if (old) lv_obj_del(old);  // safe to delete now — no longer the active screen
     OPS_LOG("UI", "Placeholder: %s", title);
 }
 
 void ScreenPlaceholder::_onHomeClick(lv_event_t* /*e*/) {
+    s_isGPS = false;
     ScreenLauncher::show();
+}
+
+void ScreenPlaceholder::tick()
+{
+    if (!s_isGPS) return;
+    if (!_screen || lv_scr_act() != _screen) return;
+    if (millis() - s_gpsLastRefreshMs >= 3000UL)
+        show("GPS");
 }
 
 }}  // namespace ops::ui

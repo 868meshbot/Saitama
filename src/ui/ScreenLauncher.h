@@ -54,6 +54,9 @@ public:
     // Called from UIScreen::tick() to update the speaker mute/unmute icon.
     static void refreshSpeaker(bool enabled);
 
+    // Called from UIScreen::tick() to update the Bluetooth status icon.
+    static void refreshBluetooth(bool enabled);
+
     // Called from UIScreen::tick() when peerSerial changes while the
     // advertise screen is active — refreshes the repeater response list.
     static void onAdvertPeersUpdated();
@@ -65,6 +68,7 @@ private:
     static lv_obj_t* _satLbl;      // GPS satellite count (hidden when GPS off)
     static lv_obj_t* _radioLbl;    // LoRa radio status (hidden until initialized)
     static lv_obj_t* _speakerLbl;  // mute/volume icon next to GPS
+    static lv_obj_t* _btLbl;       // Bluetooth status icon in top bar
 
     static void _buildTopBar   (lv_obj_t* parent);
     static void _buildGrid     (lv_obj_t* parent);

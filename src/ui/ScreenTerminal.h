@@ -33,8 +33,11 @@ private:
     // Command dispatch — called by _onSend with the raw input string
     static void _dispatch(const char* input);
 
-    // Static log buffer (persists across screen visits)
-    static char    _logBuf[3072];
+    static constexpr int LOG_BUF_SIZE = 3072;
+
+    // Log buffer lives in PSRAM — allocated once in show() to avoid burning
+    // internal DRAM that Bluedroid needs for its connection-time allocations.
+    static char*   _logBuf;
     static int     _logLen;
 
     // Serial line-input buffer

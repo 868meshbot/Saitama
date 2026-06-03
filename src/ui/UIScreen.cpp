@@ -17,6 +17,8 @@
 #include "ScreenRepeaters.h"
 #include "ScreenMap.h"
 #include "ScreenPower.h"
+#include "ScreenPlaceholder.h"
+#include "../bt/BTCompanionService.h"
 #include "ScreenSpectrum.h"
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
@@ -83,7 +85,9 @@ static lv_disp_t*         s_disp    = nullptr;
 static lv_color_t*        s_buf1    = nullptr;
 static lv_color_t*        s_buf2    = nullptr;
 
-static constexpr uint32_t BUF_PIXELS = OPS_SCREEN_W * 40;  // 40-line strip
+// 10-line DMA strip: 10×320×2 = 6.4 KB per buffer, 12.8 KB total in internal DRAM.
+// Reduced from 40 lines to free ~38 KB of internal DRAM for the Bluedroid stack.
+static constexpr uint32_t BUF_PIXELS = OPS_SCREEN_W * 10;
 
 // LVGL 8 indev driver (trackball → encoder for non-launcher screens)
 static lv_indev_drv_t s_indev_drv;
@@ -425,7 +429,7 @@ static void _deactivateScreensaver()
     if (s_ssCanvasBuf) { free(s_ssCanvasBuf); s_ssCanvasBuf = nullptr; }
     Board::instance().setDisplayBrightness(
         (uint8_t)ops::config::get().brightness);
-    _applyGovFreq(0);  // restore active-screen frequency
+    s_govApplyPending = true;  // restore active-screen frequency via safe deferred path
 }
 
 static void _activateScreensaver(bool analog = false)
@@ -485,7 +489,11 @@ static void _activateScreensaver(bool analog = false)
     s_screensaverActive  = true;
     s_screensaverStartMs = millis();
     s_screenOff          = false;
-    _applyGovFreq(1);  // screensaver frequency
+    // Defer CPU frequency change via the established safe path — calling
+    // setCpuFrequencyMhz() here (between lv_obj_create calls and rendering)
+    // reconfigures the PLL mid-construction, uses deep ESP-IDF stack, and can
+    // trigger the interrupt WDT or overflow the main-task stack canary.
+    s_govApplyPending    = true;
     // Dim to ~30% of configured brightness (min 60/255) — clock must be clearly visible.
     int cfg_b = ops::config::get().brightness;
     int dim   = cfg_b * 30 / 100;
@@ -568,9 +576,10 @@ void init() {
     // Switch GPIO 42 from digital to ledc PWM so brightness can be dimmed.
     // Board::init() drove the pin HIGH via digitalWrite; ledcAttachPin re-routes
     // the pin mux to the ledc peripheral, overriding that.
+    // Keep backlight off until the first LVGL frame is rendered — prevents the
+    // user seeing TFT init noise or a blank canvas while LVGL sets up.
     Board::instance().initBacklightPWM();
-    Board::instance().setDisplayBrightness(
-        (uint8_t)ops::config::get().brightness);
+    Board::instance().setDisplayBrightness(0);
     _applyGovFreq(0);  // start at active-screen frequency
 
     lv_init();
@@ -625,8 +634,13 @@ void init() {
     // Initialise GPS power manager (applies starting mode from config).
     ops::GpsMgr::instance().init();
 
-    // Show boot screen — auto-transitions to launcher after 2.5 s
+    // Show boot screen — auto-transitions to launcher after 2.5 s.
+    // Force one render cycle before enabling the backlight so the first thing
+    // the user sees is the splash screen, not TFT noise or an empty canvas.
     ScreenBoot::show();
+    lv_refr_now(nullptr);
+    Board::instance().setDisplayBrightness(
+        (uint8_t)ops::config::get().brightness);
 
     s_lastActivityMs = millis();
 
@@ -860,6 +874,8 @@ void tick() {
     ScreenTrace::tick();
     ScreenFinder::tick();
     ScreenPower::tick();
+    ScreenPlaceholder::tick();
+    ops::BTCompanionService::instance().tick();
     ScreenSpectrum::update();
     ScreenSigGen::update();
     ScreenChanScan::update();
@@ -926,6 +942,7 @@ void tick() {
         OPS_LOG("BATT", "pct=%d charging=%d", s_battPct, (int)s_chgState);
         ScreenLauncher::refreshBattery(s_battPct, s_chgState);
         ScreenLauncher::refreshSpeaker(ops::config::get().speakerEnabled);
+        ScreenLauncher::refreshBluetooth(ops::config::get().bluetoothEnabled);
         ScreenLauncher::refreshStatus(
             ops::config::get().gpsMode,
             board.hasGPSFix(),

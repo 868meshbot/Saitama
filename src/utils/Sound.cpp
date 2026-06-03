@@ -63,11 +63,13 @@ static void _writeScaled(const int16_t* buf, int count)
     }
 }
 
-static int16_t s_pingBuf[PING_SAMPLES];
-static int16_t s_pluckBuf[PLUCK_SAMPLES];
-static int16_t s_clearBuf[CLEAR_SAMPLES];
-static int16_t s_whooshBuf[WHOOSH_SAMPLES];
-static int16_t s_jingleBuf[JINGLE_TOTAL];
+// Waveform buffers live in PSRAM — allocated in init() to free ~29 KB of
+// internal DRAM for the Bluedroid stack. CPU-read only; never DMA-accessed.
+static int16_t* s_pingBuf   = nullptr;
+static int16_t* s_pluckBuf  = nullptr;
+static int16_t* s_clearBuf  = nullptr;
+static int16_t* s_whooshBuf = nullptr;
+static int16_t* s_jingleBuf = nullptr;
 static bool     s_initialized = false;
 static uint32_t s_soundEndMs  = 0;  // millis() deadline while DMA is draining
 
@@ -160,6 +162,15 @@ namespace ops {
 
 void sound::init()
 {
+    s_pingBuf   = (int16_t*)ps_malloc(PING_SAMPLES   * sizeof(int16_t));
+    s_pluckBuf  = (int16_t*)ps_malloc(PLUCK_SAMPLES  * sizeof(int16_t));
+    s_clearBuf  = (int16_t*)ps_malloc(CLEAR_SAMPLES  * sizeof(int16_t));
+    s_whooshBuf = (int16_t*)ps_malloc(WHOOSH_SAMPLES * sizeof(int16_t));
+    s_jingleBuf = (int16_t*)ps_malloc(JINGLE_TOTAL   * sizeof(int16_t));
+    if (!s_pingBuf || !s_pluckBuf || !s_clearBuf || !s_whooshBuf || !s_jingleBuf) {
+        OPS_LOG("Sound", "ps_malloc failed for waveform buffers");
+        return;
+    }
     _generatePing();
     _generatePluck();
     _generateClear();

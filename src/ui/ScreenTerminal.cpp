@@ -52,8 +52,8 @@ lv_obj_t* ScreenTerminal::_screen    = nullptr;
 lv_obj_t* ScreenTerminal::_logScroll = nullptr;
 lv_obj_t* ScreenTerminal::_logLabel  = nullptr;
 lv_obj_t* ScreenTerminal::_input     = nullptr;
-char      ScreenTerminal::_logBuf[3072] = "Saitama Terminal - type /help\n";
-int       ScreenTerminal::_logLen    = (int)strlen("Saitama Terminal - type /help\n");
+char*     ScreenTerminal::_logBuf    = nullptr;
+int       ScreenTerminal::_logLen    = 0;
 char      ScreenTerminal::_serialBuf[256] = {};
 int       ScreenTerminal::_serialLen = 0;
 char      ScreenTerminal::s_dmTarget[32]   = {};
@@ -63,6 +63,14 @@ uint8_t   ScreenTerminal::s_adminKey[4]    = {};
 
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenTerminal::show() {
+    if (!_logBuf) {
+        _logBuf = (char*)ps_malloc(LOG_BUF_SIZE);
+        if (_logBuf) {
+            static const char kHello[] = "Saitama Terminal - type /help\n";
+            memcpy(_logBuf, kHello, sizeof(kHello));
+            _logLen = (int)(sizeof(kHello) - 1);
+        }
+    }
     if (!_screen) {
         _screen = lv_obj_create(nullptr);
         lv_obj_set_size(_screen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -85,14 +93,15 @@ void ScreenTerminal::appendLine(const char* line) {
     // Echo to CDC serial so the serial console sees all responses
     Serial.println(line);
 
-    int remaining = (int)sizeof(_logBuf) - _logLen - 1;
+    if (!_logBuf) return;
+    int remaining = LOG_BUF_SIZE - _logLen - 1;
     if (remaining < 2) {
-        int half = sizeof(_logBuf) / 2;
-        memmove(_logBuf, _logBuf + half, sizeof(_logBuf) - half);
+        int half = LOG_BUF_SIZE / 2;
+        memmove(_logBuf, _logBuf + half, LOG_BUF_SIZE - half);
         _logLen -= half;
         if (_logLen < 0) _logLen = 0;
         _logBuf[_logLen] = '\0';
-        remaining = (int)sizeof(_logBuf) - _logLen - 1;
+        remaining = LOG_BUF_SIZE - _logLen - 1;
     }
     int n = snprintf(_logBuf + _logLen, remaining, "%s\n", line);
     if (n > 0) _logLen += n;
@@ -1427,9 +1436,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
             }
             return;
         }
-        // Show last n messages from tag
-        static char logBuf[4096];
-        size_t bytes = ops::sdcard::readMsgLog(tag, logBuf, sizeof(logBuf));
+        // Show last n messages from tag — PSRAM-backed to avoid burning internal DRAM
+        static char* logBuf = nullptr;
+        static constexpr size_t LOG_READ_SIZE = 4096;
+        if (!logBuf) logBuf = (char*)ps_malloc(LOG_READ_SIZE);
+        if (!logBuf) { appendLine("ERR: ps_malloc logBuf"); return; }
+        size_t bytes = ops::sdcard::readMsgLog(tag, logBuf, LOG_READ_SIZE);
         if (bytes == 0) {
             char buf[48];
             snprintf(buf, sizeof(buf), "No log for '%s'.", tag);

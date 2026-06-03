@@ -18,6 +18,7 @@
 #include "ScreenSpectrum.h"
 #include "ScreenChanScan.h"
 #include "ScreenSigGen.h"
+#include "ScreenPower.h"
 #include "Theme.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
@@ -43,6 +44,7 @@ lv_obj_t* ScreenLauncher::_battLbl    = nullptr;
 lv_obj_t* ScreenLauncher::_satLbl     = nullptr;
 lv_obj_t* ScreenLauncher::_radioLbl   = nullptr;
 lv_obj_t* ScreenLauncher::_speakerLbl = nullptr;
+lv_obj_t* ScreenLauncher::_btLbl      = nullptr;
 
 // ── Page 1 state ─────────────────────────────────────────────────────
 static lv_obj_t* s_tiles[12]          = {};
@@ -53,7 +55,7 @@ static int8_t    s_selCol     = 0;
 static bool      s_homeSel    = false;
 
 // ── Page 2 state ─────────────────────────────────────────────────────
-static lv_obj_t* s_tiles2[5]          = {};
+static lv_obj_t* s_tiles2[6]          = {};
 static int8_t    s_selRow2    = 0;
 static int8_t    s_selCol2    = 0;
 
@@ -87,12 +89,13 @@ static const AppItem kApps[12] = {
     { LV_SYMBOL_WIFI,      "Signal"    },
 };
 
-static const AppItem kApps2[5] = {
+static const AppItem kApps2[6] = {
     { LV_SYMBOL_PLAY,    "MP3"      },  // row 0
     { LV_SYMBOL_SD_CARD, "Files"    },
     { LV_SYMBOL_UP,      "Spectrum" },
     { LV_SYMBOL_LOOP,    "ChanScan" },
     { LV_SYMBOL_TINT,    "SigGen"   },  // row 1, col 0
+    { LV_SYMBOL_BATTERY_3, "Power"  },
 };
 
 // ── Grid descriptors (shared by both pages) ──────────────────────────
@@ -135,7 +138,7 @@ static void _updateHighlight()
         }
     } else {
         int idx = s_selRow2 * 4 + s_selCol2;
-        if (idx < 5 && s_tiles2[idx]) lv_obj_add_state(s_tiles2[idx], LV_STATE_FOCUSED);
+        if (idx < 6 && s_tiles2[idx]) lv_obj_add_state(s_tiles2[idx], LV_STATE_FOCUSED);
     }
 }
 
@@ -174,6 +177,7 @@ void ScreenLauncher::show() {
         refreshBattery(b.batteryPercent(), b.batteryCharging());
         refreshStatus(ops::config::get().gpsMode, b.hasGPSFix(), 0);
         refreshSpeaker(ops::config::get().speakerEnabled);
+        refreshBluetooth(ops::config::get().bluetoothEnabled);
     }
 
     if (s_contactsUnreadDot) {
@@ -243,6 +247,12 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
     lv_obj_set_style_border_width(spacer, 0, 0);
     lv_obj_set_style_pad_all(spacer, 0, 0);
     lv_obj_set_flex_grow(spacer, 1);
+
+    _btLbl = lv_label_create(bar);
+    lv_label_set_text(_btLbl, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_style_text_font(_btLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(_btLbl, theme::TEXT_MUTED, 0);  // grey = off
+    lv_obj_set_style_pad_right(_btLbl, 2, 0);
 
     _timeLbl = lv_label_create(bar);
     lv_label_set_text(_timeLbl, "--:--");
@@ -352,7 +362,7 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
     lv_obj_set_layout(grid2, LV_LAYOUT_GRID);
     lv_obj_set_grid_dsc_array(grid2, kColDsc, kRowDsc);
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         int col = i % 4;
         int row = i / 4;
 
@@ -500,10 +510,7 @@ void ScreenLauncher::refreshBattery(int percent, bool charging) {
     else if   (percent >=  5) { sym = LV_SYMBOL_BATTERY_1;     col = theme::ORANGE; }
     else                      { sym = LV_SYMBOL_BATTERY_EMPTY; col = theme::RED;    }
     char buf[20];
-    if (charging)
-        snprintf(buf, sizeof(buf), "%s CHG", sym);
-    else
-        snprintf(buf, sizeof(buf), "%s %d%%", sym, percent);
+    snprintf(buf, sizeof(buf), "%s %d%%", sym, percent);
     lv_label_set_text(_battLbl, buf);
     lv_obj_set_style_text_color(_battLbl, col, 0);
 }
@@ -563,6 +570,14 @@ void ScreenLauncher::refreshSpeaker(bool enabled)
         lv_label_set_text(_speakerLbl, LV_SYMBOL_MUTE);
         lv_obj_set_style_text_color(_speakerLbl, theme::RED, 0);
     }
+}
+
+// ── refreshBluetooth() ───────────────────────────────────────────────
+void ScreenLauncher::refreshBluetooth(bool enabled)
+{
+    if (!_btLbl) return;
+    lv_obj_set_style_text_color(_btLbl,
+        enabled ? lv_color_make(0, 122, 255) : theme::TEXT_MUTED, 0);
 }
 
 // ── refreshUnreadDot() ───────────────────────────────────────────────
@@ -839,6 +854,7 @@ void ScreenLauncher::_onIconClick(lv_event_t* e) {
     else if (strcmp(name, "Spectrum")  == 0) { ScreenSpectrum::show();     return; }
     else if (strcmp(name, "ChanScan")  == 0) { ScreenChanScan::show();     return; }
     else if (strcmp(name, "SigGen")    == 0) { ScreenSigGen::show();       return; }
+    else if (strcmp(name, "Power")     == 0) { ScreenPower::show();        return; }
     ScreenPlaceholder::show(name);
 }
 
@@ -893,7 +909,7 @@ void ScreenLauncher::confirmSelect() {
 
     if (s_activePage == 1) {
         int idx = s_selRow2 * 4 + s_selCol2;
-        if (idx < 5 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
+        if (idx < 6 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
         return;
     }
 

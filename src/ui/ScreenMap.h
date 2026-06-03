@@ -3,7 +3,7 @@
 //
 // Offline tile map screen.  Displays OSM PNG tiles from SD /maps/{z}/{x}/{y}.png.
 // Repeaters are shown as purple dots, chat contacts as blue dots.
-// Right strip: zoom +/- controls.  Trackball pans; backspace exits.
+// Right strip: zoom +/- controls.  Trackball or touch-drag pans; backspace exits.
 
 #pragma once
 #include <lvgl.h>
@@ -43,6 +43,7 @@ private:
     static void _onKey         (lv_event_t* e);
     static void _onMountClick  (lv_event_t* e);
     static void _onMountCancel (lv_event_t* e);
+    static void _onTouch       (lv_event_t* e);  // touch drag → pan
 };
 
 }}  // namespace ops::ui

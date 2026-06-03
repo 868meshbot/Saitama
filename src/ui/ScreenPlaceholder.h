@@ -15,6 +15,9 @@ public:
     // Always recreates so the title is correct (different apps share this).
     static void show(const char* title);
 
+    // Called from UIScreen::tick() — auto-refreshes the GPS screen every 3 s.
+    static void tick();
+
 private:
     static lv_obj_t* _screen;
     static void      _onHomeClick(lv_event_t* e);

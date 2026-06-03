@@ -33,6 +33,8 @@ private:
     static lv_obj_t* s_errorLbl;
     static lv_obj_t* s_airtimeTxLbl;
     static lv_obj_t* s_airtimeRxLbl;
+    static lv_obj_t* s_freqLbl;
+    static lv_obj_t* s_profileLbl;
     static lv_obj_t* s_heapLbl;
     static lv_obj_t* s_psramLbl;
     static lv_obj_t* s_battLbl;
