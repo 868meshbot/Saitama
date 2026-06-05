@@ -1184,11 +1184,20 @@ void ScreenRepeaters::_onAdminNbrs(lv_event_t* /*e*/)
     OPS_LOG("Admin", "Neighbours request sent to %s", s_adminName);
 }
 
-// ── _onAdminTerminal() — open Terminal with this repeater as admin target ──
+// ── _onAdminTerminal() — open admin-mode terminal for this repeater ───
 void ScreenRepeaters::_onAdminTerminal(lv_event_t* /*e*/)
 {
-    ScreenTerminal::setAdminTarget(s_adminPrefix, s_adminName);
-    ScreenTerminal::show();
+    // Null the response label so subsequent responses go to the terminal log.
+    s_adminRespLbl = nullptr;
+    s_adminRespBuf[0] = '\0';
+
+    // Open admin terminal (loads new screen over the admin panel).
+    ScreenTerminal::showAdmin(s_adminPrefix, s_adminName);
+
+    // Now safe to delete the admin panel — it is no longer the active screen.
+    lv_obj_t* dying = s_adminScreen;
+    s_adminScreen = nullptr;
+    if (dying) lv_obj_del(dying);
 }
 
 // ── _onAdminReboot() — show confirmation dialog before rebooting ──────

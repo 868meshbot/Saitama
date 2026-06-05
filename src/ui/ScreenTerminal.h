@@ -10,6 +10,10 @@ class ScreenTerminal {
 public:
     static void show();
 
+    // Open terminal in repeater-admin mode: every typed line is sent as
+    // sendAdminCommand to prefix4/name; ESC returns to ScreenRepeaters.
+    static void showAdmin(const uint8_t* prefix4, const char* name);
+
     // Append a line of text to the terminal output AND echo it to CDC serial.
     static void appendLine(const char* line);
 
@@ -22,6 +26,9 @@ private:
     static lv_obj_t* _logLabel;    // label inside scroll container
     static lv_obj_t* _input;       // textarea for command input
 
+    // true while in repeater-admin mode (input routed to sendAdminCommand)
+    static bool s_adminMode;
+
     static void _buildTopBar(lv_obj_t* parent);
     static void _buildLog   (lv_obj_t* parent);
     static void _buildInput (lv_obj_t* parent);
@@ -29,8 +36,9 @@ private:
 
     static void _onHomeClick(lv_event_t* e);
     static void _onSend     (lv_event_t* e);
+    static void _onTermKey  (lv_event_t* e);  // ESC handler — checks s_adminMode
 
-    // Command dispatch — called by _onSend with the raw input string
+    // Command dispatch — called by _onSend in normal mode
     static void _dispatch(const char* input);
 
     static constexpr int LOG_BUF_SIZE = 3072;

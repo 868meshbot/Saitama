@@ -16,6 +16,7 @@
 
 #include "ScreenTerminal.h"
 #include "ScreenLauncher.h"
+#include "ScreenRepeaters.h"
 #include "ScreenSpectrum.h"
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
@@ -52,6 +53,7 @@ lv_obj_t* ScreenTerminal::_screen    = nullptr;
 lv_obj_t* ScreenTerminal::_logScroll = nullptr;
 lv_obj_t* ScreenTerminal::_logLabel  = nullptr;
 lv_obj_t* ScreenTerminal::_input     = nullptr;
+bool      ScreenTerminal::s_adminMode = false;
 char*     ScreenTerminal::_logBuf    = nullptr;
 int       ScreenTerminal::_logLen    = 0;
 char      ScreenTerminal::_serialBuf[256] = {};
@@ -86,6 +88,32 @@ void ScreenTerminal::show() {
     lv_scr_load(_screen);
     _scrollToBottom();
     OPS_LOG("UI", "Terminal shown");
+}
+
+// ── showAdmin() ──────────────────────────────────────────────────────
+void ScreenTerminal::showAdmin(const uint8_t* prefix4, const char* name)
+{
+    memcpy(s_adminKey, prefix4, 4);
+    strncpy(s_adminName, name, sizeof(s_adminName) - 1);
+    s_adminName[sizeof(s_adminName) - 1] = '\0';
+
+    s_adminMode = true;
+
+    // Force a full rebuild so the admin title/hint/ESC routing take effect.
+    if (_screen) {
+        lv_obj_del(_screen);
+        _screen    = nullptr;
+        _logScroll = nullptr;
+        _logLabel  = nullptr;
+        _input     = nullptr;
+    }
+
+    show();
+
+    char hdr[72];
+    snprintf(hdr, sizeof(hdr), "--- Admin: %s ---  type commands below ---", s_adminName);
+    appendLine(hdr);
+    appendLine("status | advert | reboot | clock sync | neighbours");
 }
 
 // ── appendLine() ─────────────────────────────────────────────────────
@@ -140,13 +168,19 @@ void ScreenTerminal::_buildTopBar(lv_obj_t* parent) {
     lv_obj_add_event_cb(homeBtn, _onHomeClick, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* homeLbl = lv_label_create(homeBtn);
-    lv_label_set_text(homeLbl, LV_SYMBOL_HOME);
+    lv_label_set_text(homeLbl, s_adminMode ? LV_SYMBOL_LEFT : LV_SYMBOL_HOME);
     lv_obj_set_style_text_color(homeLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(homeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(homeLbl);
 
     lv_obj_t* title = lv_label_create(bar);
-    lv_label_set_text(title, LV_SYMBOL_KEYBOARD " Terminal");
+    if (s_adminMode) {
+        char titleBuf[52];
+        snprintf(titleBuf, sizeof(titleBuf), LV_SYMBOL_SETTINGS "  Admin: %s", s_adminName);
+        lv_label_set_text(title, titleBuf);
+    } else {
+        lv_label_set_text(title, LV_SYMBOL_KEYBOARD " Terminal");
+    }
     lv_obj_set_style_text_color(title, theme::TEXT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
 }
@@ -168,11 +202,6 @@ void ScreenTerminal::_buildLog(lv_obj_t* parent) {
     lv_obj_set_style_text_color(_logLabel, theme::GREEN, 0);
     lv_obj_set_style_text_font(_logLabel, &lv_font_montserrat_10, 0);
     lv_label_set_text(_logLabel, _logBuf);
-}
-
-// ESC on input or send button exits to the launcher
-static void _onTermKey(lv_event_t* e) {
-    if (lv_event_get_key(e) == LV_KEY_ESC) ScreenLauncher::show();
 }
 
 // ── _buildInput() ────────────────────────────────────────────────────
@@ -219,17 +248,19 @@ void ScreenTerminal::_buildInput(lv_obj_t* parent) {
     lv_obj_set_style_border_color(_input, theme::BORDER, 0);
     lv_obj_set_style_border_color(_input, theme::ACCENT, LV_STATE_FOCUSED);
     lv_obj_set_style_text_font(_input, &lv_font_montserrat_10, 0);
-    lv_textarea_set_placeholder_text(_input, "/help");
+    lv_textarea_set_placeholder_text(_input, s_adminMode ? "status" : "/help");
     lv_textarea_set_one_line(_input, true);
 
     // Hint line
     lv_obj_t* hint = lv_label_create(bar);
-    lv_label_set_text(hint, "Type /help for help  |  ENTER to run  |  ESC to exit");
+    lv_label_set_text(hint, s_adminMode
+        ? "Command (no / needed)  |  ENTER to send  |  ESC = back"
+        : "Type /help for help  |  ENTER to run  |  ESC to exit");
     lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -1);
 
-    // ENTER on textarea → send command; ESC on either widget → launcher
+    // ENTER on textarea → send; ESC on either widget → back (admin) or launcher (normal)
     lv_obj_add_event_cb(_input, _onSend,    LV_EVENT_READY, nullptr);
     lv_obj_add_event_cb(_input, _onTermKey, LV_EVENT_KEY,   nullptr);
     lv_obj_add_event_cb(sendBtn, _onTermKey, LV_EVENT_KEY,  nullptr);
@@ -248,9 +279,27 @@ void ScreenTerminal::_scrollToBottom() {
     lv_obj_scroll_to_y(_logScroll, LV_COORD_MAX, LV_ANIM_OFF);
 }
 
+// ── _onTermKey() — ESC handler: back to repeaters (admin) or launcher ──
+void ScreenTerminal::_onTermKey(lv_event_t* e) {
+    if (lv_event_get_key(e) != LV_KEY_ESC) return;
+    _onHomeClick(e);
+}
+
 // ── _onHomeClick() ───────────────────────────────────────────────────
 void ScreenTerminal::_onHomeClick(lv_event_t* /*e*/) {
-    ScreenLauncher::show();
+    if (s_adminMode) {
+        s_adminMode = false;
+        if (_screen) {
+            lv_obj_del(_screen);
+            _screen    = nullptr;
+            _logScroll = nullptr;
+            _logLabel  = nullptr;
+            _input     = nullptr;
+        }
+        ScreenRepeaters::show();
+    } else {
+        ScreenLauncher::show();
+    }
 }
 
 // ── _onSend() ────────────────────────────────────────────────────────
@@ -262,7 +311,18 @@ void ScreenTerminal::_onSend(lv_event_t* /*e*/) {
     char line[256];
     snprintf(line, sizeof(line), "> %s", txt);
     appendLine(line);
-    _dispatch(txt);
+
+    if (s_adminMode) {
+        auto& mesh = ops::MeshService::instance();
+        if (!mesh.initialized()) {
+            appendLine("[admin] Mesh not ready.");
+        } else {
+            mesh.sendAdminCommand(s_adminKey, txt);
+        }
+    } else {
+        _dispatch(txt);
+    }
+
     lv_textarea_set_text(_input, "");
 }
 
