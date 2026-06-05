@@ -159,7 +159,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 9. **License header on every source file:**
    ```cpp
    // Saitama — FileName.h
-   // Copyright 2026 Saitama — MIT License
+   // Copyright 2026 Saitama — GPL-3.0-or-later
    ```
 
 ---

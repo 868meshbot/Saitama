@@ -1,5 +1,5 @@
 // Saitama — BTCompanionService.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Thin singleton that owns the BLE hardware interface (SerialBLEInterface).
 // All MeshCore companion protocol logic lives in OPSMesh (MeshService.cpp).

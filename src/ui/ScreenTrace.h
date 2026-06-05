@@ -1,5 +1,5 @@
 // Saitama — ScreenTrace.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Trace-route screen.  Lets the user pick any known contact or repeater
 // (alphabetically sorted) and fire a MeshCore TRACE (0x09) packet along

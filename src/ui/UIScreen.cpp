@@ -1,5 +1,5 @@
 // Saitama — UIScreen.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Initialises LVGL 8, the TFT_eSPI display driver, and manages the
 // top-level screen lifecycle:  Boot → Launcher → (app screens).

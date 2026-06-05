@@ -1,5 +1,5 @@
 // Saitama — ScreenPlaceholder.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Generic stub screen used for app tiles that are not yet implemented.
 // Shows the app name and a Home button in the top bar.

@@ -1,5 +1,5 @@
 // Saitama — ScreenSettings.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Settings screen layout (320 x 240):
 //

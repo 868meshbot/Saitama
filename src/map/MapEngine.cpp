@@ -1,5 +1,5 @@
 // Saitama — MapEngine.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Offline map rendering for ESP32 with LVGL.
 // Uses PNG tiles from SD card, rendered as LVGL images.

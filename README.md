@@ -144,7 +144,7 @@ Saitama/
 │   └── HARDWARE.md           # T-Deck pin reference
 ├── platformio.ini
 ├── partitions.csv
-└── LICENSE                   # MIT License
+└── LICENSE                   # GPL-3.0
 ```
 
 ## Architecture
@@ -199,7 +199,7 @@ Compiled and hardware-tested on a LilyGo T-Deck Plus. Core features (chat, mesh,
 
 ## License
 
-MIT. See [LICENSE](LICENSE) for full text. Dependency licenses: MeshCore (Apache 2.0), LVGL (MIT), TFT_eSPI (MIT), ArduinoJson (MIT).
+This project is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE) for full text. Dependency licenses: MeshCore (MIT), LVGL (MIT), TFT_eSPI (MIT), ArduinoJson (MIT).
 
 ## Links
 

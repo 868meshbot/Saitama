@@ -1,5 +1,5 @@
 // Saitama — ScreenChanScan.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Hardware CAD channel scanner centred on the active mesh frequency.
 // Runs SX1262 SetCAD on each channel per sweep, tracks 50-sweep rolling

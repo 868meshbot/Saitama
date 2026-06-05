@@ -1,5 +1,5 @@
 // Saitama — UIScreen.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Top-level UI controller. Owns the LVGL display driver and
 // manages which screen is active.  All screens are defined in

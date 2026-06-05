@@ -1,5 +1,5 @@
 // Saitama — ScreenSignal.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Radio signal & statistics screen.
 // Displays live RSSI/SNR/noise, packet counts (flood/direct split),

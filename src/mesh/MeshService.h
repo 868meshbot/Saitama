@@ -1,5 +1,5 @@
 // Saitama — MeshService.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Singleton wrapper around the MeshCore radio + protocol stack.
 // Board.cpp owns the hardware peripherals; MeshService owns the radio.

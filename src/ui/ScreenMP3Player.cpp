@@ -1,5 +1,5 @@
 // Saitama — ScreenMP3Player.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Full-screen hidden MP3 player.  Reached via /play in the terminal.
 // Lists .mp3 and .ogg files found in the SD card root directory.

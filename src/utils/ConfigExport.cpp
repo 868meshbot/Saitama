@@ -1,5 +1,5 @@
 // Saitama -- ConfigExport.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Export/import config + identity to/from SD card.
 // MeshCore-compatible format on SD card:

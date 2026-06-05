@@ -1,5 +1,5 @@
 // Saitama — ScreenTerminal.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Terminal screen layout (320 x 240 landscape):
 //

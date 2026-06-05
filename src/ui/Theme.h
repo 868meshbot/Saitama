@@ -1,5 +1,5 @@
 // Saitama — Theme.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Runtime colour palette. Call applyTheme() before ui::init() so that all
 // subsequent LVGL style calls read the correct colours.

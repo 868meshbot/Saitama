@@ -1,5 +1,5 @@
 // Saitama — ScreenSigGen.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // RF Signal Generator — uses SX1262 SetTxContinuousWave (CW) and
 // SetTxInfinitePreamble (LoRa preamble) modes for antenna testing.

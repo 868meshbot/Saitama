@@ -1,5 +1,5 @@
 // Saitama — GpsMgr.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // GPS power management state machine.
 // Modes: 0=off, 1=intermittent, 2=on

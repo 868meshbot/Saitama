@@ -1,5 +1,5 @@
 // Saitama — Config: persistent settings via NVS (Preferences)
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Uses Arduino Preferences (NVS) so config survives reboots without
 // touching the LittleFS/spiffs partition that MeshCore owns.

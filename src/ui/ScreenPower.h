@@ -1,5 +1,5 @@
 // Saitama — ScreenPower.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Power monitor — hidden from launcher, launched via /power in terminal.
 // Graphs battery % over time; shows estimated component current draws.

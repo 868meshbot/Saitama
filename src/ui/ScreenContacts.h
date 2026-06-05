@@ -1,5 +1,5 @@
 // Saitama — ScreenContacts.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Contacts directory.  Shows saved stations: name, 6-char address prefix,
 // last-heard date/time.  Unread DMs are flagged with a red dot.

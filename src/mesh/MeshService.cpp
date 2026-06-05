@@ -1,5 +1,5 @@
 // Saitama — MeshService.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Bridges the MeshCore library to the rest of Saitama.
 // Owns the SX1262 radio, identity, and the BaseChatMesh loop.

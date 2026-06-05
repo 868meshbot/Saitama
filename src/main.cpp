@@ -1,5 +1,5 @@
 // Saitama — main entry point
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Initialises hardware, MeshCore, and the UI task loop.
 

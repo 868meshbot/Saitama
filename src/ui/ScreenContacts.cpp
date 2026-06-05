@@ -1,5 +1,5 @@
 // Saitama — ScreenContacts.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenContacts.h"
 #include "ScreenLauncher.h"

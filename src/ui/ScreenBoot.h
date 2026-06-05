@@ -1,5 +1,5 @@
 // Saitama — ScreenBoot.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Splash screen shown on power-up. Displays project name, version, and a
 // loading spinner, then automatically transitions to ScreenLauncher.

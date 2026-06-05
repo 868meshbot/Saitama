@@ -1,5 +1,5 @@
 // Saitama — ScreenRepeaters.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Repeater directory.  Shows saved repeater nodes: name, key prefix,
 // RSSI, last-heard time.  Tapping a row opens an action popup.

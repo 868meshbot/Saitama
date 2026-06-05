@@ -1,5 +1,5 @@
 // Saitama — MapEngine.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Offline tile-based map renderer for ESP32.
 // Tiles stored on SD card in /map/ directory structure:

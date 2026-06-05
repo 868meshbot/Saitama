@@ -1,5 +1,5 @@
 // Saitama — MP3Player.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Streams an MP3 file from SD to the MAX98357A I2S speaker via a FreeRTOS
 // task pinned to Core 0.  Decoding is handled by ESP8266Audio's

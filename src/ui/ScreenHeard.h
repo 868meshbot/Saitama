@@ -1,5 +1,5 @@
 // Saitama — ScreenHeard.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // "Heard" screen — lists every station MeshCore has heard, with RSSI and
 // last-heard time.  Tapping a row offers to save the station to Contacts.

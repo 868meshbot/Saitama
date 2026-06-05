@@ -1,5 +1,5 @@
 // Saitama — Board.cpp
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Hardware abstraction for the LilyGo T-Deck Plus (ESP32-S3).
 // All pin numbers verified against the official LilyGo schematic.

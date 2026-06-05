@@ -1,5 +1,5 @@
 // Saitama — Board.h
-// Copyright 2026 Saitama — MIT License
+// Copyright 2026 Saitama — GPL-3.0-or-later
 //
 // Hardware abstraction for the LilyGo T-Deck Plus.
 // Pin map verified against the official LilyGo T-Deck Plus schematic.
