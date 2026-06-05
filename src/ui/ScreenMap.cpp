@@ -526,7 +526,7 @@ void ScreenMap::_showMountDialog()
     lv_obj_t* body = lv_label_create(box);
     lv_label_set_text(body,
         "SD card not mounted or\n"
-        "/ops/maps/ not found.\n"
+        "/maps/osm/ not found.\n"
         "Insert card and tap Mount.");
     lv_obj_set_style_text_color(body, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(body, &lv_font_montserrat_10, 0);
@@ -578,7 +578,7 @@ void ScreenMap::_onMountClick(lv_event_t*)
     }
     OPS_LOG("Map", "Attempting SD remount");
     ops::sdcard::init();   // re-runs SPI + SD.begin(); safe to call again
-    s_eng.init();           // re-checks /ops/maps existence
+    s_eng.init();           // re-checks /maps/osm existence
     _redrawMap();           // shows dialog again if still not found
 }
 

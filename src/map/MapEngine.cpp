@@ -3,8 +3,8 @@
 //
 // Offline map rendering for ESP32 with LVGL.
 // Uses PNG tiles from SD card, rendered as LVGL images.
-// Tile naming follows OSM slippy map convention:
-//   /ops/maps/{z}/{x}/{y}.png
+// Tile naming follows Meshtastic convention:
+//   /maps/osm/{x}/{y}/{z}.png
 
 #include "MapEngine.h"
 #include "../utils/Log.h"
@@ -55,8 +55,8 @@ void MapEngine::init() {
         OPS_LOG("Map", "SD not mounted — tiles unavailable");
         return;
     }
-    _sdPresent = SD.exists("/ops/maps");
-    OPS_LOG("Map", "Tile dir /ops/maps %s", _sdPresent ? "found" : "not found");
+    _sdPresent = SD.exists("/maps/osm");
+    OPS_LOG("Map", "Tile dir /maps/osm %s", _sdPresent ? "found" : "not found");
 }
 
 void MapEngine::tick() {
@@ -105,14 +105,14 @@ bool MapEngine::hasTileDir() const { return _sdPresent; }
 bool MapEngine::tileExists(int z, int x, int y) const {
     if (!_sdPresent) return false;
     char path[40];
-    snprintf(path, sizeof(path), "/ops/maps/%d/%d/%d.png", z, x, y);
+    snprintf(path, sizeof(path), "/maps/osm/%d/%d/%d.png", x, y, z);
     return SD.exists(path);
 }
 
 size_t MapEngine::readTile(int z, int x, int y, uint8_t* buf, size_t bufMax) const {
     if (!_sdPresent || !ops::sdcard::isMounted()) return 0;
     char path[40];
-    snprintf(path, sizeof(path), "/ops/maps/%d/%d/%d.png", z, x, y);
+    snprintf(path, sizeof(path), "/maps/osm/%d/%d/%d.png", x, y, z);
     if (!SD.exists(path)) return 0;   // silent miss — avoids VFS error log spam
     File f = SD.open(path, FILE_READ);
     if (!f) return 0;
