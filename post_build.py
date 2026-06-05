@@ -1,5 +1,5 @@
 # Saitama — post-build script: produces named app-only and merged binaries
-# Copyright 2026 Saitama — MIT License
+# Copyright 2026 Saitama — GPL-3.0-or-later
 #
 # Output (in firmware/):
 #   saitama-<device>-<version>.bin           — app-only (flash at 0x10000)
@@ -43,6 +43,19 @@ def _version_slug(version, project_dir):
     date  = datetime.utcnow().strftime("%Y%m%d")
     return "%s+%s.%s.%s" % (version, count, date, hash_)
 
+def _find_flash_image(env, target_offset):
+    """
+    Locate a flash image by offset using PlatformIO's FLASH_EXTRA_IMAGES list,
+    falling back to $BUILD_DIR/<basename>.
+    """
+    for offset, path in env.get("FLASH_EXTRA_IMAGES", []):
+        try:
+            if int(str(offset), 16) == target_offset and os.path.exists(str(path)):
+                return str(path)
+        except (ValueError, TypeError):
+            pass
+    return None
+
 def build_firmware_artifacts(source, target, env):
     project_dir = env.subst("$PROJECT_DIR")
     build_dir   = env.subst("$BUILD_DIR")
@@ -54,9 +67,20 @@ def build_firmware_artifacts(source, target, env):
     version  = _version_slug(_read_version(project_dir), project_dir)
     stem     = "saitama-%s-%s" % (device, version)
 
-    app        = os.path.join(build_dir, "firmware.bin")
+    app = os.path.join(build_dir, "firmware.bin")
+
+    # Locate bootloader and partition table — try $BUILD_DIR first, then
+    # FLASH_EXTRA_IMAGES (PlatformIO stores paths there for the upload target).
     bootloader = os.path.join(build_dir, "bootloader.bin")
+    if not os.path.exists(bootloader):
+        bootloader = _find_flash_image(env, 0x0000) or bootloader
+
     partitions = os.path.join(build_dir, "partitions.bin")
+    if not os.path.exists(partitions):
+        partitions = _find_flash_image(env, 0x8000) or partitions
+
+    print("post_build: app=%s boot=%s part=%s" % (
+        os.path.exists(app), os.path.exists(bootloader), os.path.exists(partitions)))
 
     # ── App-only binary — flash at 0x10000 (OTA / M5Launcher compatible) ──
     if os.path.exists(app):
@@ -81,5 +105,9 @@ def build_firmware_artifacts(source, target, env):
             print("Merged binary → firmware/%s-merged.bin" % stem)
         else:
             print("esptool merge failed:\n" + r.stderr)
+    else:
+        print("Skipping merge — bootloader or partitions not found")
+        print("  bootloader : %s" % bootloader)
+        print("  partitions : %s" % partitions)
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", build_firmware_artifacts)

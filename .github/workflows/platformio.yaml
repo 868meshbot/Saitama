@@ -13,6 +13,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     - uses: actions/checkout@v4
@@ -23,7 +25,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'
 
     - name: Install PlatformIO
       run: |
@@ -45,6 +47,21 @@ jobs:
         mkdir -p ~/.piocache
         export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
         pio run -e t-deck
+
+    - name: Merge firmware (CI fallback)
+      run: |
+        APP=$(ls firmware/saitama-*.bin 2>/dev/null | grep -v merged | head -1)
+        if [ -z "$APP" ]; then echo "No app binary found"; exit 1; fi
+        MERGED="${APP%.bin}-merged.bin"
+        if [ -f "$MERGED" ]; then echo "Merged binary already exists"; exit 0; fi
+        BOOT=.pio/build/t-deck/bootloader.bin
+        PART=.pio/build/t-deck/partitions.bin
+        FW=.pio/build/t-deck/firmware.bin
+        python -m esptool --chip esp32s3 merge_bin \
+          --flash_mode dio --flash_freq 80m --flash_size 16MB \
+          0x0000 "$BOOT" 0x8000 "$PART" 0x10000 "$FW" \
+          -o "$MERGED"
+        echo "Merged → $MERGED"
 
     - name: List firmware artifacts
       run: ls -lh firmware/
