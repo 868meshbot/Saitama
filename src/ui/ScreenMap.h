@@ -1,7 +1,7 @@
 // Saitama — ScreenMap.h
 // Copyright 2026 Saitama — GPL-3.0-or-later
 //
-// Offline tile map screen.  Displays OSM PNG tiles from SD /maps/osm/{x}/{y}/{z}.png.
+// Offline tile map screen.  Displays OSM PNG tiles from SD /maps/osm/{z}/{x}/{y}.png.
 // Repeaters are shown as purple dots, chat contacts as blue dots.
 // Right strip: zoom +/- controls.  Trackball or touch-drag pans; backspace exits.
 
