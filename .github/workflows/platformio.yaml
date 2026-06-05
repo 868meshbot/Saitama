@@ -46,6 +46,9 @@ jobs:
         export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
         pio run -e t-deck
 
+    - name: List firmware artifacts
+      run: ls -lh firmware/
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -57,5 +60,5 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         generate_release_notes: true
-        files: |
-          firmware/saitama-*.bin
+        fail_on_unmatched_files: true
+        files: firmware/saitama-*.bin
