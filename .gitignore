@@ -21,7 +21,8 @@ firmware/*
 *.elf
 *.hex
 *.map
-!firmware/firmware_merged.bin
+# Allow named release artifacts (saitama-<device>-<version>[.bin|-merged.bin])
+!firmware/saitama-*.bin
 
 # Python
 __pycache__/

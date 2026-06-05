@@ -37,24 +37,13 @@ jobs:
           ${{ runner.os }}-pio-
 
     - name: Build firmware
-      # downloads deps, builds all targets
       run: |
         mkdir -p ~/.piocache
         export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
-        pio run
-
-    - name: Prepare artifacts
-      run: |
-        mkdir -p renamed_artifacts
-        REPO_NAME=$(basename ${{ github.repository }})
-        GIT_DESC=$(git describe --all --long --tags | sed 's/\//-/g')
-        find .pio/build -name "firmware.bin" | while read -r file; do
-          TARGET=$(basename $(dirname "$file"))
-          cp "$file" "renamed_artifacts/${REPO_NAME}-${TARGET}-${GIT_DESC}.bin"
-        done
+        pio run -e t-deck
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: firmware-binaries
-        path: renamed_artifacts/*.bin
+        path: firmware/saitama-*.bin

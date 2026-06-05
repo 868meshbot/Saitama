@@ -3,5 +3,5 @@
 #define OPS_VERSION_MAJOR 0
 #define OPS_VERSION_MINOR 1
 #define OPS_VERSION_PATCH 0
-#define OPS_VERSION_PRE   "beta.8"
-#define OPS_VERSION_STRING "0.1.0-beta.8"
+#define OPS_VERSION_PRE   "beta.10"
+#define OPS_VERSION_STRING "0.1.0-beta.10"
