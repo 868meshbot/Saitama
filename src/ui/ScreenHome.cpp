@@ -389,7 +389,7 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_obj_t* metaLbl = lv_label_create(bubble);
     lv_obj_set_width(metaLbl, LV_PCT(100));
     lv_obj_set_style_text_color(metaLbl, (sent && isAcked) ? theme::GREEN : theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(metaLbl, theme::bodyFont10(), 0);
+    lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);  // needs LVGL symbol glyphs; don't use bodyFont here
     lv_label_set_text(metaLbl, meta);
     if (sent) lv_obj_set_style_text_align(metaLbl, LV_TEXT_ALIGN_RIGHT, 0);
 
