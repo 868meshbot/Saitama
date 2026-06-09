@@ -146,6 +146,22 @@ extern const lv_img_dsc_t emoji_ship;
 extern const lv_img_dsc_t emoji_palm;
 extern const lv_img_dsc_t emoji_house;
 extern const lv_img_dsc_t emoji_house2;
+extern const lv_img_dsc_t emoji_sun;
+extern const lv_img_dsc_t emoji_sun_small_cloud;
+extern const lv_img_dsc_t emoji_partly_cloudy;
+extern const lv_img_dsc_t emoji_sun_large_cloud;
+extern const lv_img_dsc_t emoji_cloud;
+extern const lv_img_dsc_t emoji_rain;
+extern const lv_img_dsc_t emoji_thunder_rain;
+extern const lv_img_dsc_t emoji_lightning;
+extern const lv_img_dsc_t emoji_snow;
+extern const lv_img_dsc_t emoji_snowflake;
+extern const lv_img_dsc_t emoji_tornado;
+extern const lv_img_dsc_t emoji_rainbow;
+extern const lv_img_dsc_t emoji_wind;
+extern const lv_img_dsc_t emoji_ocean;
+extern const lv_img_dsc_t emoji_thermometer;
+extern const lv_img_dsc_t emoji_fog;
 extern const lv_img_dsc_t emoji_wales;
 extern const lv_img_dsc_t emoji_ireland;
 extern const lv_img_dsc_t emoji_us_flag;
@@ -294,8 +310,24 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F334u, &emoji_palm, "palm tree beach" },
     { 0x1F3E0u, &emoji_house, "house home" },
     { 0x1F3E1u, &emoji_house2, "house garden home" },
+    { 0x02600u, &emoji_sun,            "sun sunny clear sky weather" },
+    { 0x1F324u, &emoji_sun_small_cloud,"sun small cloud partly sunny weather" },
+    { 0x026C5u, &emoji_partly_cloudy,  "partly cloudy sun cloud weather" },
+    { 0x1F325u, &emoji_sun_large_cloud,"sun behind large cloud overcast weather" },
+    { 0x02601u, &emoji_cloud,          "cloud cloudy overcast weather" },
+    { 0x1F327u, &emoji_rain,           "rain rainy cloud showers weather" },
+    { 0x026C8u, &emoji_thunder_rain,   "thunderstorm lightning rain storm weather" },
+    { 0x1F329u, &emoji_lightning,      "lightning bolt storm cloud weather" },
+    { 0x1F328u, &emoji_snow,           "snow snowing cloud winter weather" },
+    { 0x02744u, &emoji_snowflake,      "snowflake snow winter cold weather" },
+    { 0x1F32Au, &emoji_tornado,        "tornado cyclone storm wind weather" },
+    { 0x1F308u, &emoji_rainbow,        "rainbow colour arc weather" },
+    { 0x1F4A8u, &emoji_wind,           "wind dash gust breeze weather" },
+    { 0x1F30Au, &emoji_ocean,          "ocean wave sea water" },
+    { 0x1F321u, &emoji_thermometer,    "thermometer temperature heat cold" },
+    { 0x1F32Bu, &emoji_fog,            "fog mist haze foggy weather" },
     { 0x1F3F4u, &emoji_wales, "wales flag" },
     { 0x1F1EEu, &emoji_ireland, "ireland flag" },
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
 };
-static const int kOpsEmojiCount = 140;
+static const int kOpsEmojiCount = 156;
