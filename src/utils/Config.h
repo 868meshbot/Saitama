@@ -42,6 +42,7 @@ struct Config {
     uint8_t    notifySoundChoice; // 0=default ping, 1=pluck, 2=clear, 3=whoosh
     char       mapTileDir[32];
     int        theme;             // 0 = dark
+    bool       fontExtLatin;     // use extended Latin font (covers Polish, Czech, etc.)
     uint8_t    radioProfile;      // 0=NAR 1=MED 2=LON
     bool       showAdverts;       // print incoming advert packets in terminal
     // Radio parameter overrides — applied after profile when radioCustom is true

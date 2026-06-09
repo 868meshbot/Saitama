@@ -224,6 +224,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     };
     int themeIdx = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
     _addRow(_list, "Theme", kThemeNames[themeIdx], 31);
+    _addRow(_list, "Extended Latin Font", cfg.fontExtLatin  ? "On" : "Off", 32);
     _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "On" : "Off", 7);
     _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "On" : "Off", 8);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
@@ -3147,6 +3148,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
         case 31:  // Theme
             _openThemeDialog();
             return;
+
+        case 32:  // Extended Latin Font
+            cfg.fontExtLatin = !cfg.fontExtLatin;
+            break;
 
         default: return;
     }

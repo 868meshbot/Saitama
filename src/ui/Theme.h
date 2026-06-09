@@ -34,4 +34,11 @@ void applyTheme(uint8_t choice);
 // ── Apply LVGL default theme to the display ─────────────────────────
 void apply(lv_disp_t* disp);
 
+// ── Font helpers ────────────────────────────────────────────────────
+// Return the appropriate body font for the current fontExtLatin setting.
+// Extended variants cover U+0020-U+017E (Basic Latin + Latin-1 Supplement
+// + Latin Extended-A), enabling accented chars for most European languages.
+const lv_font_t* bodyFont10();  // replaces &lv_font_montserrat_10 in message areas
+const lv_font_t* bodyFont12();  // replaces &lv_font_montserrat_12 in message areas
+
 }}  // namespace ops::theme

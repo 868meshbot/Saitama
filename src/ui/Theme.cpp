@@ -2,6 +2,10 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Theme.h"
+#include "../utils/Config.h"
+
+extern const lv_font_t font_montserrat_10_ext;
+extern const lv_font_t font_montserrat_12_ext;
 
 namespace ops { namespace theme {
 
@@ -191,6 +195,20 @@ void apply(lv_disp_t* disp)
         LV_FONT_DEFAULT
     );
     (void)th;
+}
+
+const lv_font_t* bodyFont10()
+{
+    if (ops::config::get().fontExtLatin)
+        return &font_montserrat_10_ext;
+    return &lv_font_montserrat_10;
+}
+
+const lv_font_t* bodyFont12()
+{
+    if (ops::config::get().fontExtLatin)
+        return &font_montserrat_12_ext;
+    return &lv_font_montserrat_12;
 }
 
 }}  // namespace ops::theme

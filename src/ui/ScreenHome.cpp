@@ -361,7 +361,7 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_label_set_text(msgLbl, text ? text : "");
     lv_label_set_long_mode(msgLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msgLbl, LV_PCT(100));
-    lv_obj_set_style_text_font(msgLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(msgLbl, theme::bodyFont12(), 0);
     lv_obj_set_style_text_line_space(msgLbl, 3, 0);
     lv_obj_set_style_text_color(msgLbl, sent ? theme::TEXT : theme::GREEN, 0);
 
@@ -388,7 +388,7 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_obj_t* metaLbl = lv_label_create(bubble);
     lv_obj_set_width(metaLbl, LV_PCT(100));
     lv_obj_set_style_text_color(metaLbl, (sent && isAcked) ? theme::GREEN : theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(metaLbl, theme::bodyFont10(), 0);
     lv_label_set_text(metaLbl, meta);
     if (sent) lv_obj_set_style_text_align(metaLbl, LV_TEXT_ALIGN_RIGHT, 0);
 
