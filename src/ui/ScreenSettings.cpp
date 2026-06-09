@@ -25,6 +25,7 @@
 #include "ScreenLauncher.h"
 #include "QRPopup.h"
 #include "Theme.h"
+#include "Emoji.h"
 #include "../utils/Config.h"
 #include "../utils/Keymap.h"
 #include "../utils/Log.h"
@@ -38,6 +39,9 @@
 #include <cstring>
 #include <cstdio>
 #include <time.h>
+
+// Extended-Latin body font (global symbol, defined in font_montserrat_12_ext.c).
+extern const lv_font_t font_montserrat_12_ext;
 
 namespace ops { namespace ui {
 
@@ -224,7 +228,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     };
     int themeIdx = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
     _addRow(_list, "Theme", kThemeNames[themeIdx], 31);
-    _addRow(_list, "Extended Latin Font", cfg.fontExtLatin  ? "On" : "Off", 33);
+    _addRow(_list, "Font", cfg.fontExtLatin ? "Extended Latin" : "Standard", 33);
     _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "On" : "Off", 7);
     _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "On" : "Off", 8);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
@@ -3003,6 +3007,7 @@ static void _openCpuGovDialog() {
 
 static void _openBackupRestoreDialog();  // defined after _onItemClick
 static void _openThemeDialog();          // defined after _onItemClick
+static void _openFontDialog();           // defined after _onItemClick
 
 // ── _onItemClick() ───────────────────────────────────────────────────
 void ScreenSettings::_onItemClick(lv_event_t* e) {
@@ -3149,9 +3154,9 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openThemeDialog();
             return;
 
-        case 33:  // Extended Latin Font
-            cfg.fontExtLatin = !cfg.fontExtLatin;
-            break;
+        case 33:  // Font → dropdown dialog
+            _openFontDialog();
+            return;
 
         default: return;
     }
@@ -3460,6 +3465,149 @@ static void _openThemeDialog() {
     lv_obj_set_style_shadow_width(exitBtn, 0, 0);
     lv_obj_add_event_cb(exitBtn, _onThemeExit, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(exitBtn, _onThemeKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Cancel");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, dd);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, exitBtn);
+        lv_group_focus_obj(dd);
+    }
+}
+
+// ── Font dialog ──────────────────────────────────────────────────────
+// Chooses the body font used for chat messages.  Standard is the LVGL
+// built-in Montserrat; Extended Latin adds accented glyphs (U+00A0-U+017E)
+// for European languages.  Emoji work with either (global imgfont fallback).
+
+struct FontCtx { lv_obj_t* modal; lv_obj_t* dd; lv_obj_t* preview; };
+static FontCtx s_fontCtx;
+
+static void _fontPreviewUpdate() {
+    if (!s_fontCtx.preview || !s_fontCtx.dd) return;
+    bool ext = lv_dropdown_get_selected(s_fontCtx.dd) == 1;
+    lv_obj_set_style_text_font(s_fontCtx.preview,
+        ops::emoji::emojiFont(ext ? &font_montserrat_12_ext : &lv_font_montserrat_12), 0);
+}
+
+static void _onFontDDChanged(lv_event_t* /*e*/) { _fontPreviewUpdate(); }
+
+static void _onFontSave(lv_event_t* /*e*/) {
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.fontExtLatin = (lv_dropdown_get_selected(s_fontCtx.dd) == 1);
+    ops::config::save();
+    lv_obj_del(s_fontCtx.modal);
+    ScreenSettings::show();
+}
+static void _onFontExit(lv_event_t* /*e*/) { lv_obj_del(s_fontCtx.modal); }
+static void _onFontKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_fontCtx.modal);
+}
+
+static void _openFontDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_fontCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onFontKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_width(panel, 240);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Font");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* dd = lv_dropdown_create(panel);
+    s_fontCtx.dd = dd;
+    lv_dropdown_set_options(dd, "Standard\nExtended Latin");
+    lv_dropdown_set_selected(dd, cfg.fontExtLatin ? 1 : 0);
+    lv_obj_set_width(dd, 210);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+    lv_obj_add_event_cb(dd, _onFontDDChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* ddList = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(ddList, theme::BG_CARD, 0);
+    lv_obj_set_style_text_color(ddList, theme::TEXT, 0);
+    lv_obj_set_style_text_font(ddList, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(ddList, theme::BORDER, 0);
+
+    // Live preview: accented Latin + an emoji (renders via global fallback)
+    lv_obj_t* preview = lv_label_create(panel);
+    s_fontCtx.preview = preview;
+    lv_label_set_text(preview, "Café Żółć \xF0\x9F\x98\x80");  // ...😀
+    lv_obj_set_style_text_color(preview, theme::TEXT, 0);
+    _fontPreviewUpdate();
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_label_set_text(note, "Extended Latin adds accents.\nApplies to chats on reopen.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, 0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(saveBtn, 0, 0);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onFontSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onFontKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onFontExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onFontKey,  LV_EVENT_KEY,     nullptr);
     lv_obj_t* exitLbl = lv_label_create(exitBtn);
     lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Cancel");
     lv_obj_set_style_text_color(exitLbl, theme::TEXT_MUTED, 0);

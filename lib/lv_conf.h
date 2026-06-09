@@ -81,6 +81,11 @@
 #define LV_FONT_MONTSERRAT_36 1
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
+/* Enable RLE-compressed glyph bitmaps — the Extended-Latin fonts
+ * (font_montserrat_*_ext.c) are generated with bitmap_format = 1 (compressed);
+ * without this they render blank. Built-in Montserrat is uncompressed. */
+#define LV_USE_FONT_COMPRESSED 1
+
 /* Image decoders */
 #define LV_USE_PNG 1
 

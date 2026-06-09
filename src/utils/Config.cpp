@@ -66,6 +66,7 @@ static void setDefaults(Config& c) {
     c.loraDutyCycle    = false;
     c.rxBoost          = false;
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
+    c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
     c.touchCalXScale   = 1.0f;
     c.touchCalXOff     = 0.0f;
     c.touchCalYScale   = 1.0f;
@@ -117,6 +118,7 @@ static void _saveToSD() {
     doc["loraDC"]       = s_cfg.loraDutyCycle;
     doc["rxBoost"]      = s_cfg.rxBoost;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
+    doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["tcXScale"]     = s_cfg.touchCalXScale;
     doc["tcXOff"]       = s_cfg.touchCalXOff;
     doc["tcYScale"]     = s_cfg.touchCalYScale;
@@ -190,6 +192,7 @@ static bool _loadFromSD() {
     s_cfg.loraDutyCycle = doc["loraDC"]   | false;
     s_cfg.rxBoost       = doc["rxBoost"]  | false;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
+    s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.touchCalXScale = doc["tcXScale"] | 1.0f;
     s_cfg.touchCalXOff   = doc["tcXOff"]   | 0.0f;
     s_cfg.touchCalYScale = doc["tcYScale"] | 1.0f;

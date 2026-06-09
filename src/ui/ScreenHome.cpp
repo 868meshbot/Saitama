@@ -25,6 +25,7 @@
 #include "ScreenHome.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
+#include "Emoji.h"
 #include "emoji/emoji_data.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
@@ -970,7 +971,7 @@ void ScreenHome::_showChat()
     lv_obj_set_style_text_color(_textarea, theme::TEXT, 0);
     lv_obj_set_style_border_color(_textarea, theme::BORDER, 0);
     lv_obj_set_style_border_color(_textarea, theme::ACCENT, LV_STATE_FOCUSED);
-    lv_obj_set_style_text_font(_textarea, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(_textarea, theme::bodyFont10(), 0);  // emoji-capable
     lv_textarea_set_placeholder_text(_textarea, "Type a message...");
     lv_textarea_set_one_line(_textarea, true);
     lv_obj_add_event_cb(_textarea, _onSend,    LV_EVENT_READY, nullptr);
@@ -990,7 +991,7 @@ void ScreenHome::_showChat()
     lv_obj_t* emojiToggleLbl = lv_label_create(emojiToggle);
     // 😊 U+1F60A in UTF-8
     lv_label_set_text(emojiToggleLbl, "\xF0\x9F\x98\x8A");
-    lv_obj_set_style_text_font(emojiToggleLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(emojiToggleLbl, theme::bodyFont12(), 0);  // emoji-capable
     lv_obj_center(emojiToggleLbl);
 
     _sendBtn = lv_btn_create(inputBar);
@@ -1966,7 +1967,7 @@ void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
         _codeToUtf8(kOpsEmoji[i].codepoint, utf8);
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, utf8);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(lbl, theme::bodyFont12(), 0);  // emoji-capable
         lv_obj_center(lbl);
     }
 }

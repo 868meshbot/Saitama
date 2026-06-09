@@ -3,14 +3,18 @@
 //
 // LVGL imgfont adapter for emoji rendering.
 //
-// Design constraint: LVGL 8 declares its built-in fonts as `const lv_font_t`
-// which on ESP32 lands in read-only flash (RODATA).  Writing the `fallback`
-// field via const_cast causes a LoadStoreError hard fault.
+// Constraint: on this build the Montserrat font descriptors live in flash
+// (DROM, 0x3C……) which is read-only — writing their `fallback` field via
+// const_cast faults or corrupts the flash cache.  So we never touch them.
 //
-// Solution: keep Montserrat in flash untouched.  When a label needs emoji,
-// call emojiFont(base) to get a heap-allocated lv_font_t whose internal
-// `fallback` points to the Montserrat base.  LVGL checks the imgfont first
-// (emoji), then falls through to Montserrat for normal glyphs.
+// Solution: emojiFont(base) returns a heap-allocated *copy* of the Montserrat
+// struct (writable RAM; its glyph data still points at flash, which is fine to
+// read) with `fallback` set to a shared emoji imgfont.  The real Montserrat is
+// the primary font (robust glyph rendering); the imgfont only supplies emoji:
+//
+//     montserrat copy (ASCII/Latin) → emoji imgfont → placeholder □
+//
+// Copies are cached per base, so we allocate at most once per Montserrat size.
 
 #include "Emoji.h"
 #include "emoji/emoji_data.h"
@@ -21,8 +25,7 @@
 namespace ops {
 namespace emoji {
 
-// imgfont callback: called by LVGL for every codepoint lookup.
-// Writes an lv_img_dsc_t into imgSrc and returns true if an emoji matched.
+// imgfont callback: called by LVGL for codepoints not in the parent font.
 static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
                     uint32_t unicode, uint32_t /*unicodeNext*/)
 {
@@ -38,23 +41,41 @@ static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
     return false;
 }
 
+static lv_font_t* s_emoji = nullptr;  // shared emoji imgfont (fallback)
+
+// Cache of base→wrapped copies so each Montserrat size is copied only once.
+static const int        kCacheMax       = 6;
+static const lv_font_t* s_base[kCacheMax]    = {0};
+static lv_font_t*       s_wrapped[kCacheMax] = {0};
+
 void init()
 {
-    // Nothing to do at global init time.
-    // emojiFont() creates fonts on first call per size.
+    // Build the shared emoji imgfont once.  emojiFont() chains it as a fallback.
+    s_emoji = lv_imgfont_create(16, _pathCb);
+    if (s_emoji) s_emoji->base_line = 0;
 }
 
 const lv_font_t* emojiFont(const lv_font_t* montserratBase)
 {
     if (!montserratBase) return nullptr;
+    if (!s_emoji)        return montserratBase;  // imgfont unavailable
 
-    // Create a heap-allocated imgfont (writable) and chain Montserrat as its
-    // fallback.  LVGL resolves: imgfont (emoji codepoints) → montserrat (ASCII).
-    lv_font_t* f = lv_imgfont_create(montserratBase->line_height, _pathCb);
-    if (!f) return montserratBase;  // graceful degradation
+    for (int i = 0; i < kCacheMax; i++) {
+        if (s_base[i] == montserratBase) return s_wrapped[i];
+    }
 
-    f->fallback = montserratBase;  // safe: f is on the heap, not flash
-    return f;
+    // Heap copy of the Montserrat struct so we can set its fallback in RAM.
+    // The copied dsc/glyph pointers still reference flash — read-only access,
+    // which is safe; we only write the struct's own fallback field.
+    lv_font_t* copy = (lv_font_t*)lv_mem_alloc(sizeof(lv_font_t));
+    if (!copy) return montserratBase;  // graceful degradation
+    memcpy(copy, montserratBase, sizeof(lv_font_t));
+    copy->fallback = s_emoji;
+
+    for (int i = 0; i < kCacheMax; i++) {
+        if (!s_base[i]) { s_base[i] = montserratBase; s_wrapped[i] = copy; break; }
+    }
+    return copy;
 }
 
 }  // namespace emoji

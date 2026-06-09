@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Theme.h"
+#include "Emoji.h"
 #include "../utils/Config.h"
 
 extern const lv_font_t font_montserrat_10_ext;
@@ -197,18 +198,20 @@ void apply(lv_disp_t* disp)
     (void)th;
 }
 
+// Return the selected base font wrapped with emoji support (heap copy whose
+// fallback is the emoji imgfont — see Emoji.cpp).
 const lv_font_t* bodyFont10()
 {
-    if (ops::config::get().fontExtLatin)
-        return &font_montserrat_10_ext;
-    return &lv_font_montserrat_10;
+    const lv_font_t* base = ops::config::get().fontExtLatin
+                          ? &font_montserrat_10_ext : &lv_font_montserrat_10;
+    return ops::emoji::emojiFont(base);
 }
 
 const lv_font_t* bodyFont12()
 {
-    if (ops::config::get().fontExtLatin)
-        return &font_montserrat_12_ext;
-    return &lv_font_montserrat_12;
+    const lv_font_t* base = ops::config::get().fontExtLatin
+                          ? &font_montserrat_12_ext : &lv_font_montserrat_12;
+    return ops::emoji::emojiFont(base);
 }
 
 }}  // namespace ops::theme
