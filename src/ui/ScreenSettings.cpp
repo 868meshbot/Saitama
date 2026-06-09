@@ -39,6 +39,7 @@
 #include <cstring>
 #include <cstdio>
 #include <time.h>
+#include <esp_ota_ops.h>
 
 // Extended-Latin body font (global symbol, defined in font_montserrat_12_ext.c).
 extern const lv_font_t font_montserrat_12_ext;
@@ -177,6 +178,13 @@ static lv_obj_t* _addRow(lv_obj_t* list, const char* label,
 static void _fmtTimeoutVal(char* buf, size_t len, int sec);
 static void _fmtScreenOffVal(char* buf, size_t len, int sec);
 
+// True when Saitama is running from ota_1, meaning the Launcher occupies ota_0.
+static bool _hasLauncher()
+{
+    const esp_partition_t* p = esp_ota_get_running_partition();
+    return p && p->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1;
+}
+
 // ── _buildList() ─────────────────────────────────────────────────────
 void ScreenSettings::_buildList(lv_obj_t* parent) {
     // Plain flex-column scroll container — we don't use lv_list_create
@@ -283,6 +291,9 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, "Show RSSI",          cfg.showRssi        ? "On" : "Off", 19);
     _addRow(_list, "Location Sharing",   cfg.locationSharing ? "On" : "Off", 17);
     _addRow(_list, "Backup & Restore",   "", 30);
+
+    if (_hasLauncher())
+        _addRow(_list, "Return to Launcher", "", 34);
 
     s_listPtr = _list;
 }
@@ -3157,6 +3168,14 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
         case 33:  // Font → dropdown dialog
             _openFontDialog();
             return;
+
+        case 34: {  // Return to Launcher — switch boot partition to ota_0 and restart
+            const esp_partition_t* ota0 = esp_partition_find_first(
+                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+            if (ota0 && esp_ota_set_boot_partition(ota0) == ESP_OK)
+                esp_restart();
+            return;
+        }
 
         default: return;
     }
