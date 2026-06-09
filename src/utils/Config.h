@@ -80,6 +80,8 @@ struct Config {
 namespace config {
     void init();
     void save();
+    // Reload from /ops/settings.json and resave to NVS. Returns 1 on success, -1 on failure.
+    int  reloadFromSD();
     const Config& get();
 
     void setCallsign(const char* cs);

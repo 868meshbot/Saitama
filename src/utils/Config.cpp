@@ -351,6 +351,12 @@ void config::init() {
     save();
 }
 
+int config::reloadFromSD() {
+    if (!_loadFromSD()) return -1;
+    save();
+    return 1;
+}
+
 void config::save() {
     if (!prefs.begin("oms", /*readOnly=*/false)) {
         OPS_LOG("Config", "Failed to open NVS for write");

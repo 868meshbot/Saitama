@@ -27,6 +27,8 @@
 #include "Theme.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
+#include "../utils/Contacts.h"
+#include "../utils/Repeaters.h"
 #include "../utils/Keymap.h"
 #include "../utils/Log.h"
 #include "../utils/Sound.h"
@@ -3233,6 +3235,7 @@ static bool _copyFile(const char* src, const char* dst)
 {
     File in = SD.open(src, FILE_READ);
     if (!in) return false;
+    SD.remove(dst);  // FILE_WRITE appends; remove first to get a clean overwrite
     File out = SD.open(dst, FILE_WRITE);
     if (!out) { in.close(); return false; }
     uint8_t buf[512];
@@ -3251,6 +3254,10 @@ static const char* _runBackup()
     if (!ops::sdcard::isMounted()) {
         if (!ops::sdcard::tryMount()) return "SD not mounted";
     }
+    // Flush in-memory state to SD JSON before copying to .bak
+    ops::config::save();
+    ops::contacts::save();
+    ops::repeaters::save();
     static const char* kSrc[] = {
         "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json"
     };
@@ -3307,6 +3314,12 @@ static void _onBRRestore(lv_event_t* /*e*/)
     const char* result = _runRestore();
     OPS_LOG("Backup", "%s", result);
     if (s_brStatus) lv_label_set_text(s_brStatus, result);
+    // Reload the restored JSON files into memory and NVS so changes take effect now.
+    if (ops::config::reloadFromSD() >= 0) {
+        ops::contacts::reloadFromSD();
+        ops::repeaters::reloadFromSD();
+        if (s_brStatus) lv_label_set_text(s_brStatus, "Restored — active now");
+    }
 }
 
 static void _openBackupRestoreDialog()
