@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <time.h>
 #include <esp_ota_ops.h>
+#include <Preferences.h>
 
 // Extended-Latin body font (global symbol, defined in font_montserrat_12_ext.c).
 extern const lv_font_t font_montserrat_12_ext;
@@ -178,11 +179,25 @@ static lv_obj_t* _addRow(lv_obj_t* list, const char* label,
 static void _fmtTimeoutVal(char* buf, size_t len, int sec);
 static void _fmtScreenOffVal(char* buf, size_t len, int sec);
 
-// True when Saitama is running from ota_1, meaning the Launcher occupies ota_0.
+// True when any app partition other than the one we're running from exists.
+// The Launcher lives in its own slot (factory/test/ota); as long as there is
+// at least one other app partition we can jump back.
 static bool _hasLauncher()
 {
-    const esp_partition_t* p = esp_ota_get_running_partition();
-    return p && p->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1;
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_partition_iterator_t it = esp_partition_find(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    bool found = false;
+    while (it) {
+        const esp_partition_t* p = esp_partition_get(it);
+        if (p && (!running || p->address != running->address)) {
+            found = true;
+            break;
+        }
+        it = esp_partition_next(it);
+    }
+    esp_partition_iterator_release(it);
+    return found;
 }
 
 // ── _buildList() ─────────────────────────────────────────────────────
@@ -3169,11 +3184,29 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openFontDialog();
             return;
 
-        case 34: {  // Return to Launcher — switch boot partition to ota_0 and restart
-            const esp_partition_t* ota0 = esp_partition_find_first(
-                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
-            if (ota0 && esp_ota_set_boot_partition(ota0) == ESP_OK)
-                esp_restart();
+        case 34: {  // Return to Launcher
+            // Tell Launcher not to auto-relaunch us (covers factory/test Launcher slots
+            // that always boot first and decide via this NVS flag).
+            {
+                Preferences prefs;
+                prefs.begin("launcher", false);
+                prefs.putBool("bootToApp", false);
+                prefs.end();
+            }
+            // Also try OTA boot selection for Launcher builds where it lives in an OTA slot.
+            const esp_partition_t* running = esp_ota_get_running_partition();
+            esp_partition_iterator_t it = esp_partition_find(
+                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+            while (it) {
+                const esp_partition_t* p = esp_partition_get(it);
+                if (p && (!running || p->address != running->address)) {
+                    esp_ota_set_boot_partition(p);  // ignore error — NVS flag is the primary path
+                    break;
+                }
+                it = esp_partition_next(it);
+            }
+            esp_partition_iterator_release(it);
+            esp_restart();
             return;
         }
 
