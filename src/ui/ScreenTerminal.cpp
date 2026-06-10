@@ -42,6 +42,7 @@
 #include <esp_heap_caps.h>
 #include <Wire.h>
 #include <LittleFS.h>
+#include <Preferences.h>
 
 namespace ops { namespace ui {
 
@@ -379,6 +380,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  /battery");
         appendLine("  /power  - open power monitor screen");
         appendLine("  /sd  |  /sd mount  |  /sd unmount  |  /sd restore  |  /sd ls [path]");
+        appendLine("  /identity show");
         appendLine("  /identity restore");
         appendLine("  /list {n}  |  /messages {n|all}  |  /clearmessages");
         appendLine("  /clearcontacts  |  /contacts delete <prefix>");
@@ -1546,6 +1548,28 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
+    // ── identity show ────────────────────────────────────────────────
+    if (strcmp(cmd, "identity") == 0 && strcmp(args, "show") == 0) {
+        auto& mesh = MeshService::instance();
+        uint8_t pub[32] = {}, prv[64] = {};
+        mesh.getSelfPubKey(pub);
+        mesh.getSelfPrvKey(prv);
+        bool hasKey = false;
+        for (int i = 0; i < 32; i++) if (pub[i]) { hasKey = true; break; }
+        if (!hasKey) { appendLine("Mesh not initialised."); return; }
+        char hexbuf[129] = {};
+        for (int i = 0; i < 32; i++) snprintf(hexbuf + i*2, 3, "%02X", pub[i]);
+        char linebuf[48];
+        snprintf(linebuf, sizeof(linebuf), "pub  %.32s", hexbuf);      appendLine(linebuf);
+        snprintf(linebuf, sizeof(linebuf), "     %.32s", hexbuf + 32); appendLine(linebuf);
+        for (int i = 0; i < 64; i++) snprintf(hexbuf + i*2, 3, "%02X", prv[i]);
+        snprintf(linebuf, sizeof(linebuf), "priv %.32s", hexbuf);        appendLine(linebuf);
+        snprintf(linebuf, sizeof(linebuf), "     %.32s", hexbuf + 32);   appendLine(linebuf);
+        snprintf(linebuf, sizeof(linebuf), "     %.32s", hexbuf + 64);   appendLine(linebuf);
+        snprintf(linebuf, sizeof(linebuf), "     %.32s", hexbuf + 96);   appendLine(linebuf);
+        return;
+    }
+
     // ── identity restore ─────────────────────────────────────────────
     if (strcmp(cmd, "identity") == 0 && strcmp(args, "restore") == 0) {
         if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try /sd mount first."); return; }
@@ -1561,11 +1585,16 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 appendLine("SD identity matches current node - no change needed."); return;
             }
         }
-        // Delete LittleFS identity so begin_mesh() restores from SD on next boot
+        // Clear LittleFS and NVS identity — both take priority over SD in the boot
+        // load chain. SD wins only when both are absent.
         LittleFS.begin(false);
         LittleFS.remove("/mesh/self.id");
-        appendLine("LittleFS identity cleared.");
-        appendLine("Restarting in 2s to restore old identity from SD...");
+        {
+            Preferences idPrefs;
+            if (idPrefs.begin("opsMesh", false)) { idPrefs.remove("selfId"); idPrefs.end(); }
+        }
+        appendLine("LittleFS + NVS identity cleared.");
+        appendLine("Restarting in 2s to restore identity from SD...");
         lv_task_handler();  // flush LVGL before restart
         delay(2000);
         ESP.restart();

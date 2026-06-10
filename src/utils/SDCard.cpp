@@ -55,6 +55,7 @@ bool sdcard::tryMount()
 
 bool sdcard::writeFile(const char* path, const uint8_t* data, size_t len) {
     if (!s_mounted) return false;
+    SD.remove(path);  // FILE_WRITE appends; remove first to get a clean overwrite
     File f = SD.open(path, FILE_WRITE);
     if (!f) { OPS_LOG("SD", "Write open failed: %s", path); return false; }
     size_t written = f.write(data, len);

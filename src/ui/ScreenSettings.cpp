@@ -43,6 +43,7 @@
 #include <time.h>
 #include <esp_ota_ops.h>
 #include <Preferences.h>
+#include <LittleFS.h>
 
 // Extended-Latin body font (global symbol, defined in font_montserrat_12_ext.c).
 extern const lv_font_t font_montserrat_12_ext;
@@ -226,6 +227,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     // Item indices match _onItemClick switch
     _addRow(_list, "Device Name",     cfg.callsign, 0);
     _addRow(_list, "Share My Contact","",           24); // show self pubkey as QR
+    _addRow(_list, "Generate Identity", "",         35);
     _addRow(_list, "Channels",        "",           1);  // opens the 5-slot picker
     static const char* kRadioShort[] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
@@ -3036,6 +3038,7 @@ static void _openCpuGovDialog() {
 static void _openBackupRestoreDialog();  // defined after _onItemClick
 static void _openThemeDialog();          // defined after _onItemClick
 static void _openFontDialog();           // defined after _onItemClick
+static void _openGenIdDialog();          // defined after _onItemClick
 
 // ── _onItemClick() ───────────────────────────────────────────────────
 void ScreenSettings::_onItemClick(lv_event_t* e) {
@@ -3178,6 +3181,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openBackupRestoreDialog();
             return;
 
+        case 35:  // Generate Identity
+            _openGenIdDialog();
+            return;
+
         case 31:  // Theme
             _openThemeDialog();
             return;
@@ -3220,6 +3227,132 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
 // ── Backup & Restore dialog ───────────────────────────────────────────
 // Copies /oms/*.json  →  /oms/*.bak  (backup)
+// ── Generate Identity dialog ─────────────────────────────────────────────────
+// Generates a fresh keypair, saves to LittleFS/NVS/SD, then restarts.
+
+static lv_obj_t* s_genIdModal = nullptr;
+
+static void _genIdClose(lv_event_t* /*e*/)
+{
+    if (s_genIdModal) { lv_obj_del_async(s_genIdModal); s_genIdModal = nullptr; }
+}
+
+static void _genIdConfirm(lv_event_t* e)
+{
+    if (s_genIdModal) {
+        lv_obj_t* statusLbl = (lv_obj_t*)lv_event_get_user_data(e);
+        if (statusLbl) lv_label_set_text(statusLbl, "Generating... rebooting");
+        lv_task_handler();
+    }
+    ops::MeshService::instance().regenerateIdentity();
+    delay(1000);
+    ESP.restart();
+}
+
+static void _openGenIdDialog()
+{
+    if (s_genIdModal) return;
+    s_genIdModal = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_genIdModal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_genIdModal, 0, 0);
+    lv_obj_set_style_bg_color(s_genIdModal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_genIdModal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_genIdModal, 0, 0);
+    lv_obj_set_style_pad_all(s_genIdModal, 0, 0);
+    lv_obj_clear_flag(s_genIdModal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* panel = lv_obj_create(s_genIdModal);
+    lv_obj_set_width(panel, 260);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 10, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Generate Identity");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    // Show current pub key prefix so user knows what they're replacing
+    {
+        uint8_t pub[32] = {};
+        ops::MeshService::instance().getSelfPubKey(pub);
+        bool hasKey = false;
+        for (int i = 0; i < 32; i++) if (pub[i]) { hasKey = true; break; }
+        char curIdBuf[48] = {};
+        if (hasKey) {
+            snprintf(curIdBuf, sizeof(curIdBuf),
+                     "Current: %02X%02X%02X%02X...",
+                     pub[0], pub[1], pub[2], pub[3]);
+        } else {
+            snprintf(curIdBuf, sizeof(curIdBuf), "Current: (none)");
+        }
+        lv_obj_t* curLbl = lv_label_create(panel);
+        lv_label_set_text(curLbl, curIdBuf);
+        lv_obj_set_style_text_color(curLbl, theme::ACCENT, 0);
+        lv_obj_set_style_text_font(curLbl, &lv_font_montserrat_10, 0);
+    }
+
+    lv_obj_t* warn = lv_label_create(panel);
+    lv_label_set_text(warn,
+        "This creates a new keypair.\n"
+        "Existing DM threads will be lost.");
+    lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(warn, 236);
+    lv_obj_set_style_text_color(warn, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(warn, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* statusLbl = lv_label_create(panel);
+    lv_label_set_text(statusLbl, "");
+    lv_obj_set_style_text_color(statusLbl, theme::GREEN, 0);
+    lv_obj_set_style_text_font(statusLbl, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 236, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_style_pad_column(btnRow, 8, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto makeBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb, void* ud) {
+        lv_obj_t* btn = lv_btn_create(btnRow);
+        lv_obj_set_size(btn, 108, 26);
+        lv_obj_set_style_bg_color(btn, bg, 0);
+        lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ud);
+        lv_group_remove_obj(btn);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(lbl);
+    };
+
+    makeBtn("Generate", lv_color_make(160, 30, 30), _genIdConfirm, statusLbl);
+    makeBtn("Cancel",   theme::BG,                  _genIdClose,   nullptr);
+
+    lv_obj_t* cancelBtn = lv_obj_get_child(btnRow, 1);
+    lv_obj_set_style_border_color(cancelBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(cancelBtn, 1, 0);
+}
+
+// ── Backup & Restore dialog ──────────────────────────────────────────────────
 // Copies /oms/*.bak   →  /oms/*.json (restore)
 // Files: contacts, repeaters, settings (identity.bin is already auto-backed up)
 
@@ -3294,11 +3427,18 @@ static const char* _runRestore()
         if (SD.exists(kSrc[i]))
             ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
     }
-    if (SD.exists("/ops/identity.bak"))
+    if (SD.exists("/ops/identity.bak")) {
         _copyFile("/ops/identity.bak", "/ops/identity.bin");
+        // Identity restore requires clearing both LittleFS and NVS copies — both
+        // take priority over SD in the boot-time load chain. SD wins only if both are absent.
+        LittleFS.begin(false);
+        LittleFS.remove("/mesh/self.id");
+        Preferences idPrefs;
+        if (idPrefs.begin("opsMesh", false)) { idPrefs.remove("selfId"); idPrefs.end(); }
+    }
     if (ok == 0) return "No .bak files found";
     static char msg[40];
-    snprintf(msg, sizeof(msg), "Restored %d file(s) - reboot advised", ok);
+    snprintf(msg, sizeof(msg), "Restored %d file(s)", ok);
     return msg;
 }
 
@@ -3314,12 +3454,13 @@ static void _onBRRestore(lv_event_t* /*e*/)
     const char* result = _runRestore();
     OPS_LOG("Backup", "%s", result);
     if (s_brStatus) lv_label_set_text(s_brStatus, result);
-    // Reload the restored JSON files into memory and NVS so changes take effect now.
-    if (ops::config::reloadFromSD() >= 0) {
-        ops::contacts::reloadFromSD();
-        ops::repeaters::reloadFromSD();
-        if (s_brStatus) lv_label_set_text(s_brStatus, "Restored — active now");
-    }
+    ops::config::reloadFromSD();
+    ops::contacts::reloadFromSD();
+    ops::repeaters::reloadFromSD();
+    if (s_brStatus) lv_label_set_text(s_brStatus, "Restored — rebooting...");
+    lv_task_handler();
+    delay(2500);
+    ESP.restart();
 }
 
 static void _openBackupRestoreDialog()

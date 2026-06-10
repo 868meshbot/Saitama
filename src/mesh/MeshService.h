@@ -203,6 +203,8 @@ public:
     // Update the node name used in adverts and group messages.
     // Also re-saves the identity to LittleFS so the new name survives reboot.
     void setCallsign(const char* cs);
+    // Generate a fresh keypair, save to LittleFS/NVS/SD, then restart to apply.
+    void regenerateIdentity();
 
     // ── Contact management ────────────────────────────────────────────
     // Preload a contact (full 32-byte key) into MeshCore routing table.
@@ -212,6 +214,7 @@ public:
                         uint8_t numHops, uint8_t hashSz);
     void  getSelfPubKeyPrefix(uint8_t out[4]) const;
     void  getSelfPubKey(uint8_t out[32]) const;
+    void  getSelfPrvKey(uint8_t out[64]) const;
 
     // Path introspection / reset
     bool getContactPath(const uint8_t* prefix4, PathInfo& out) const;

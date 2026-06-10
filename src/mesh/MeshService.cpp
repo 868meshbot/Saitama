@@ -1618,33 +1618,49 @@ public:
         uint32_t seed = esp_random() ^ (uint32_t)millis();
         std_rng.begin((long)seed);
 
-        if (!LittleFS.begin(true)) {
-            OPS_LOG("Mesh", "LittleFS mount failed");
-            return;
-        }
+        // LittleFS is optional — the Launcher partition layout may omit the spiffs
+        // partition entirely.  Continue without it; NVS and SD are the fallbacks.
+        bool fsOk = LittleFS.begin(true);
+        if (!fsOk) OPS_LOG("Mesh", "LittleFS unavailable — using NVS/SD for identity");
+        if (fsOk && !LittleFS.exists("/mesh")) LittleFS.mkdir("/mesh");
 
-        if (!LittleFS.exists("/mesh")) LittleFS.mkdir("/mesh");
-
-        // Load identity: LittleFS first, then NVS, then SD.
-        // Only restore from backup when LittleFS is missing the identity — never
-        // overwrite unconditionally, which could replace a good identity with a stale one.
         IdentityStore store(LittleFS, "/mesh");
-        store.begin();
+        if (fsOk) store.begin();
 
         char stored_name[32] = {};
-        bool loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+        bool loaded = fsOk && store.load("self", self_id, stored_name, sizeof(stored_name));
+
+        // Helper: load LocalIdentity from raw Stream-format bytes (pub[32]+prv[64]+name[32]).
+        // readFrom(buf,96) expects prv[64]+pub[32] — rearrange before calling.
+        auto loadFromBytes = [&](const uint8_t* buf, size_t len) -> bool {
+            if (len < 96) return false;
+            uint8_t reordered[96];
+            memcpy(reordered,      buf + PUB_KEY_SIZE, PRV_KEY_SIZE);   // prv
+            memcpy(reordered + PRV_KEY_SIZE, buf,      PUB_KEY_SIZE);   // pub
+            self_id.readFrom(reordered, (size_t)(PRV_KEY_SIZE + PUB_KEY_SIZE));
+            if (len >= 128) {
+                int n = (int)sizeof(stored_name) - 1;
+                memcpy(stored_name, buf + 96, n);
+                stored_name[n] = '\0';
+            }
+            for (int i = 0; i < PUB_KEY_SIZE; i++) if (self_id.pub_key[i]) return true;
+            return false;
+        };
 
         if (!loaded) {
-            // NVS backup survives LittleFS.begin(true) format events
+            // NVS backup survives LittleFS format events and missing partitions.
             Preferences idPrefs;
             if (idPrefs.begin("opsMesh", /*readOnly=*/true)) {
                 size_t blen = idPrefs.getBytesLength("selfId");
                 if (blen > 0 && blen <= 256) {
                     uint8_t buf[256];
                     if (idPrefs.getBytes("selfId", buf, blen) == blen) {
-                        File idFile = LittleFS.open("/mesh/self.id", "w", true);
-                        if (idFile) { idFile.write(buf, blen); idFile.close(); }
-                        loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+                        if (fsOk) {
+                            File idFile = LittleFS.open("/mesh/self.id", "w", true);
+                            if (idFile) { idFile.write(buf, blen); idFile.close(); }
+                            loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+                        }
+                        if (!loaded) loaded = loadFromBytes(buf, blen);
                         if (loaded) OPS_LOG("Mesh", "Identity restored from NVS (%d bytes)", (int)blen);
                     }
                 }
@@ -1656,9 +1672,12 @@ public:
             uint8_t buf[256];
             size_t  len = 0;
             if (ops::sdcard::readFile("/ops/identity.bin", buf, sizeof(buf), &len) && len > 0) {
-                File idFile = LittleFS.open("/mesh/self.id", "w", true);
-                if (idFile) { idFile.write(buf, len); idFile.close(); }
-                loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+                if (fsOk) {
+                    File idFile = LittleFS.open("/mesh/self.id", "w", true);
+                    if (idFile) { idFile.write(buf, len); idFile.close(); }
+                    loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+                }
+                if (!loaded) loaded = loadFromBytes(buf, len);
                 if (loaded) OPS_LOG("Mesh", "Identity restored from SD (%d bytes)", (int)len);
             }
         }
@@ -1668,10 +1687,10 @@ public:
             self_id = mesh::LocalIdentity(getRNG());
             for (int i = 0; i < 10 && (self_id.pub_key[0] == 0x00 || self_id.pub_key[0] == 0xFF); i++)
                 self_id = mesh::LocalIdentity(getRNG());
-            store.save("self", self_id, _callsign);
+            if (fsOk) store.save("self", self_id, _callsign);
         } else if (stored_name[0] != '\0') {
             if (_callsign[0] != '\0' && strcmp(_callsign, stored_name) != 0) {
-                store.save("self", self_id, _callsign);
+                if (fsOk) store.save("self", self_id, _callsign);
                 OPS_LOG("Mesh", "Identity name: '%s' -> '%s' (cfg wins)", stored_name, _callsign);
             } else {
                 strncpy(_callsign, stored_name, 31);
@@ -1769,11 +1788,26 @@ public:
     void updateCallsign(const char* cs) {
         strncpy(_callsign, cs, 31);
         _callsign[31] = '\0';
-        IdentityStore store(LittleFS, "/mesh");
-        store.begin();
-        store.save("self", self_id, _callsign);
+        if (LittleFS.begin(false)) {
+            IdentityStore store(LittleFS, "/mesh");
+            store.begin();
+            store.save("self", self_id, _callsign);
+        }
         _saveIdentityBackups();
         OPS_LOG("Mesh", "Callsign updated to '%s'", _callsign);
+    }
+
+    void regenerateIdentity() {
+        self_id = mesh::LocalIdentity(getRNG());
+        for (int i = 0; i < 10 && (self_id.pub_key[0] == 0x00 || self_id.pub_key[0] == 0xFF); i++)
+            self_id = mesh::LocalIdentity(getRNG());
+        if (LittleFS.begin(false)) {
+            IdentityStore store(LittleFS, "/mesh");
+            store.begin();
+            store.save("self", self_id, _callsign);
+        }
+        _saveIdentityBackups();
+        OPS_LOG("Mesh", "Identity regenerated");
     }
 
     void syncChannelSlot(int cfgSlot) {
@@ -1970,6 +2004,14 @@ public:
     bool isRadioActive() const { return _active; }
     void getSelfPubKeyPrefix(uint8_t out[4])  const { memcpy(out, self_id.pub_key, 4);  }
     void getSelfPubKey(uint8_t out[32])       const { memcpy(out, self_id.pub_key, 32); }
+    void getSelfPrvKey(uint8_t out[64]) const {
+        // writeTo(buf,96) layout: prv_key[64] then pub_key[32].
+        // The method is not marked const in MeshCore but does not mutate self_id.
+        uint8_t buf[96];
+        auto& id = const_cast<mesh::LocalIdentity&>(self_id);
+        if (id.writeTo(buf, sizeof(buf)) >= 64) memcpy(out, buf, 64);
+        else memset(out, 0, 64);
+    }
 
     bool getContactPathInfo(const uint8_t* prefix4, PathInfo& out) const {
         OMSMesh* self = const_cast<OMSMesh*>(this);
@@ -1997,24 +2039,46 @@ public:
         }
     }
 
-    // Reads /mesh/self.id from LittleFS and writes it to NVS ("opsMesh"/"selfId")
-    // and SD (/oms/identity.bin).  Call after every identity load or save.
+    // Builds identity bytes from the in-memory self_id and writes to NVS + SD.
+    // Does NOT require LittleFS — safe to call even when the spiffs partition is absent.
+    // Stream format: pub[32] + prv[64] + name[32] = 128 bytes total.
     void _saveIdentityBackups() {
-        if (!LittleFS.exists("/mesh/self.id")) return;
-        File f = LittleFS.open("/mesh/self.id", "r");
-        if (!f) return;
-        uint8_t buf[256];
-        size_t  len = f.read(buf, sizeof(buf));
-        f.close();
-        if (len == 0) return;
+        // Sanity check: bail if pub_key is all-zeros (identity not loaded).
+        bool valid = false;
+        for (int i = 0; i < PUB_KEY_SIZE; i++) if (self_id.pub_key[i]) { valid = true; break; }
+        if (!valid) { OPS_LOG("Mesh", "_saveIdentityBackups: identity is zeroed, skip"); return; }
+
+        // writeTo(buf, 96) emits prv[64]+pub[32].  Extract prv from the front.
+        uint8_t writeBuf[PRV_KEY_SIZE + PUB_KEY_SIZE];
+        if (const_cast<mesh::LocalIdentity&>(self_id).writeTo(writeBuf, sizeof(writeBuf))
+                < (int)(PRV_KEY_SIZE + PUB_KEY_SIZE)) {
+            OPS_LOG("Mesh", "_saveIdentityBackups: writeTo failed");
+            return;
+        }
+
+        // Assemble Stream format: pub[32] + prv[64] + name[32]
+        uint8_t buf[128];
+        memcpy(buf,                self_id.pub_key, PUB_KEY_SIZE);   // bytes 0-31
+        memcpy(buf + PUB_KEY_SIZE, writeBuf,        PRV_KEY_SIZE);   // bytes 32-95
+        memset(buf + 96, 0, 32);
+        strncpy((char*)(buf + 96), _callsign, 31);
+
+        // Also write to LittleFS if mounted (keeps it in sync for IdentityStore).
+        if (LittleFS.begin(false)) {
+            if (!LittleFS.exists("/mesh")) LittleFS.mkdir("/mesh");
+            File f = LittleFS.open("/mesh/self.id", "w", true);
+            if (f) { f.write(buf, sizeof(buf)); f.close(); }
+        }
+
         Preferences idPrefs;
         if (idPrefs.begin("opsMesh", /*readOnly=*/false)) {
-            idPrefs.putBytes("selfId", buf, len);
+            idPrefs.putBytes("selfId", buf, sizeof(buf));
             idPrefs.end();
         }
         if (ops::sdcard::isMounted())
-            ops::sdcard::writeFile("/ops/identity.bin", buf, len);
-        OPS_LOG("Mesh", "Identity backups updated (NVS+SD)");
+            ops::sdcard::writeFile("/ops/identity.bin", buf, sizeof(buf));
+        OPS_LOG("Mesh", "Identity backups updated (%02X%02X%02X%02X...)",
+                buf[0], buf[1], buf[2], buf[3]);
     }
 };
 
@@ -2276,6 +2340,11 @@ void MeshService::getSelfPubKey(uint8_t out[32]) const {
     memset(out, 0, 32);
 }
 
+void MeshService::getSelfPrvKey(uint8_t out[64]) const {
+    if (_initialized) { the_mesh.getSelfPrvKey(out); return; }
+    memset(out, 0, 64);
+}
+
 bool MeshService::getContactPath(const uint8_t* prefix4, PathInfo& out) const {
     if (!_initialized) { out = {}; return false; }
     return the_mesh.getContactPathInfo(prefix4, out);
@@ -2345,6 +2414,10 @@ void MeshService::applyRadioOverrides() {
 
 void MeshService::setCallsign(const char* cs) {
     if (_initialized && cs && cs[0]) the_mesh.updateCallsign(cs);
+}
+
+void MeshService::regenerateIdentity() {
+    if (_initialized) the_mesh.regenerateIdentity();
 }
 
 void MeshService::preloadContact(const uint8_t* pubKey32, const char* name) {
