@@ -47,9 +47,17 @@ static constexpr uint32_t COL_REPEATER = 0x9400D3;  // purple
 static constexpr uint32_t COL_CONTACT  = 0x24B4D7;  // cyan-blue
 static constexpr uint32_t COL_SELF     = 0x00C850;  // green
 
+// Name label records — one lv_label per marker, positioned via renderer.project()
+struct NameLabel {
+    lv_obj_t* obj;   // label widget parented to _screen
+    double    lat;
+    double    lon;
+};
+
 // ── File-scope state ──────────────────────────────────────────────────
 static MapRenderer s_renderer;
 static uint16_t    s_markerIds[64];
+static NameLabel   s_nameLabels[64];
 static int         s_markerCount = 0;
 
 // ── Static member definitions ─────────────────────────────────────────
@@ -91,6 +99,7 @@ void ScreenMap::show()
         if (_mountOverlay) { lv_obj_del(_mountOverlay); _mountOverlay = nullptr; }
         s_renderer.setCenter(GeoPoint(_centerLat, _centerLng), _zoom);
         s_renderer.invalidate();
+        _repositionLabels();
     }
 
     lv_scr_load(_screen);
@@ -106,9 +115,9 @@ bool ScreenMap::isActive()
 void ScreenMap::navigate(int dxPx, int dyPx)
 {
     s_renderer.panPx((int16_t)dxPx, (int16_t)dyPx);
-    // Keep our tracked centre in sync with NavBoxLib's internal state
     _centerLat = (float)s_renderer.lat();
     _centerLng = (float)s_renderer.lon();
+    _repositionLabels();
 }
 
 // ── _build() ─────────────────────────────────────────────────────────
@@ -230,24 +239,66 @@ void ScreenMap::_build()
     mkZoomBtn("-", 242, OPS_SCREEN_H - 4 - 28,           _onZoomOut);
 }
 
+// ── _repositionLabels() ───────────────────────────────────────────────
+// Called after every pan/zoom to move name labels to current screen coords.
+static void _repositionLabels()
+{
+    for (int i = 0; i < s_markerCount; i++) {
+        if (!s_nameLabels[i].obj) continue;
+        lv_coord_t px, py;
+        bool vis = s_renderer.project(s_nameLabels[i].lat, s_nameLabels[i].lon, px, py);
+        if (vis && px >= 0 && px < MAP_W && py >= TOP_H && py < OPS_SCREEN_H) {
+            lv_obj_set_pos(s_nameLabels[i].obj, px + 8, py - 5);
+            lv_obj_clear_flag(s_nameLabels[i].obj, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_nameLabels[i].obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 // ── _refreshMarkers() ─────────────────────────────────────────────────
 // Clears the NavBoxLib MarkerLayer and repopulates it from the current
 // contacts, repeaters, live peers, and self position.
-// Called on every show() — NavBoxLib repositions markers automatically on
-// subsequent pan/zoom without needing another refresh.
+// Called on every show() — NavBoxLib repositions dots automatically on
+// subsequent pan/zoom; name labels are repositioned via _repositionLabels().
 void ScreenMap::_refreshMarkers()
 {
     MarkerLayer* ml = s_renderer.getMarkerLayer();
     if (!ml) return;
 
-    for (int i = 0; i < s_markerCount; i++) ml->remove(s_markerIds[i]);
+    // Remove existing markers and delete their name labels
+    for (int i = 0; i < s_markerCount; i++) {
+        ml->remove(s_markerIds[i]);
+        if (s_nameLabels[i].obj) {
+            lv_obj_del(s_nameLabels[i].obj);
+            s_nameLabels[i].obj = nullptr;
+        }
+    }
     s_markerCount = 0;
 
     auto addMark = [&](double lat, double lon, uint32_t col, const char* name)
     {
         if ((lat == 0.0 && lon == 0.0) || s_markerCount >= 64) return;
+        int idx = s_markerCount;
         char lbl = (name && name[0]) ? name[0] : '?';
-        s_markerIds[s_markerCount++] = ml->add(Marker(GeoPoint(lat, lon), 10, col, lbl));
+        s_markerIds[idx] = ml->add(Marker(GeoPoint(lat, lon), 10, col, lbl));
+
+        // Name label — parented to _screen so it floats above tile layer
+        lv_obj_t* nlbl = lv_label_create(ScreenMap::_screen);
+        lv_label_set_text(nlbl, name ? name : "");
+        lv_obj_set_style_text_font(nlbl, &lv_font_montserrat_10, 0);
+        // Convert RGB24 colour to lv_color_t for the label
+        lv_obj_set_style_text_color(nlbl,
+            lv_color_make((col >> 16) & 0xFF, (col >> 8) & 0xFF, col & 0xFF), 0);
+        lv_obj_set_style_bg_opa(nlbl, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(nlbl, 0, 0);
+        lv_obj_set_style_pad_all(nlbl, 0, 0);
+        lv_label_set_long_mode(nlbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(nlbl, 80);
+        lv_group_remove_obj(nlbl);
+
+        s_nameLabels[idx] = { nlbl, lat, lon };
+        s_markerCount++;
     };
 
     // Saved repeaters → purple
@@ -302,6 +353,7 @@ void ScreenMap::_onZoomIn(lv_event_t*)
     if (_zoom >= ZOOM_MAX) return;
     _zoom++;
     s_renderer.setZoom(_zoom);
+    _repositionLabels();
 }
 
 void ScreenMap::_onZoomOut(lv_event_t*)
@@ -309,6 +361,7 @@ void ScreenMap::_onZoomOut(lv_event_t*)
     if (_zoom <= ZOOM_MIN) return;
     _zoom--;
     s_renderer.setZoom(_zoom);
+    _repositionLabels();
 }
 
 void ScreenMap::_onKey(lv_event_t* e)
@@ -411,6 +464,7 @@ void ScreenMap::_onMountClick(lv_event_t*)
     if (_hasTiles()) {
         s_renderer.setCenter(GeoPoint(_centerLat, _centerLng), _zoom);
         s_renderer.invalidate();
+        _repositionLabels();
     } else {
         _showMountDialog();
     }
