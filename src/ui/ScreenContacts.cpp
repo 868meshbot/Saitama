@@ -197,7 +197,7 @@ void ScreenContacts::_build()
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(nameLbl, 112);  // reduced by 8px for fav dot
         lv_obj_set_style_text_color(nameLbl, c.hasUnread ? theme::TEXT : theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
 
         lv_obj_t* addrLbl = lv_label_create(row);
         lv_label_set_text(addrLbl, addrBuf);

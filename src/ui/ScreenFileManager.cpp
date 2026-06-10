@@ -419,7 +419,7 @@ void ScreenFileManager::_buildScreen()
         lv_obj_set_pos(nameLbl, 4, 1);
         lv_obj_set_style_text_color(nameLbl,
             s_isDir[i] ? theme::ACCENT : theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
         lv_label_set_text(nameLbl, nameBuf);
 
         // Size label: 56 px wide, right of name
@@ -588,7 +588,7 @@ void ScreenFileManager::_openViewer(const char* path)
     lv_label_set_long_mode(contentLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(contentLbl, OPS_SCREEN_W - 8);
     lv_obj_set_style_text_color(contentLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(contentLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(contentLbl, theme::bodyFont10(), 0);
     lv_label_set_text(contentLbl, s_viewBuf);
 
     // Focus body so trackball scrolls and backspace exits
@@ -774,7 +774,7 @@ void ScreenFileManager::_openRenameDialog()
     lv_obj_set_style_text_color(s_renameInput, theme::TEXT, 0);
     lv_obj_set_style_border_color(s_renameInput, theme::BORDER, 0);
     lv_obj_set_style_border_color(s_renameInput, theme::ACCENT, LV_STATE_FOCUSED);
-    lv_obj_set_style_text_font(s_renameInput, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_renameInput, theme::bodyFont10(), 0);
 
     // Button row
     lv_obj_t* btnRow = lv_obj_create(box);

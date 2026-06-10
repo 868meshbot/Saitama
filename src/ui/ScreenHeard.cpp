@@ -184,7 +184,7 @@ void ScreenHeard::_build() {
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(nameLbl, 132);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
 
     // RSSI
     char rssiBuf[12];

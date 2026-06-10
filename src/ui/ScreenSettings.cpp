@@ -418,7 +418,7 @@ static void _openNameDialog() {
     lv_obj_set_style_text_color(ta, theme::TEXT, 0);
     lv_obj_set_style_border_color(ta, theme::ACCENT, 0);
     lv_obj_set_style_border_width(ta, 1, 0);
-    lv_obj_set_style_text_font(ta, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(ta, theme::bodyFont10(), 0);
     lv_textarea_set_max_length(ta, 15);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_text(ta, ops::config::get().callsign);
@@ -724,7 +724,7 @@ static lv_obj_t* _makeChField(lv_obj_t* parent, const char* labelText,
     lv_obj_set_style_border_color(ta, theme::BORDER, 0);
     lv_obj_set_style_border_color(ta, theme::ACCENT, LV_STATE_FOCUSED);
     lv_obj_set_style_border_width(ta, 1, 0);
-    lv_obj_set_style_text_font(ta, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(ta, theme::bodyFont10(), 0);
     lv_textarea_set_one_line(ta, true);
     if (maxLen > 0) lv_textarea_set_max_length(ta, maxLen);
     if (placeholder) lv_textarea_set_placeholder_text(ta, placeholder);

@@ -450,7 +450,7 @@ static void _activateScreensaver(bool analog = false)
         _drawAnalogClock();
 
         s_ssNameLbl = lv_label_create(s_screensaverScreen);
-        lv_obj_set_style_text_font(s_ssNameLbl, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_set_style_text_font(s_ssNameLbl, theme::bodyFont12(), LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
         lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_align(s_ssNameLbl, LV_ALIGN_BOTTOM_MID, 0, -8);
@@ -477,7 +477,7 @@ static void _activateScreensaver(bool analog = false)
         _updateSsTime();
 
         s_ssNameLbl = lv_label_create(col);
-        lv_obj_set_style_text_font(s_ssNameLbl, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_set_style_text_font(s_ssNameLbl, theme::bodyFont12(), LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ssNameLbl, lv_color_make(0xAA, 0xAA, 0xAA), LV_PART_MAIN);
         lv_obj_set_style_text_align(s_ssNameLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         const char* name = ops::config::get().callsign[0]
@@ -540,7 +540,7 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
                  msg.channelName[0] ? msg.channelName : "?", msg.senderName);
 
     lv_obj_t* hdrLbl = lv_label_create(s_notifyPopup);
-    lv_obj_set_style_text_font(hdrLbl, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(hdrLbl, theme::bodyFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(hdrLbl, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
     lv_label_set_text(hdrLbl, hdr);
     lv_obj_set_width(hdrLbl, 244);
@@ -548,7 +548,7 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_align(hdrLbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t* txtLbl = lv_label_create(s_notifyPopup);
-    lv_obj_set_style_text_font(txtLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(txtLbl, theme::bodyFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(txtLbl, lv_color_white(), LV_PART_MAIN);
     lv_label_set_text(txtLbl, msg.text);
     lv_obj_set_width(txtLbl, 244);

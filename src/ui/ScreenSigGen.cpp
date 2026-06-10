@@ -318,7 +318,7 @@ void ScreenSigGen::_buildScreen()
     lv_obj_set_style_pad_all(bot, 2, 0);
     lv_obj_clear_flag(bot, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* hint = lv_label_create(bot);
-    lv_label_set_text(hint, "\xe2\x86\x91\xe2\x86\x93power  \xe2\x86\x90\xe2\x86\x92freq  c:mode  s:step  \xe2\x8c\xab exit");
+    lv_label_set_text(hint, LV_SYMBOL_UP LV_SYMBOL_DOWN "power  " LV_SYMBOL_LEFT LV_SYMBOL_RIGHT "freq  c:mode  s:step  " LV_SYMBOL_CLOSE " exit");
     lv_obj_set_style_text_color(hint, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_LEFT_MID, 2, 0);
