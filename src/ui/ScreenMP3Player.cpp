@@ -231,11 +231,11 @@ void ScreenMP3Player::_buildScreen()
     lv_obj_set_pos(_barPctLbl, OPS_SCREEN_W - PAD - 44, cy);
     cy += 16 + PAD;
 
-    // "Now Playing: …" label
+    // "Now Playing: " label
     _nowPlayingLbl = lv_label_create(_screen);
     lv_label_set_long_mode(_nowPlayingLbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(_nowPlayingLbl, OPS_SCREEN_W - PAD * 2);
-    lv_label_set_text(_nowPlayingLbl, "Now Playing: —");
+    lv_label_set_text(_nowPlayingLbl, "Now Playing: ");
     lv_obj_set_style_text_color(_nowPlayingLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(_nowPlayingLbl, &lv_font_montserrat_10, 0);
     lv_obj_set_pos(_nowPlayingLbl, PAD, cy);

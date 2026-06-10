@@ -201,7 +201,7 @@ void ScreenChanScan::_buildScreen()
     _regionLbl = lv_label_create(bar);
     lv_label_set_text(_regionLbl, kStepLabels[s_stepIdx]);
     lv_obj_set_style_text_color(_regionLbl, theme::ACCENT, 0);
-    lv_obj_set_style_text_font(_regionLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(_regionLbl, theme::bodyFont10(), 0);
 
     // ── Channel rows ──────────────────────────────────────────────────────────
     static constexpr int COL_FREQ = 4;

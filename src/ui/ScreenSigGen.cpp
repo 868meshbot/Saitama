@@ -21,13 +21,14 @@
 //   │           Auto-stop: 5:00              │  20 px  countdown
 //   │                                        │
 //   ├────────────────────────────────────────┤  y=208
-//   │  ↑↓ power  ←→ freq  c:CW/preamble  ⌫  │  32 px  hint bar
+//   │  q/w:power  a/s:freq  d:step  c:mode  ⌫  │  32 px  hint bar
 //   └────────────────────────────────────────┘  y=240
 
 #include "ScreenSigGen.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
+#include "../utils/Config.h"
 #include "../utils/Log.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -196,12 +197,18 @@ void ScreenSigGen::_onKey(lv_event_t* e)
         _refreshLabels();
         return;
     }
-    // Cycle frequency step size with 's'
-    if (*key == 's' || *key == 'S') {
+    // d = cycle frequency step size
+    if (*key == 'd' || *key == 'D') {
         s_freqStepIdx = (s_freqStepIdx + 1) % 3;
         _refreshLabels();
         return;
     }
+    // q/w = power up/down
+    if (*key == 'q' || *key == 'Q') { navigate(0,  1); return; }
+    if (*key == 'w' || *key == 'W') { navigate(0, -1); return; }
+    // a/s = freq down/up
+    if (*key == 'a' || *key == 'A') { navigate(-1, 0); return; }
+    if (*key == 's' || *key == 'S') { navigate( 1, 0); return; }
     // Enter/space toggles TX
     if (*key == LV_KEY_ENTER || *key == ' ') {
         _onTxBtn(nullptr);
@@ -278,7 +285,7 @@ void ScreenSigGen::_buildScreen()
 
     // Mode / power params
     _paramLbl = lv_label_create(_screen);
-    lv_label_set_text(_paramLbl, "CW  ·  +22 dBm");
+    lv_label_set_text(_paramLbl, "CW  :  +22 dBm");
     lv_obj_set_style_text_color(_paramLbl, lv_color_make(140, 180, 140), 0);
     lv_obj_set_style_text_font(_paramLbl, &lv_font_montserrat_14, 0);
     lv_obj_align(_paramLbl, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 58);
@@ -318,7 +325,7 @@ void ScreenSigGen::_buildScreen()
     lv_obj_set_style_pad_all(bot, 2, 0);
     lv_obj_clear_flag(bot, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* hint = lv_label_create(bot);
-    lv_label_set_text(hint, LV_SYMBOL_UP LV_SYMBOL_DOWN "power  " LV_SYMBOL_LEFT LV_SYMBOL_RIGHT "freq  c:mode  s:step  " LV_SYMBOL_CLOSE " exit");
+    lv_label_set_text(hint, "q/w:power  a/s:freq  d:step  c:mode  " LV_SYMBOL_CLOSE " exit");
     lv_obj_set_style_text_color(hint, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_LEFT_MID, 2, 0);
@@ -341,7 +348,8 @@ void ScreenSigGen::show()
     if (!_screen) return;
 
     s_freqMHz   = ops::MeshService::instance().getFreqMHz();
-    s_powerDbm  = 22;
+    const auto& cfg = ops::config::get();
+    s_powerDbm  = (cfg.radioCustom && cfg.radioTX != 0) ? cfg.radioTX : 22;
     s_loraMode  = false;
     s_freqStepIdx = 0;
     // Don't carry over TX state from previous session
