@@ -56,6 +56,47 @@
 - [ ] PSRAM tile cache (LRU eviction)
 - [ ] Write `scripts/download_tiles.py`
 
+### NavBoxLib enhancements (optional — navboxlib branch)
+
+> NavBoxLib is integrated on the `navboxlib` branch. The items below are
+> unlocked by its API and have no equivalent in the old MapEngine.
+
+- [ ] **GPX track recording** — wire `TrackLog::addPoint(TrackPoint)` into
+      the GPS tick loop; write live track to `/ops/tracks/YYYY-MM-DD.gpx` on
+      SD; auto-simplification runs every 75 points to keep file size down
+- [ ] **GPX track display** — `TrackLayer` + `TrackLog::load(path)` renders
+      any saved GPX file as a coloured line on the map; integrate with File
+      Manager so tapping a `.gpx` file opens it on the map
+- [ ] **Track statistics overlay** — total distance, elevation gain/loss,
+      min/max altitude from `TrackLog` shown in a info bar or popup
+- [ ] **Auto-zoom to available tiles** — replace the "No Map Tiles" dialog
+      with `findBestZoomWithTiles(GeoPoint, targetZoom)` so the map
+      gracefully steps down to whatever zoom level has coverage rather than
+      going blank
+- [ ] **Magnification zoom past tile max** — when + is pressed beyond the
+      highest available tile zoom, switch to `setZoom(z, magnification)` to
+      pixel-scale existing tiles 2× / 3× instead of hard-stopping
+- [ ] **Distinct home marker** — use `colHome_` / `homesize_` for self
+      position so it renders visually distinct from contact dots; NavBoxLib
+      has first-class support for a single "home" marker
+- [ ] **Crop mode for no-PSRAM builds** — `cropmode_ = true` limits tile
+      RAM to ~80–180 KB by loading only the visible slice of each tile;
+      useful if porting to boards without PSRAM
+- [ ] **Dynamic marker updates** — call `MarkerLayer::updatePoint(id, pos)`
+      on each GPS tick instead of clearing and re-adding all markers; reduces
+      LVGL churn during live tracking
+- [ ] **Full-name label polish** — current name labels use `lv_label` floated
+      above the tile layer; consider a semi-transparent background pill or
+      truncation with `…` for long callsigns
+- [ ] **Tap-to-select marker** — use `renderer.project()` in reverse with a
+      touch event to find the nearest marker within a tap radius; show a
+      popup with full name, key prefix, RSSI, distance
+- [ ] **Track replay / breadcrumb mode** — load a GPX and animate a dot
+      along the track for reviewing a past route
+- [ ] **Custom MapLayer for mesh coverage** — implement a `MapLayer` subclass
+      that draws a heatmap or polygon overlay of heard nodes to visualise
+      mesh RF coverage on the map
+
 ## Testing
 
 - [x] Unit test: MapEngine coordinate conversion (lat/lng to/from tile) — 34 tests passing
