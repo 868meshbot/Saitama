@@ -54,6 +54,9 @@ struct NameLabel {
     double    lon;
 };
 
+// ── Forward declarations ──────────────────────────────────────────────
+static void _repositionLabels();
+
 // ── File-scope state ──────────────────────────────────────────────────
 static MapRenderer s_renderer;
 static uint16_t    s_markerIds[64];
