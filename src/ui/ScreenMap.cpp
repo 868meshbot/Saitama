@@ -1,10 +1,17 @@
 // Saitama — ScreenMap.cpp
 // Copyright 2026 Saitama — GPL-3.0-or-later
+//
+// NavBoxLib-backed map screen (navboxlib experimental branch).
+// Replaces the manual lv_canvas + MapEngine tile renderer with NavBoxLib's
+// managed LVGL image-object tile cache and MarkerLayer overlay system.
+//
+// Tile path format:  /maps/osm/{z}/{x}/{y}.png  (standard OSM slippy map)
+// Tile cache:        TILECACHE_SIZE (default 4) tiles in a PSRAM-backed MemPool
+// Markers:           NavBoxLib MarkerLayer — single-char label (first letter of name)
 
 #include "ScreenMap.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
-#include "../map/MapEngine.h"
 #include "../mesh/MeshService.h"
 #include "../hardware/Board.h"
 #include "../utils/Log.h"
@@ -14,131 +21,92 @@
 #include "../utils/Config.h"
 
 #include <lvgl.h>
-#include <math.h>
+#include <navboxlib/MapRenderer.h>
+#include <navboxlib/MapLayer.h>
+#include <navboxlib/GeoPoint.h>
+#include <SD.h>
 #include <cstring>
 #include <cstdio>
 
 namespace ops { namespace ui {
 
-// ── Layout constants ────────────────────────────────────────────────
-static constexpr int TOP_H   = 28;
-static constexpr int ZOOM_W  = 0;    // no strip — zoom buttons float over canvas
-static constexpr int MAP_W   = OPS_SCREEN_W - ZOOM_W;  // 320
-static constexpr int MAP_H   = OPS_SCREEN_H - TOP_H;   // 212
-static constexpr int TILE_SZ = 256;
+// ── Layout ────────────────────────────────────────────────────────────
+static constexpr int TOP_H    = 28;
+static constexpr int MAP_W    = OPS_SCREEN_W;
+static constexpr int MAP_H    = OPS_SCREEN_H - TOP_H;
 static constexpr int ZOOM_MIN = 1;
-static constexpr int ZOOM_MAX = 12;
+static constexpr int ZOOM_MAX = 18;
 static constexpr int ZOOM_DEF = 10;
 
-// Tiles range from 103 bytes (blank) to ~29 KB (dense city tiles).
-// Allocated once in PSRAM via _build().
-static constexpr size_t PNG_BUF_SZ = 32768;
-static uint8_t* s_pngBuf = nullptr;
+// PSRAM pool: (TILECACHE_SIZE + 1) tiles × 256×256 × 2 bytes (RGB565)
+// Pre-set into mempool_ before begin() so NavBoxLib's alloc() uses PSRAM.
+static constexpr size_t POOL_SZ = (TILECACHE_SIZE + 1) * 256 * 256 * 2;
 
-// ── Static members ──────────────────────────────────────────────────
-lv_obj_t*   ScreenMap::_screen       = nullptr;
-lv_obj_t*   ScreenMap::_canvas       = nullptr;
-lv_color_t* ScreenMap::_canvasBuf    = nullptr;
-lv_obj_t*   ScreenMap::_zoomLbl      = nullptr;
-lv_obj_t*   ScreenMap::_mountOverlay = nullptr;
+// Marker colours (RGB24)
+static constexpr uint32_t COL_REPEATER = 0x9400D3;  // purple
+static constexpr uint32_t COL_CONTACT  = 0x24B4D7;  // cyan-blue
+static constexpr uint32_t COL_SELF     = 0x00C850;  // green
 
-float ScreenMap::_centerLat  = 51.5f;   // London fallback before GPS fix
-float ScreenMap::_centerLng  = -0.12f;
-int   ScreenMap::_zoom       = ZOOM_DEF;
+// Name label records — one lv_label per marker, positioned via renderer.project()
+struct NameLabel {
+    lv_obj_t* obj;   // label widget parented to _screen
+    double    lat;
+    double    lon;
+};
+
+// ── Forward declarations ──────────────────────────────────────────────
+static void _repositionLabels();
+
+// ── File-scope state ──────────────────────────────────────────────────
+static MapRenderer s_renderer;
+static uint16_t    s_markerIds[64];
+static NameLabel   s_nameLabels[64];
+static int         s_markerCount = 0;
+
+// ── Static member definitions ─────────────────────────────────────────
+lv_obj_t* ScreenMap::_screen       = nullptr;
+lv_obj_t* ScreenMap::_zoomLbl      = nullptr;
+lv_obj_t* ScreenMap::_mountOverlay = nullptr;
+
+float ScreenMap::_centerLat   = 51.5f;
+float ScreenMap::_centerLng   = -0.12f;
+int   ScreenMap::_zoom        = ZOOM_DEF;
 bool  ScreenMap::_gpsCentered = false;
 
-// ── File-scope helpers ───────────────────────────────────────────────
-static ops::MapEngine s_eng;
-
-// Marker colors
-static constexpr lv_color_t PURPLE = LV_COLOR_MAKE(148, 0, 211);
-static const     lv_color_t BLUE   = theme::ACCENT;
-static constexpr lv_color_t GREEN  = LV_COLOR_MAKE(0, 200, 80);
-
-// Blit one decoded tile (3 bytes/px: lo, hi RGB565, alpha) into the canvas buffer.
-static void _blitTile(lv_color_t* buf,
-                      const uint8_t* decoded,
-                      int drawX, int drawY)
+// ── Tile availability check ───────────────────────────────────────────
+static bool _hasTiles()
 {
-    int colStart = (drawX < 0)      ? -drawX       : 0;
-    int colEnd   = (drawX + TILE_SZ > MAP_W) ? MAP_W - drawX : TILE_SZ;
-    if (colStart >= colEnd) return;
-
-    for (int row = 0; row < TILE_SZ; row++)
-    {
-        int cy = drawY + row;
-        if (cy < 0 || cy >= MAP_H) continue;
-
-        const uint8_t* srcRow = decoded + row * TILE_SZ * 3 + colStart * 3;
-        lv_color_t*    dstRow = buf + cy * MAP_W + (drawX + colStart);
-
-        for (int col = colStart; col < colEnd; col++)
-        {
-            dstRow->full = (uint16_t)srcRow[0] | ((uint16_t)srcRow[1] << 8);
-            dstRow++;
-            srcRow += 3;
-        }
-    }
-}
-
-// Draw a filled circle marker and name label on the canvas.
-static void _drawMarker(lv_obj_t* canvas, int px, int py,
-                        lv_color_t color, const char* name)
-{
-    static constexpr int R = 5;
-    if (px < -R || px >= MAP_W + R || py < -R || py >= MAP_H + R) return;
-
-    lv_draw_rect_dsc_t dsc;
-    lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_color     = color;
-    dsc.bg_opa       = LV_OPA_COVER;
-    dsc.radius       = LV_RADIUS_CIRCLE;
-    dsc.border_width = 1;
-    dsc.border_color = lv_color_white();
-    dsc.border_opa   = LV_OPA_70;
-    lv_canvas_draw_rect(canvas, px - R, py - R, R * 2, R * 2, &dsc);
-
-    if (name && name[0])
-    {
-        lv_draw_label_dsc_t ldsc;
-        lv_draw_label_dsc_init(&ldsc);
-        ldsc.color = color;
-        ldsc.font  = &lv_font_montserrat_10;
-        // Place label to the right of the dot, vertically centred on it
-        lv_canvas_draw_text(canvas, px + R + 2, py - 5, 90, &ldsc, name);
-    }
+    return ops::sdcard::isMounted() && SD.exists("/maps/osm");
 }
 
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenMap::show()
 {
-    // Snap to GPS on first fix
-    if (!_gpsCentered)
-    {
+    if (!_gpsCentered) {
         auto& b = Board::instance();
-        if (b.hasGPSFix())
-        {
-            float lat = b.gpsLat();
-            float lng = b.gpsLng();
-            if (lat != 0.0f || lng != 0.0f)
-            {
-                _centerLat  = lat;
-                _centerLng  = lng;
-                _gpsCentered = true;
+        if (b.hasGPSFix()) {
+            float lat = b.gpsLat(), lng = b.gpsLng();
+            if (lat != 0.0f || lng != 0.0f) {
+                _centerLat = lat; _centerLng = lng; _gpsCentered = true;
             }
         }
     }
 
-    if (!_screen)
-    {
-        s_eng.init();   // idempotent: just checks SD.exists("/maps")
-        _build();
+    if (!_screen) _build();
+
+    _refreshMarkers();
+
+    if (!_hasTiles()) {
+        _showMountDialog();
+    } else {
+        if (_mountOverlay) { lv_obj_del(_mountOverlay); _mountOverlay = nullptr; }
+        s_renderer.setCenter(GeoPoint(_centerLat, _centerLng), _zoom);
+        s_renderer.invalidate();
+        _repositionLabels();
     }
 
-    _updateZoomLabel();
-    _redrawMap();
     lv_scr_load(_screen);
-    OPS_LOG("Map", "Map screen shown z=%d lat=%.4f lng=%.4f",
+    OPS_LOG("Map", "NavBoxLib map z=%d lat=%.4f lng=%.4f",
             _zoom, (double)_centerLat, (double)_centerLng);
 }
 
@@ -149,13 +117,10 @@ bool ScreenMap::isActive()
 
 void ScreenMap::navigate(int dxPx, int dyPx)
 {
-    float n = powf(2.0f, (float)_zoom);
-    float degPerPx = 360.0f / (n * (float)TILE_SZ);
-    _centerLng += dxPx * degPerPx;
-    _centerLat -= dyPx * degPerPx;
-    if (_centerLat >  85.0f) _centerLat =  85.0f;
-    if (_centerLat < -85.0f) _centerLat = -85.0f;
-    _redrawMap();
+    s_renderer.panPx((int16_t)dxPx, (int16_t)dyPx);
+    _centerLat = (float)s_renderer.lat();
+    _centerLng = (float)s_renderer.lon();
+    _repositionLabels();
 }
 
 // ── _build() ─────────────────────────────────────────────────────────
@@ -182,7 +147,7 @@ void ScreenMap::_build()
     lv_obj_set_flex_align(bar,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    auto mkBarBtn = [&](const char* label, lv_event_cb_t cb) -> lv_obj_t*
+    auto mkBarBtn = [&](const char* label, lv_event_cb_t cb)
     {
         lv_obj_t* btn = lv_btn_create(bar);
         lv_group_remove_obj(btn);
@@ -200,10 +165,9 @@ void ScreenMap::_build()
         lv_obj_set_style_text_color(lbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
         lv_obj_center(lbl);
-        return btn;
     };
 
-    mkBarBtn(LV_SYMBOL_HOME, _onHomeClick);
+    mkBarBtn(LV_SYMBOL_HOME,  _onHomeClick);
 
     lv_obj_t* title = lv_label_create(bar);
     lv_label_set_text(title, LV_SYMBOL_IMAGE " Map");
@@ -213,43 +177,48 @@ void ScreenMap::_build()
 
     mkBarBtn(LV_SYMBOL_CLOSE, _onExitClick);
 
-    // ── Map canvas (left, below top bar) ─────────────────────────────
-    _canvasBuf = (lv_color_t*)ps_malloc(MAP_W * MAP_H * sizeof(lv_color_t));
-    if (!_canvasBuf)
+    // ── NavBoxLib renderer ────────────────────────────────────────────
+    // Pre-set buf_ from PSRAM before begin() is called so that NavBoxLib's
+    // MemPool::alloc() uses PSRAM rather than internal DRAM for tile buffers.
+    // (MemPool::init() is not called by begin() internally; the caller owns
+    // pool initialisation.)
     {
-        OPS_LOG("Map", "FATAL: cannot allocate canvas buffer");
+        uint8_t* pool = (uint8_t*)ps_malloc(POOL_SZ);
+        if (pool) {
+            s_renderer.mempool_.buf_     = pool;
+            s_renderer.mempool_.bufsize_ = POOL_SZ;
+            s_renderer.mempool_.bufpos_  = 0;
+            OPS_LOG("Map", "NavBoxLib PSRAM pool %u KB", (unsigned)(POOL_SZ / 1024));
+        } else {
+            OPS_LOG("Map", "WARN: PSRAM pool alloc failed — tiling may OOM");
+        }
+    }
+
+    bool ok = s_renderer.begin(_screen, MAP_W, MAP_H,
+                                "/maps/osm/%d/%d/%d.png");
+    if (!ok) {
+        OPS_LOG("Map", "NavBoxLib begin() failed — map unavailable");
         return;
     }
-    s_pngBuf = (uint8_t*)ps_malloc(PNG_BUF_SZ);
-    if (!s_pngBuf)
-    {
-        OPS_LOG("Map", "FATAL: cannot allocate PNG decode buffer");
-        return;
+    s_renderer.setXY(0, TOP_H);
+    s_renderer.colBg_     = 0x1A1A2E;  // dark slate background for missing tiles
+    s_renderer.colAccent_ = 0x24B4D7;  // default dot colour (overridden per marker)
+    s_renderer.colHome_   = 0x00C850;  // home/self marker colour
+
+    // Attach key and touch events to NavBoxLib's root LVGL object so that
+    // the keyboard handler and trackball drag both work while map is active.
+    lv_obj_t* base = s_renderer.getLvglBase();
+    if (base) {
+        lv_obj_add_flag(base, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(base, _onKey,   LV_EVENT_KEY,      nullptr);
+        lv_obj_add_event_cb(base, _onTouch, LV_EVENT_PRESSING, nullptr);
+        lv_group_add_obj(lv_group_get_default(), base);
+        lv_group_focus_obj(base);
     }
-    memset(_canvasBuf, 0, MAP_W * MAP_H * sizeof(lv_color_t));
 
-    _canvas = lv_canvas_create(_screen);
-    lv_canvas_set_buffer(_canvas, _canvasBuf, MAP_W, MAP_H, LV_IMG_CF_TRUE_COLOR);
-    lv_obj_set_pos(_canvas, 0, TOP_H);
-    lv_group_remove_obj(_canvas);
-
-    // Key handler on canvas for backspace → exit
-    lv_obj_add_event_cb(_canvas, _onKey, LV_EVENT_KEY, nullptr);
-    lv_group_add_obj(lv_group_get_default(), _canvas);
-    lv_group_focus_obj(_canvas);
-
-    // Touch drag → pan. LV_OBJ_FLAG_CLICKABLE is required for the canvas
-    // (lv_img subclass) to receive pointer events.
-    lv_obj_add_flag(_canvas, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_canvas, _onTouch, LV_EVENT_PRESSING, nullptr);
-
-
-    // ── Floating zoom buttons ────────────────────────────────────────────
-    // Sit over the map canvas bottom-right; right edge x=226 clears the GT911
-    // hardware deadzone (py_max≈231 → screen x>231 unreachable).
-    _zoomLbl = nullptr;  // no zoom label; _updateZoomLabel() guards on null
-
-    auto mkZoomBtn = [&](const char* label, lv_coord_t bx, lv_coord_t by, lv_event_cb_t cb)
+    // ── Floating zoom +/- buttons (bottom-right, clear of GT911 deadzone) ─
+    auto mkZoomBtn = [&](const char* label, lv_coord_t bx, lv_coord_t by,
+                         lv_event_cb_t cb)
     {
         lv_obj_t* btn = lv_btn_create(_screen);
         lv_group_remove_obj(btn);
@@ -269,221 +238,147 @@ void ScreenMap::_build()
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_center(lbl);
     };
-
-    // x=242 → right edge=286; y positions at bottom of map area
     mkZoomBtn("+", 242, OPS_SCREEN_H - 4 - 28 - 4 - 28, _onZoomIn);
     mkZoomBtn("-", 242, OPS_SCREEN_H - 4 - 28,           _onZoomOut);
 }
 
-// ── _redrawMap() ──────────────────────────────────────────────────────
-void ScreenMap::_redrawMap()
+// ── _repositionLabels() ───────────────────────────────────────────────
+// Called after every pan/zoom to move name labels to current screen coords.
+static void _repositionLabels()
 {
-    if (!_canvas || !_canvasBuf) return;
-
-    // Fill background (dark slate — visible for missing tiles)
-    lv_canvas_fill_bg(_canvas, theme::BG, LV_OPA_COVER);
-
-    if (!s_eng.hasTileDir())
-    {
-        lv_obj_invalidate(_canvas);
-        _showMountDialog();
-        return;
-    }
-    // Dismiss any lingering mount dialog if tiles are now available
-    if (_mountOverlay)
-    {
-        lv_obj_del(_mountOverlay);
-        _mountOverlay = nullptr;
-    }
-
-    // Fractional tile coords of map center
-    float txF, tyF;
-    ops::MapEngine::latLngToTileFrac(_centerLat, _centerLng, _zoom, txF, tyF);
-
-    int   txC  = (int)txF;
-    int   tyC  = (int)tyF;
-    float offX = (txF - txC) * (float)TILE_SZ;  // pixel offset of center within tile
-    float offY = (tyF - tyC) * (float)TILE_SZ;
-
-    // Canvas position of the top-left corner of the center tile
-    int baseX = MAP_W / 2 - (int)offX;
-    int baseY = MAP_H / 2 - (int)offY;
-
-    int maxTile = (1 << _zoom);
-
-    // Render up to 3×3 surrounding tiles (only the ones actually intersecting the canvas)
-    for (int dty = -1; dty <= 1; dty++)
-    {
-        for (int dtx = -1; dtx <= 1; dtx++)
-        {
-            int tx    = txC + dtx;
-            int ty    = tyC + dty;
-            int drawX = baseX + dtx * TILE_SZ;
-            int drawY = baseY + dty * TILE_SZ;
-
-            if (drawX + TILE_SZ <= 0 || drawX >= MAP_W) continue;
-            if (drawY + TILE_SZ <= 0 || drawY >= MAP_H) continue;
-            if (tx < 0 || ty < 0 || tx >= maxTile || ty >= maxTile) continue;
-
-            size_t pngSz = s_eng.readTile(_zoom, tx, ty, s_pngBuf, PNG_BUF_SZ);
-            if (pngSz == 0) continue;
-
-            // Decode PNG via LVGL's built-in LodePNG decoder.
-            // After decode (16-bit depth), img_data is 3 bytes/px: [lo, hi, alpha].
-            lv_img_dsc_t src;
-            memset(&src, 0, sizeof(src));
-            src.header.cf  = LV_IMG_CF_TRUE_COLOR_ALPHA;
-            src.header.w   = TILE_SZ;
-            src.header.h   = TILE_SZ;
-            src.data       = s_pngBuf;
-            src.data_size  = (uint32_t)pngSz;
-
-            lv_img_decoder_dsc_t dec;
-            memset(&dec, 0, sizeof(dec));
-            lv_res_t res = lv_img_decoder_open(&dec, &src, lv_color_make(0, 0, 0), 0);
-            if (res == LV_RES_OK && dec.img_data)
-            {
-                _blitTile(_canvasBuf,
-                          (const uint8_t*)dec.img_data,
-                          drawX, drawY);
-            }
-            else
-            {
-                OPS_LOG("Map", "Tile %d/%d/%d decode failed (sz=%u)",
-                        _zoom, tx, ty, (unsigned)pngSz);
-            }
-            lv_img_decoder_close(&dec);
+    for (int i = 0; i < s_markerCount; i++) {
+        if (!s_nameLabels[i].obj) continue;
+        lv_coord_t px, py;
+        bool vis = s_renderer.project(s_nameLabels[i].lat, s_nameLabels[i].lon, px, py);
+        if (vis && px >= 0 && px < MAP_W && py >= TOP_H && py < OPS_SCREEN_H) {
+            lv_obj_set_pos(s_nameLabels[i].obj, px + 8, py - 5);
+            lv_obj_clear_flag(s_nameLabels[i].obj, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_nameLabels[i].obj, LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
 
-    // ── Overlay markers ───────────────────────────────────────────────
-    // Helper: convert stored int32_t lat/lon to canvas pixel coords.
-    auto markerPx = [&](int32_t latI, int32_t lonI, int& px, int& py) -> bool
+// ── _refreshMarkers() ─────────────────────────────────────────────────
+// Clears the NavBoxLib MarkerLayer and repopulates it from the current
+// contacts, repeaters, live peers, and self position.
+// Called on every show() — NavBoxLib repositions dots automatically on
+// subsequent pan/zoom; name labels are repositioned via _repositionLabels().
+void ScreenMap::_refreshMarkers()
+{
+    MarkerLayer* ml = s_renderer.getMarkerLayer();
+    if (!ml) return;
+
+    // Remove existing markers and delete their name labels
+    for (int i = 0; i < s_markerCount; i++) {
+        ml->remove(s_markerIds[i]);
+        if (s_nameLabels[i].obj) {
+            lv_obj_del(s_nameLabels[i].obj);
+            s_nameLabels[i].obj = nullptr;
+        }
+    }
+    s_markerCount = 0;
+
+    auto addMark = [&](double lat, double lon, uint32_t col, const char* name)
     {
-        if (latI == 0 && lonI == 0) return false;
-        float mlat = (float)latI / 1000000.0f;
-        float mlng = (float)lonI / 1000000.0f;
-        float mtxF, mtyF;
-        ops::MapEngine::latLngToTileFrac(mlat, mlng, _zoom, mtxF, mtyF);
-        px = MAP_W / 2 + (int)((mtxF - txF) * (float)TILE_SZ);
-        py = MAP_H / 2 + (int)((mtyF - tyF) * (float)TILE_SZ);
-        return true;
+        if ((lat == 0.0 && lon == 0.0) || s_markerCount >= 64) return;
+        int idx = s_markerCount;
+        char lbl = (name && name[0]) ? name[0] : '?';
+        s_markerIds[idx] = ml->add(Marker(GeoPoint(lat, lon), 10, col, lbl));
+
+        // Name label — parented to _screen so it floats above tile layer
+        lv_obj_t* nlbl = lv_label_create(ScreenMap::_screen);
+        lv_label_set_text(nlbl, name ? name : "");
+        lv_obj_set_style_text_font(nlbl, &lv_font_montserrat_10, 0);
+        // Convert RGB24 colour to lv_color_t for the label
+        lv_obj_set_style_text_color(nlbl,
+            lv_color_make((col >> 16) & 0xFF, (col >> 8) & 0xFF, col & 0xFF), 0);
+        lv_obj_set_style_bg_opa(nlbl, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(nlbl, 0, 0);
+        lv_obj_set_style_pad_all(nlbl, 0, 0);
+        lv_label_set_long_mode(nlbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(nlbl, 80);
+        lv_group_remove_obj(nlbl);
+
+        s_nameLabels[idx] = { nlbl, lat, lon };
+        s_markerCount++;
     };
 
     // Saved repeaters → purple
-    for (int i = 0; i < ops::repeaters::count(); i++)
-    {
+    for (int i = 0; i < ops::repeaters::count(); i++) {
         ops::Repeater r;
         if (!ops::repeaters::get(i, r)) continue;
-        int px, py;
-        if (markerPx(r.lat, r.lon, px, py))
-            _drawMarker(_canvas, px, py, PURPLE, r.name);
+        addMark((double)r.lat / 1e6, (double)r.lon / 1e6, COL_REPEATER, r.name);
     }
 
     // Saved contacts → blue
-    for (int i = 0; i < ops::contacts::count(); i++)
-    {
+    for (int i = 0; i < ops::contacts::count(); i++) {
         ops::Contact c;
         if (!ops::contacts::get(i, c)) continue;
-        int px, py;
-        if (markerPx(c.lat, c.lon, px, py))
-            _drawMarker(_canvas, px, py, BLUE, c.name);
+        addMark((double)c.lat / 1e6, (double)c.lon / 1e6, COL_CONTACT, c.name);
     }
 
-    // Live peers not yet in the NVS stores (freshly heard this session)
+    // Live peers not yet persisted in NVS stores
     auto& svc = ops::MeshService::instance();
-    for (int i = 0; i < svc.peerCount(); i++)
-    {
+    for (int i = 0; i < svc.peerCount(); i++) {
         ops::PeerInfo p;
         if (!svc.getPeer(i, p)) continue;
         if (p.lat == 0 && p.lon == 0) continue;
-        // Skip if already plotted via NVS store
         int dummy;
         if (p.type == 2 && ops::repeaters::findByKey(p.pubKeyPrefix, &dummy)) continue;
         if (p.type != 2 && ops::contacts::findByKey(p.pubKeyPrefix, &dummy)) continue;
-        int px, py;
-        if (markerPx(p.lat, p.lon, px, py))
-            _drawMarker(_canvas, px, py, (p.type == 2) ? PURPLE : BLUE, p.name);
+        addMark((double)p.lat / 1e6, (double)p.lon / 1e6,
+                p.type == 2 ? COL_REPEATER : COL_CONTACT, p.name);
     }
 
-    // Self position → green dot with callsign
+    // Self position → green
     {
         auto& b = Board::instance();
-        float selfLat = 0.0f, selfLng = 0.0f;
-        if (b.hasGPSFix())
-        {
-            selfLat = b.gpsLat();
-            selfLng = b.gpsLng();
-        }
-        else
-        {
+        double slat = 0.0, slng = 0.0;
+        if (b.hasGPSFix()) { slat = b.gpsLat(); slng = b.gpsLng(); }
+        else {
             const auto& cfg = ops::config::get();
-            selfLat = cfg.manualLat;
-            selfLng = cfg.manualLon;
+            slat = cfg.manualLat; slng = cfg.manualLon;
         }
-        if (selfLat != 0.0f || selfLng != 0.0f)
-        {
-            int px, py;
-            if (markerPx((int32_t)(selfLat * 1000000.0f),
-                         (int32_t)(selfLng * 1000000.0f), px, py))
-                _drawMarker(_canvas, px, py, GREEN,
-                            ops::config::get().callsign);
-        }
+        addMark(slat, slng, COL_SELF, ops::config::get().callsign);
     }
-
-    lv_obj_invalidate(_canvas);
 }
 
 // ── _updateZoomLabel() ────────────────────────────────────────────────
-void ScreenMap::_updateZoomLabel()
-{
-    if (!_zoomLbl) return;
-    char buf[4];
-    snprintf(buf, sizeof(buf), "%d", _zoom);
-    lv_label_set_text(_zoomLbl, buf);
-}
+void ScreenMap::_updateZoomLabel() {}  // no standalone zoom label in this layout
 
-// ── Button callbacks ─────────────────────────────────────────────────
-void ScreenMap::_onHomeClick(lv_event_t*)
-{
-    ScreenLauncher::show();
-}
-
-void ScreenMap::_onExitClick(lv_event_t*)
-{
-    ScreenLauncher::show();
-}
+// ── Button & key callbacks ────────────────────────────────────────────
+void ScreenMap::_onHomeClick(lv_event_t*)  { ScreenLauncher::show(); }
+void ScreenMap::_onExitClick(lv_event_t*)  { ScreenLauncher::show(); }
 
 void ScreenMap::_onZoomIn(lv_event_t*)
 {
     if (_zoom >= ZOOM_MAX) return;
     _zoom++;
-    _updateZoomLabel();
-    _redrawMap();
+    s_renderer.setZoom(_zoom);
+    _repositionLabels();
 }
 
 void ScreenMap::_onZoomOut(lv_event_t*)
 {
     if (_zoom <= ZOOM_MIN) return;
     _zoom--;
-    _updateZoomLabel();
-    _redrawMap();
+    s_renderer.setZoom(_zoom);
+    _repositionLabels();
 }
 
 void ScreenMap::_onKey(lv_event_t* e)
 {
     uint32_t* key = (uint32_t*)lv_event_get_param(e);
-    if (key && (*key == LV_KEY_ESC))
-        ScreenLauncher::show();
+    if (key && (*key == LV_KEY_ESC)) ScreenLauncher::show();
 }
 
-void ScreenMap::_onTouch(lv_event_t* /*e*/)
+void ScreenMap::_onTouch(lv_event_t*)
 {
     lv_indev_t* indev = lv_indev_get_act();
     if (!indev) return;
     lv_point_t vect;
     lv_indev_get_vect(indev, &vect);
-    // Negate: dragging finger right moves the map right (center shifts west).
     if (vect.x != 0 || vect.y != 0)
         navigate(-vect.x, -vect.y);
 }
@@ -491,9 +386,8 @@ void ScreenMap::_onTouch(lv_event_t* /*e*/)
 // ── SD remount dialog ─────────────────────────────────────────────────
 void ScreenMap::_showMountDialog()
 {
-    if (_mountOverlay) return;  // already visible
+    if (_mountOverlay) return;
 
-    // Semi-transparent dim layer over the whole screen
     _mountOverlay = lv_obj_create(_screen);
     lv_obj_set_size(_mountOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
     lv_obj_set_pos(_mountOverlay, 0, 0);
@@ -503,10 +397,9 @@ void ScreenMap::_showMountDialog()
     lv_obj_set_style_pad_all(_mountOverlay, 0, 0);
     lv_obj_clear_flag(_mountOverlay, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Dialog box
     lv_obj_t* box = lv_obj_create(_mountOverlay);
     lv_obj_set_size(box, 230, LV_SIZE_CONTENT);
-    lv_obj_align(box, LV_ALIGN_CENTER, -ZOOM_W / 2, 0);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(box, theme::BORDER, 0);
     lv_obj_set_style_border_width(box, 1, 0);
@@ -518,10 +411,10 @@ void ScreenMap::_showMountDialog()
     lv_obj_set_flex_align(box,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t* title = lv_label_create(box);
-    lv_label_set_text(title, LV_SYMBOL_WARNING " No Map Tiles");
-    lv_obj_set_style_text_color(title, theme::TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_t* t = lv_label_create(box);
+    lv_label_set_text(t, LV_SYMBOL_WARNING " No Map Tiles");
+    lv_obj_set_style_text_color(t, theme::TEXT, 0);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
 
     lv_obj_t* body = lv_label_create(box);
     lv_label_set_text(body,
@@ -533,7 +426,6 @@ void ScreenMap::_showMountDialog()
     lv_obj_set_width(body, 206);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
 
-    // Button row
     lv_obj_t* row = lv_obj_create(box);
     lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -545,7 +437,7 @@ void ScreenMap::_showMountDialog()
     lv_obj_set_flex_align(row,
         LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    auto mkBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb) -> lv_obj_t*
+    auto mkBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb)
     {
         lv_obj_t* btn = lv_btn_create(row);
         lv_group_remove_obj(btn);
@@ -562,29 +454,25 @@ void ScreenMap::_showMountDialog()
         lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
         lv_obj_center(lbl);
-        return btn;
     };
-
-    mkBtn("Cancel",            theme::BG,      _onMountCancel);
+    mkBtn("Cancel",                    theme::BG,      _onMountCancel);
     mkBtn(LV_SYMBOL_REFRESH " Mount", theme::PRIMARY, _onMountClick);
 }
 
 void ScreenMap::_onMountClick(lv_event_t*)
 {
-    if (_mountOverlay)
-    {
-        lv_obj_del(_mountOverlay);
-        _mountOverlay = nullptr;
-    }
+    if (_mountOverlay) { lv_obj_del(_mountOverlay); _mountOverlay = nullptr; }
     OPS_LOG("Map", "Attempting SD remount");
-    ops::sdcard::init();   // re-runs SPI + SD.begin(); safe to call again
-    s_eng.init();           // re-checks /maps/osm existence
-    _redrawMap();           // shows dialog again if still not found
+    ops::sdcard::init();
+    if (_hasTiles()) {
+        s_renderer.setCenter(GeoPoint(_centerLat, _centerLng), _zoom);
+        s_renderer.invalidate();
+        _repositionLabels();
+    } else {
+        _showMountDialog();
+    }
 }
 
-void ScreenMap::_onMountCancel(lv_event_t*)
-{
-    ScreenLauncher::show();
-}
+void ScreenMap::_onMountCancel(lv_event_t*) { ScreenLauncher::show(); }
 
 }}  // namespace ops::ui

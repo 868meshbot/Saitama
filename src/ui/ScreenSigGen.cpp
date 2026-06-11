@@ -91,7 +91,7 @@ void ScreenSigGen::_refreshLabels()
     lv_label_set_text(_freqLbl, buf);
 
     // Params
-    snprintf(buf, sizeof(buf), "%s  ·  %+d dBm",
+    snprintf(buf, sizeof(buf), "%s  :  %+d dBm",
              s_loraMode ? "LoRa preamble" : "CW",
              (int)s_powerDbm);
     lv_label_set_text(_paramLbl, buf);
