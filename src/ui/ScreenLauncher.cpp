@@ -83,7 +83,7 @@ static const AppItem kApps[12] = {
     { LV_SYMBOL_IMAGE,     "Map"       },
     { LV_SYMBOL_UPLOAD,    "Advertise" },
     { LV_SYMBOL_SETTINGS,  "Settings"  },
-    { LV_SYMBOL_LIST,      "Trace"     },  // row 2
+    { LV_SYMBOL_LOOP,    "ChanScan"  },  // row 2
     { LV_SYMBOL_KEYBOARD,  "Terminal"  },
     { LV_SYMBOL_GPS,       "GPS"       },
     { LV_SYMBOL_WIFI,      "Signal"    },
@@ -93,7 +93,7 @@ static const AppItem kApps2[6] = {
     { LV_SYMBOL_PLAY,    "MP3"      },  // row 0
     { LV_SYMBOL_SD_CARD, "Files"    },
     { LV_SYMBOL_UP,      "Spectrum" },
-    { LV_SYMBOL_LOOP,    "ChanScan" },
+    { LV_SYMBOL_LIST,    "Trace"    },
     { LV_SYMBOL_TINT,    "SigGen"   },  // row 1, col 0
     { LV_SYMBOL_BATTERY_3, "Power"  },
 };
