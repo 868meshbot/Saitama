@@ -86,16 +86,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for firmware variant details.
 Map tiles go on a FAT32-formatted SD card:
 
 ```
-/ops/maps/{zoom}/{x}/{y}.png
+/maps/osm/{zoom}/{z}/{y}/{x}.png
 ```
 
-Example: `/ops/maps/10/529/340.png`
+Example: `/maps/osm/10/529/340.png`
 
 **Option 1 — included CLI script:**
 
 ```bash
 python3 scripts/download_tiles.py \
-    --output /Volumes/SD/ops/maps \
+    --output /Volumes/SD/maps/osm \
     --lat 51.5 --lng -0.1 --radius 20 --zoom 10-14
 ```
 
@@ -103,10 +103,10 @@ See `scripts/download_tiles.py --help` for full options. Respect the [OSM tile u
 
 **Option 2 — GUI tool ([map-tiles-downloader](https://github.com/tekk/map-tiles-downloader)):**
 
-A graphical downloader with a map preview. Draw a bounding box, pick zoom levels, and it exports tiles in the correct `{z}/{x}/{y}.png` layout.
+A graphical downloader with a map preview. Draw a bounding box, pick zoom levels, and it exports tiles in the correct `{z}/{y}/{x}.png` layout.
 
 ```
-Output path: /Volumes/SD/ops/maps
+Output path: /Volumes/SD/maps/osm
 ```
 
 ## Project Structure
