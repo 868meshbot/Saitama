@@ -1,6 +1,6 @@
 # CLAUDE.md — Claude Code guide for Saitama
 
-Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3, SX1262 LoRa, ST7789 320×240, BBQ10 keyboard, trackball, built-in GPS). It runs MeshCore as a git submodule and LVGL 8.3 for the UI.
+Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3, SX1262 LoRa, ST7789 320×240, BBQ10 keyboard, trackball, built-in GPS). It runs MeshCore as a git submodule and LVGL 9.5 for the UI.
 
 ---
 
@@ -9,8 +9,8 @@ Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3,
 - **Do not modify `src/hardware/Board.cpp`** — it is considered hardware-stable. All hardware workarounds go in the layer that calls into Board (e.g. UIScreen.cpp).
 - **Do not modify the GPS screen layout in `src/ui/ScreenPlaceholder.cpp`** — the skyplot design is intentional and signed off. Only touch it for build errors.
 - **Do not modify anything inside `lib/MeshCore/`** — it is a git submodule. Contribute upstream if changes are needed there.
-- **LVGL version is 8.3.4** — not LVGL 9. AGENTS.md incorrectly says LVGL 9; ignore that. Always use LVGL 8 APIs (`lv_disp_drv_t`, `lv_indev_drv_t`, `lv_disp_drv_register`, `lv_indev_drv_register`, etc.).
-- **LVGL config is `lib/lv_conf.h`** — there is also a root-level `lv_conf.h` that is NOT used by the build. Always edit `lib/lv_conf.h` to enable fonts or change LVGL settings.
+- **LVGL version is 9.5.0** — use LVGL 9 APIs. Key API changes from LVGL 8: `lv_display_create`/`lv_indev_create` (not `lv_disp_drv_t`); `lv_obj_send_event` (not `lv_event_send`); `lv_tick_set_cb(millis)` called after `lv_init()` (no `LV_TICK_CUSTOM`); canvas uses `lv_canvas_init_layer`/`lv_canvas_finish_layer`; `lv_color_t` is RGB888 (use `lv_color_to_u16()` for RGB565). See `src/ui/lv_alloc.cpp` for the custom PSRAM allocator.
+- **LVGL config is `lib/lv_conf.h`** — there is also a root-level `lv_conf.h` kept in sync with it. Always edit both when changing LVGL settings. The build picks up whichever the compiler finds first on the include path.
 
 ---
 
