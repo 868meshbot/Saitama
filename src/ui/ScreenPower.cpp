@@ -210,7 +210,7 @@ void ScreenPower::_build() {
   lv_chart_set_point_count(_chart, NUM_PTS);
   lv_chart_set_range(_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
   lv_chart_set_div_line_count(_chart, 4, 0);
-  lv_obj_set_style_size(_chart, 0, LV_PART_INDICATOR);  // no point dots
+  lv_obj_set_style_size(_chart, 0, 0, LV_PART_INDICATOR);  // no point dots
   lv_obj_set_style_line_width(_chart, 2, LV_PART_ITEMS);
 
   _battSer = lv_chart_add_series(_chart, theme::ACCENT, LV_CHART_AXIS_PRIMARY_Y);
