@@ -33,9 +33,7 @@
 #define LV_DEF_REFR_PERIOD  33      /* ~30 fps [ms] */
 #define LV_DPI_DEF          130
 
-#define LV_TICK_CUSTOM          1
-#define LV_TICK_CUSTOM_INCLUDE  <Arduino.h>
-#define LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())
+/* LV_TICK_CUSTOM removed in LVGL 9 — tick source set via lv_tick_set_cb() in UIScreen.cpp */
 
 /*=======================
    FEATURE CONFIGURATION

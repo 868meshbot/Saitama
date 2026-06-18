@@ -594,6 +594,8 @@ void init() {
     _applyGovFreq(0);  // start at active-screen frequency
 
     lv_init();
+    // LVGL 9 removed LV_TICK_CUSTOM; register the tick source explicitly.
+    lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
     ops::emoji::init();
 
     // Allocate double-buffered 20-line strips — DMA SRAM first, PSRAM fallback
