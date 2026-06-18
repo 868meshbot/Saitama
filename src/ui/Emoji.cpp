@@ -33,8 +33,8 @@ static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
 
     for (int i = 0; i < kOpsEmojiCount; i++) {
         if (kOpsEmoji[i].codepoint == unicode) {
-            if (len < sizeof(lv_img_dsc_t)) return false;
-            memcpy(imgSrc, kOpsEmoji[i].img, sizeof(lv_img_dsc_t));
+            if (len < sizeof(lv_image_dsc_t)) return false;
+            memcpy(imgSrc, kOpsEmoji[i].img, sizeof(lv_image_dsc_t));
             return true;
         }
     }
@@ -67,7 +67,7 @@ const lv_font_t* emojiFont(const lv_font_t* montserratBase)
     // Heap copy of the Montserrat struct so we can set its fallback in RAM.
     // The copied dsc/glyph pointers still reference flash — read-only access,
     // which is safe; we only write the struct's own fallback field.
-    lv_font_t* copy = (lv_font_t*)lv_mem_alloc(sizeof(lv_font_t));
+    lv_font_t* copy = (lv_font_t*)lv_malloc(sizeof(lv_font_t));
     if (!copy) return montserratBase;  // graceful degradation
     memcpy(copy, montserratBase, sizeof(lv_font_t));
     copy->fallback = s_emoji;

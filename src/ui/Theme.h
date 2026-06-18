@@ -32,7 +32,7 @@ static constexpr int THEME_COUNT = 12;
 void applyTheme(uint8_t choice);
 
 // ── Apply LVGL default theme to the display ─────────────────────────
-void apply(lv_disp_t* disp);
+void apply(lv_display_t* disp);
 
 // ── Font helpers ────────────────────────────────────────────────────
 // Return the appropriate body font for the current fontExtLatin setting.

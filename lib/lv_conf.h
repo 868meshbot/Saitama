@@ -15,25 +15,21 @@
 /*=========================
    STDLIB / MEMORY
  *=========================*/
-#define LV_STDLIB_INCLUDE <stdint.h>
-#define LV_STDINT_INCLUDE <stdint.h>
-#define LV_STDLIB_MALLOC       pvPortMalloc
-#define LV_STDLIB_REALLOC      vPortFree
-#define LV_STDLIB_FREE         vPortFree
-/* Override: use PSRAM for large allocations */
-#define LV_MEM_CUSTOM 1
-#define LV_MEM_CUSTOM_INCLUDE <Arduino.h>
-#define LV_MEM_CUSTOM_ALLOC   ps_malloc
-#define LV_MEM_CUSTOM_FREE    free
-#define LV_MEM_SIZE          (32U * 1024)  /* 32KB minimal pool, custom alloc handles the rest */
+/* Use a custom allocator so large buffers land in PSRAM */
+#define LV_MEM_CUSTOM          1
+#define LV_MEM_CUSTOM_INCLUDE  <Arduino.h>
+#define LV_MEM_CUSTOM_ALLOC    ps_malloc
+#define LV_MEM_CUSTOM_FREE     free
+#define LV_MEM_CUSTOM_REALLOC  ps_realloc
+#define LV_MEM_SIZE            (64U * 1024U)
 
 /*=====================
    HAL SETTINGS
  *=====================*/
-#define LV_DISP_DEF_REFR_PERIOD  33    /* 30fps */
+#define LV_DEF_REFR_PERIOD      33   /* ~30 fps */
 #define LV_INDEV_DEF_READ_PERIOD 30
-#define LV_TICK_CUSTOM 1
-#define LV_TICK_CUSTOM_INCLUDE <Arduino.h>
+#define LV_TICK_CUSTOM          1
+#define LV_TICK_CUSTOM_INCLUDE  <Arduino.h>
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())
 
 /*=======================
@@ -42,32 +38,38 @@
 #define LV_USE_LOG 0
 
 /* Widgets */
-#define LV_USE_ANIMIMG    1
-#define LV_USE_ARC       1
-#define LV_USE_BAR       1
-#define LV_USE_BTN       1
-#define LV_USE_BTNMATRIX 1
-#define LV_USE_CANVAS    1
-#define LV_USE_CHECKBOX  1
-#define LV_USE_DROPDOWN  1
-#define LV_USE_IMG       1
-#define LV_USE_LABEL     1
-#define LV_USE_LINE      1
-#define LV_USE_LIST      1
-#define LV_USE_MENU      0
-#define LV_USE_MSGBOX    1
-#define LV_USE_ROLLER    1
-#define LV_USE_SCALE     0
-#define LV_USE_SLIDER    1
-#define LV_USE_SPAN      0
-#define LV_USE_SPINBOX   0
-#define LV_USE_SPINNER   1
-#define LV_USE_SWITCH    1
-#define LV_USE_TABVIEW   1
-#define LV_USE_TABLE     0
-#define LV_USE_TEXTAREA  1
-#define LV_USE_TILEVIEW  0
-#define LV_USE_WIN       0
+#define LV_USE_ANIMIMAGE  1
+#define LV_USE_ARC        1
+#define LV_USE_BAR        1
+#define LV_USE_BUTTON     1
+#define LV_USE_BUTTONMATRIX 1
+#define LV_USE_CANVAS     1
+#define LV_USE_CHECKBOX   1
+#define LV_USE_DROPDOWN   1
+#define LV_USE_IMAGE      1
+#define LV_USE_LABEL      1
+#define LV_USE_LINE       1
+#define LV_USE_LIST       1
+#define LV_USE_MENU       0
+#define LV_USE_MSGBOX     1
+#define LV_USE_ROLLER     1
+#define LV_USE_SCALE      0
+#define LV_USE_SLIDER     1
+#define LV_USE_SPAN       0
+#define LV_USE_SPINBOX    0
+#define LV_USE_SPINNER    1
+#define LV_USE_SWITCH     1
+#define LV_USE_TABVIEW    1
+#define LV_USE_TABLE      0
+#define LV_USE_TEXTAREA   1
+#define LV_USE_TILEVIEW   0
+#define LV_USE_WIN        0
+
+/* Backward-compat aliases (some third-party code still uses LVGL 8 names) */
+#define LV_USE_BTN        LV_USE_BUTTON
+#define LV_USE_BTNMATRIX  LV_USE_BUTTONMATRIX
+#define LV_USE_IMG        LV_USE_IMAGE
+#define LV_USE_ANIMIMG    LV_USE_ANIMIMAGE
 
 /* Themes */
 #define LV_USE_THEME_DEFAULT 1
@@ -81,37 +83,35 @@
 #define LV_FONT_MONTSERRAT_36 1
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
-/* Enable RLE-compressed glyph bitmaps — the Extended-Latin fonts
- * (font_montserrat_*_ext.c) are generated with bitmap_format = 1 (compressed);
- * without this they render blank. Built-in Montserrat is uncompressed. */
+/* Enable RLE-compressed glyph bitmaps for the extended-Latin font variants */
 #define LV_USE_FONT_COMPRESSED 1
 
 /* Image decoders */
 #define LV_USE_PNG 1
 
-/* Disable platform-specific draw backends (not available on ESP32-S3) */
-#define LV_USE_DRAW_ARM2D 0
-#define LV_USE_DRAW_HELIUM 0
+/* Disable platform-specific draw backends not available on ESP32-S3 */
+#define LV_USE_DRAW_ARM2D    0
+#define LV_USE_DRAW_HELIUM   0
 #define LV_USE_DRAW_NEMA_GFX 0
-#define LV_USE_DRAW_SDL 0
-#define LV_USE_DRAW_VGLITE 0
-#define LV_USE_DRAW_PXP 0
-#define LV_USE_DRAW_DAVE2D 0
-#define LV_USE_DRAW_EVE 0
-#define LV_USE_DRAW_NANOVG 0
+#define LV_USE_DRAW_SDL      0
+#define LV_USE_DRAW_VGLITE   0
+#define LV_USE_DRAW_PXP      0
+#define LV_USE_DRAW_DAVE2D   0
+#define LV_USE_DRAW_EVE      0
+#define LV_USE_DRAW_NANOVG   0
 #define LV_USE_DRAW_OPENGLES 0
-#define LV_USE_DRAW_DMA2D 0
+#define LV_USE_DRAW_DMA2D    0
 
 /* Input devices */
 #define LV_USE_GROUP 1
 
-/* Show a thin box for glyphs not present in any font in the fallback chain. */
+/* Show a thin box for glyphs not in any font in the fallback chain */
 #define LV_USE_FONT_PLACEHOLDER 1
 
-/* Image-font: maps Unicode codepoints to small lv_img_dsc_t bitmaps (used for emoji). */
+/* Image-font: maps Unicode codepoints to lv_image_dsc_t bitmaps (emoji) */
 #define LV_USE_IMGFONT 1
 
-/* Screenshot: render active screen to an off-screen buffer (used by /screenshot command). */
+/* Screenshot: render active screen to an off-screen buffer */
 #define LV_USE_SNAPSHOT 1
 
 #endif /* LV_CONF_H */

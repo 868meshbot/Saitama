@@ -185,25 +185,36 @@ void ScreenSpectrum::_redrawCanvas()
     for (int ty = WF_H; ty < CANVAS_H; ty++)
         _canvasBuf[ty * CANVAS_W + SPEC_W - 1] = kDiv;
 
-    // ── Scale labels (drawn on top of canvas buffer) ───────────────────────────
-    lv_draw_label_dsc_t ldsc;
-    lv_draw_label_dsc_init(&ldsc);
-    ldsc.font  = &lv_font_montserrat_10;
+    // ── Scale labels (drawn on top of canvas buffer via LVGL 9 layer API) ────────
+    int traceTop    = WF_H;
+    int traceBottom = CANVAS_H - 1;
 
-    // Waterfall labels: "-50" near top, "-140" near bottom
-    ldsc.color = lv_color_make(220, 220, 220);
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, 2,            SCALE_W - 2, &ldsc, "-50");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, WF_H - 13,   SCALE_W - 2, &ldsc, "-140");
+    {
+        lv_layer_t layer;
+        lv_canvas_init_layer(_canvas, &layer);
 
-    // Trace dBm ticks: at -50 (top), three grid lines, -140 (bottom)
-    ldsc.color = lv_color_make(140, 140, 140);
-    int traceTop    = WF_H;            // canvas Y for RSSI_MAX (-50 dBm)
-    int traceBottom = CANVAS_H - 1;    // canvas Y for RSSI_MIN (-140 dBm)
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceTop,         SCALE_W - 2, &ldsc, "-50");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[0] - 5,     SCALE_W - 2, &ldsc, "-80");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[1] - 5,     SCALE_W - 2, &ldsc, "-100");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[2] - 5,     SCALE_W - 2, &ldsc, "-120");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceBottom - 12, SCALE_W - 2, &ldsc, "-140");
+        lv_draw_label_dsc_t ldsc;
+        lv_draw_label_dsc_init(&ldsc);
+        ldsc.font = &lv_font_montserrat_10;
+
+        struct { int x, y; const char* text; lv_color_t color; } labels[] = {
+            { SPEC_W + 1, 2,               "-50",  lv_color_make(220, 220, 220) },
+            { SPEC_W + 1, WF_H - 13,       "-140", lv_color_make(220, 220, 220) },
+            { SPEC_W + 1, traceTop,         "-50",  lv_color_make(140, 140, 140) },
+            { SPEC_W + 1, gridY[0] - 5,    "-80",  lv_color_make(140, 140, 140) },
+            { SPEC_W + 1, gridY[1] - 5,    "-100", lv_color_make(140, 140, 140) },
+            { SPEC_W + 1, gridY[2] - 5,    "-120", lv_color_make(140, 140, 140) },
+            { SPEC_W + 1, traceBottom - 12,"-140", lv_color_make(140, 140, 140) },
+        };
+        for (auto& lb : labels) {
+            ldsc.color = lb.color;
+            ldsc.text  = lb.text;
+            lv_area_t a = { lb.x, lb.y, lb.x + SCALE_W - 2, lb.y + 14 };
+            lv_draw_label(&layer, &ldsc, &a);
+        }
+
+        lv_canvas_finish_layer(_canvas, &layer);
+    }
 
     // ── Mesh channel vertical marker (drawn last so it sits on top) ───────────
     {
@@ -381,7 +392,7 @@ void ScreenSpectrum::_buildScreen()
     memset(_canvasBuf, 0, (size_t)CANVAS_W * CANVAS_H * sizeof(lv_color_t));
 
     _canvas = lv_canvas_create(_screen);
-    lv_canvas_set_buffer(_canvas, _canvasBuf, CANVAS_W, CANVAS_H, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_set_buffer(_canvas, _canvasBuf, CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_NATIVE);
     lv_obj_set_pos(_canvas, 0, TOP_H);
     lv_group_remove_obj(_canvas);
 

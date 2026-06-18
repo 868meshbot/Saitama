@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Generate LVGL C image arrays for a curated emoji set from jdecked/twemoji 16.0.1
+Generate LVGL 9 C image arrays for a curated emoji set from jdecked/twemoji 16.0.1
 (community-maintained fork of Twitter Twemoji; Unicode Emoji 16.0).
 
 Output: one .c file per emoji + emoji_data.h in src/ui/emoji/
-Format: LV_IMG_CF_TRUE_COLOR_ALPHA  →  [RGB565_lo, RGB565_hi, alpha] per pixel
+Format: LV_COLOR_FORMAT_RGB565A8  →  [all RGB565 bytes][all alpha bytes]
+        (separate planes, 3 bytes per pixel total, stride = w * 2)
 
 Run from the project root:  python3 scripts/gen_emoji.py
 """
@@ -212,18 +213,21 @@ def rgb_to_rgb565_le(r, g, b):
 
 
 def fetch_and_convert(cdn_name):
+    """Download, resize, and convert to LVGL 9 RGB565A8 (separate planes)."""
     url = CDN.format(cdn_name)
     with urllib.request.urlopen(url, timeout=10) as resp:
         data = resp.read()
     img = Image.open(io.BytesIO(data)).convert("RGBA")
     img = img.resize((SIZE, SIZE), Image.LANCZOS)
-    pixels = []
+    rgb_plane = []
+    alpha_plane = []
     for py in range(SIZE):
         for px in range(SIZE):
             r, g, b, a = img.getpixel((px, py))
             lo, hi = rgb_to_rgb565_le(r, g, b)
-            pixels.extend([lo, hi, a])
-    return pixels
+            rgb_plane.extend([lo, hi])
+            alpha_plane.append(a)
+    return rgb_plane + alpha_plane   # LVGL 9 RGB565A8: RGB then alpha
 
 
 def write_c_file(sym, codepoint, pixels):
@@ -248,13 +252,14 @@ static const uint8_t {name}_map[] = {{
 {hex_block}
 }};
 
-const lv_img_dsc_t {name} = {{
+const lv_image_dsc_t {name} = {{
     .header = {{
-        .cf          = LV_IMG_CF_TRUE_COLOR_ALPHA,
-        .always_zero = 0,
-        .reserved    = 0,
-        .w           = {SIZE},
-        .h           = {SIZE},
+        .magic  = LV_IMAGE_HEADER_MAGIC,
+        .cf     = LV_COLOR_FORMAT_RGB565A8,
+        .flags  = 0,
+        .w      = {SIZE},
+        .h      = {SIZE},
+        .stride = {SIZE * 2},
     }},
     .data_size = {n},
     .data      = {name}_map,
@@ -268,7 +273,7 @@ const lv_img_dsc_t {name} = {{
 def write_header():
     path = os.path.join(OUT_DIR, "emoji_data.h")
     decls = "\n".join(
-        f"extern const lv_img_dsc_t emoji_{sym};"
+        f"extern const lv_image_dsc_t emoji_{sym};"
         for sym, _, _, _ in EMOJI
     )
     entries = "\n".join(
@@ -294,7 +299,7 @@ extern "C" {{
 #endif
 
 // Lookup table used by Emoji.cpp and ScreenHome.cpp
-typedef struct {{ uint32_t codepoint; const lv_img_dsc_t* img; const char* name; }} OpsEmojiEntry;
+typedef struct {{ uint32_t codepoint; const lv_image_dsc_t* img; const char* name; }} OpsEmojiEntry;
 static const OpsEmojiEntry kOpsEmoji[] = {{
 {entries}
 }};

@@ -77,7 +77,7 @@ void showQrPopup(const char* title, const char* data)
 
     // QR canvas
     lv_obj_t* canvas = lv_canvas_create(panel);
-    lv_canvas_set_buffer(canvas, s_qrBuf, QR_PX, QR_PX, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_set_buffer(canvas, s_qrBuf, QR_PX, QR_PX, LV_COLOR_FORMAT_NATIVE);
     lv_canvas_fill_bg(canvas, lv_color_white(), LV_OPA_COVER);
 
     lv_draw_rect_dsc_t rdsc;
@@ -86,12 +86,23 @@ void showQrPopup(const char* title, const char* data)
     rdsc.bg_opa   = LV_OPA_COVER;
     rdsc.radius   = 0;
 
-    for (uint8_t y = 0; y < qr.size; y++) {
-        for (uint8_t x = 0; x < qr.size; x++) {
-            if (qrcode_getModule(&qr, x, y))
-                lv_canvas_draw_rect(canvas, x * QR_SCALE, y * QR_SCALE,
-                                    QR_SCALE, QR_SCALE, &rdsc);
+    {
+        lv_layer_t layer;
+        lv_canvas_init_layer(canvas, &layer);
+        for (uint8_t y = 0; y < qr.size; y++) {
+            for (uint8_t x = 0; x < qr.size; x++) {
+                if (qrcode_getModule(&qr, x, y)) {
+                    lv_area_t a = {
+                        (lv_coord_t)(x * QR_SCALE),
+                        (lv_coord_t)(y * QR_SCALE),
+                        (lv_coord_t)(x * QR_SCALE + QR_SCALE - 1),
+                        (lv_coord_t)(y * QR_SCALE + QR_SCALE - 1)
+                    };
+                    lv_draw_rect(&layer, &rdsc, &a);
+                }
+            }
         }
+        lv_canvas_finish_layer(canvas, &layer);
     }
 
     // Close button

@@ -186,7 +186,7 @@ void applyTheme(uint8_t choice)
 }
 
 // ── apply() ──────────────────────────────────────────────────────────
-void apply(lv_disp_t* disp)
+void apply(lv_display_t* disp)
 {
     lv_theme_t* th = lv_theme_default_init(
         disp,

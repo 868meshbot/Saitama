@@ -1,7 +1,7 @@
 // Saitama — UIScreen.cpp
 // Copyright 2026 Saitama — GPL-3.0-or-later
 //
-// Initialises LVGL 8, the TFT_eSPI display driver, and manages the
+// Initialises LVGL 9, the TFT_eSPI display driver, and manages the
 // top-level screen lifecycle:  Boot → Launcher → (app screens).
 
 #include "UIScreen.h"
@@ -77,11 +77,8 @@ static void _applyGovFreq(uint8_t state)
 
 static TFT_eSPI tft = TFT_eSPI();
 
-// LVGL 8 display driver — double-buffered 20-line strips in DMA-capable SRAM.
-// Same approach as RatDeck (working T-Deck Plus reference).
-static lv_disp_draw_buf_t s_draw_buf;
-static lv_disp_drv_t      s_disp_drv;
-static lv_disp_t*         s_disp    = nullptr;
+// LVGL 9 display — double-buffered 10-line strips in DMA-capable SRAM.
+static lv_display_t*      s_disp    = nullptr;
 static lv_color_t*        s_buf1    = nullptr;
 static lv_color_t*        s_buf2    = nullptr;
 
@@ -89,8 +86,7 @@ static lv_color_t*        s_buf2    = nullptr;
 // Reduced from 40 lines to free ~38 KB of internal DRAM for the Bluedroid stack.
 static constexpr uint32_t BUF_PIXELS = OPS_SCREEN_W * 10;
 
-// LVGL 8 indev driver (trackball → encoder for non-launcher screens)
-static lv_indev_drv_t s_indev_drv;
+// LVGL 9 indev (trackball → encoder for non-launcher screens)
 static lv_indev_t*    s_indev = nullptr;
 
 static int16_t enc_diff = 0;
@@ -126,8 +122,7 @@ static lv_coord_t s_calRawPy       = 0;
 static bool       s_calPrevPressed = false;
 static uint32_t   s_calDismissAt   = 0;
 
-// LVGL 8 touch indev (GT911 capacitive)
-static lv_indev_drv_t s_touch_drv;
+// LVGL 9 touch indev (GT911 capacitive)
 static lv_indev_t*    s_touch    = nullptr;
 static uint8_t        s_gt911    = 0x5D;  // resolved by gt911_probe() at init
 static bool           s_touchOk  = false;
@@ -156,7 +151,7 @@ static void gt911_probe() {
     OPS_LOG("Touch", "GT911 not found on I2C — touch disabled");
 }
 
-static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
+static void touch_read(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     static lv_coord_t last_x = 0, last_y = 0;
 
     if (!s_touchOk) {
@@ -242,20 +237,20 @@ static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     s_lastActivityMs = millis();
 }
 
-// LVGL 8 flush callback
-static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
+// LVGL 9 flush callback — color_p is raw pixel bytes (RGB565 for LV_COLOR_DEPTH=16)
+static void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* color_p) {
     uint32_t w = area->x2 - area->x1 + 1;
     uint32_t h = area->y2 - area->y1 + 1;
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
     tft.pushPixels((uint16_t*)color_p, w * h);
     tft.endWrite();
-    lv_disp_flush_ready(drv);
+    lv_display_flush_ready(disp);
 }
 
-// LVGL 8 encoder read callback — only reports rotation; press is dispatched directly
+// LVGL 9 encoder read callback — only reports rotation; press is dispatched directly
 // so LVGL never enters textarea edit mode (which would trap trackball navigation).
-static void encoder_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
+static void encoder_read(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     data->enc_diff = enc_diff;
     data->state    = LV_INDEV_STATE_RELEASED;
     enc_diff = 0;
@@ -343,13 +338,23 @@ static void _drawAnalogClock()
     if (!s_ssCanvas || !s_ssCanvasBuf) return;
     lv_canvas_fill_bg(s_ssCanvas, lv_color_black(), LV_OPA_COVER);
 
+    lv_layer_t layer;
+    lv_canvas_init_layer(s_ssCanvas, &layer);
+
+    // Clock face ring
     lv_draw_arc_dsc_t arc;
     lv_draw_arc_dsc_init(&arc);
-    arc.color = lv_color_white();
-    arc.width = 2;
-    arc.opa   = LV_OPA_COVER;
-    lv_canvas_draw_arc(s_ssCanvas, SS_CLOCK_CX, SS_CLOCK_CY, SS_CLOCK_R, 0, 360, &arc);
+    arc.color       = lv_color_white();
+    arc.width       = 2;
+    arc.opa         = LV_OPA_COVER;
+    arc.center.x    = SS_CLOCK_CX;
+    arc.center.y    = SS_CLOCK_CY;
+    arc.radius      = SS_CLOCK_R;
+    arc.start_angle = 0;
+    arc.end_angle   = 360;
+    lv_draw_arc(&layer, &arc);
 
+    // Hour tick marks
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
     line.color = lv_color_white();
@@ -358,12 +363,12 @@ static void _drawAnalogClock()
         float ang  = i * (float)(2.0 * M_PI / 12.0);
         float outr = (float)(SS_CLOCK_R - 2);
         float inr  = (float)(SS_CLOCK_R - (i % 3 == 0 ? 10 : 6));
-        lv_point_t pts[2] = {
-            { (lv_coord_t)(SS_CLOCK_CX + outr * sinf(ang)), (lv_coord_t)(SS_CLOCK_CY - outr * cosf(ang)) },
-            { (lv_coord_t)(SS_CLOCK_CX + inr  * sinf(ang)), (lv_coord_t)(SS_CLOCK_CY - inr  * cosf(ang)) }
-        };
+        line.p1.x  = (lv_coord_t)(SS_CLOCK_CX + outr * sinf(ang));
+        line.p1.y  = (lv_coord_t)(SS_CLOCK_CY - outr * cosf(ang));
+        line.p2.x  = (lv_coord_t)(SS_CLOCK_CX + inr  * sinf(ang));
+        line.p2.y  = (lv_coord_t)(SS_CLOCK_CY - inr  * cosf(ang));
         line.width = (i % 3 == 0) ? 2 : 1;
-        lv_canvas_draw_line(s_ssCanvas, pts, 2, &line);
+        lv_draw_line(&layer, &line);
     }
 
     time_t t = ops::config::localEpoch();
@@ -372,29 +377,35 @@ static void _drawAnalogClock()
     float h_ang = ((lt.tm_hour % 12) * 60 + lt.tm_min) * (float)(2.0 * M_PI / 720.0);
     float m_ang = lt.tm_min * (float)(2.0 * M_PI / 60.0);
 
-    float hr = SS_CLOCK_R * 0.55f;
+    // Hour hand
+    float hr   = SS_CLOCK_R * 0.55f;
     line.width = 3;
-    lv_point_t hpts[2] = {
-        { SS_CLOCK_CX, SS_CLOCK_CY },
-        { (lv_coord_t)(SS_CLOCK_CX + hr * sinf(h_ang)), (lv_coord_t)(SS_CLOCK_CY - hr * cosf(h_ang)) }
-    };
-    lv_canvas_draw_line(s_ssCanvas, hpts, 2, &line);
+    line.p1.x  = SS_CLOCK_CX;
+    line.p1.y  = SS_CLOCK_CY;
+    line.p2.x  = (lv_coord_t)(SS_CLOCK_CX + hr * sinf(h_ang));
+    line.p2.y  = (lv_coord_t)(SS_CLOCK_CY - hr * cosf(h_ang));
+    lv_draw_line(&layer, &line);
 
-    float mr = SS_CLOCK_R * 0.80f;
+    // Minute hand
+    float mr   = SS_CLOCK_R * 0.80f;
     line.width = 2;
-    lv_point_t mpts[2] = {
-        { SS_CLOCK_CX, SS_CLOCK_CY },
-        { (lv_coord_t)(SS_CLOCK_CX + mr * sinf(m_ang)), (lv_coord_t)(SS_CLOCK_CY - mr * cosf(m_ang)) }
-    };
-    lv_canvas_draw_line(s_ssCanvas, mpts, 2, &line);
+    line.p1.x  = SS_CLOCK_CX;
+    line.p1.y  = SS_CLOCK_CY;
+    line.p2.x  = (lv_coord_t)(SS_CLOCK_CX + mr * sinf(m_ang));
+    line.p2.y  = (lv_coord_t)(SS_CLOCK_CY - mr * cosf(m_ang));
+    lv_draw_line(&layer, &line);
 
+    // Center dot
     lv_draw_rect_dsc_t dot;
     lv_draw_rect_dsc_init(&dot);
     dot.bg_color     = lv_color_white();
     dot.bg_opa       = LV_OPA_COVER;
     dot.radius       = LV_RADIUS_CIRCLE;
     dot.border_width = 0;
-    lv_canvas_draw_rect(s_ssCanvas, SS_CLOCK_CX - 3, SS_CLOCK_CY - 3, 6, 6, &dot);
+    lv_area_t dot_area = { SS_CLOCK_CX - 3, SS_CLOCK_CY - 3, SS_CLOCK_CX + 3, SS_CLOCK_CY + 3 };
+    lv_draw_rect(&layer, &dot, &dot_area);
+
+    lv_canvas_finish_layer(s_ssCanvas, &layer);
 }
 
 static void _updateSsTime()
@@ -445,7 +456,7 @@ static void _activateScreensaver(bool analog = false)
         s_ssCanvasBuf = ps_malloc((size_t)SS_CANVAS_W * SS_CANVAS_H * sizeof(lv_color_t));
         s_ssCanvas    = lv_canvas_create(s_screensaverScreen);
         lv_canvas_set_buffer(s_ssCanvas, s_ssCanvasBuf,
-                             SS_CANVAS_W, SS_CANVAS_H, LV_IMG_CF_TRUE_COLOR);
+                             SS_CANVAS_W, SS_CANVAS_H, LV_COLOR_FORMAT_NATIVE);
         lv_obj_align(s_ssCanvas, LV_ALIGN_TOP_MID, 0, 15);
         _drawAnalogClock();
 
@@ -598,27 +609,22 @@ void init() {
         return;
     }
 
-    // Register LVGL 8 display driver
-    lv_disp_draw_buf_init(&s_draw_buf, s_buf1, s_buf2, BUF_PIXELS);
+    // Register LVGL 9 display
+    s_disp = lv_display_create(OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_display_set_flush_cb(s_disp, flush_cb);
+    lv_display_set_buffers(s_disp, s_buf1, s_buf2,
+                           BUF_PIXELS * sizeof(lv_color_t),
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-    lv_disp_drv_init(&s_disp_drv);
-    s_disp_drv.hor_res  = OPS_SCREEN_W;
-    s_disp_drv.ver_res  = OPS_SCREEN_H;
-    s_disp_drv.flush_cb = flush_cb;
-    s_disp_drv.draw_buf = &s_draw_buf;
-    s_disp = lv_disp_drv_register(&s_disp_drv);
+    // Register LVGL 9 encoder indev (trackball)
+    s_indev = lv_indev_create();
+    lv_indev_set_type(s_indev, LV_INDEV_TYPE_ENCODER);
+    lv_indev_set_read_cb(s_indev, encoder_read);
 
-    // Register LVGL 8 encoder indev (trackball)
-    lv_indev_drv_init(&s_indev_drv);
-    s_indev_drv.type    = LV_INDEV_TYPE_ENCODER;
-    s_indev_drv.read_cb = encoder_read;
-    s_indev = lv_indev_drv_register(&s_indev_drv);
-
-    // Register GT911 touch indev
-    lv_indev_drv_init(&s_touch_drv);
-    s_touch_drv.type    = LV_INDEV_TYPE_POINTER;
-    s_touch_drv.read_cb = touch_read;
-    s_touch = lv_indev_drv_register(&s_touch_drv);
+    // Register LVGL 9 touch indev (GT911)
+    s_touch = lv_indev_create();
+    lv_indev_set_type(s_touch, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(s_touch, touch_read);
 
     lv_group_t* g = lv_group_create();
     lv_group_set_default(g);   // screens use lv_group_get_default() to add widgets
@@ -1075,15 +1081,15 @@ bool takeScreenshot(const char* path)
     constexpr int W = OPS_SCREEN_W;  // 320
     constexpr int H = OPS_SCREEN_H;  // 240
 
-    // Render current screen into an off-screen LVGL buffer.
-    const size_t snapBytes = (size_t)W * H * sizeof(lv_color_t);
-    lv_color_t* snapBuf = (lv_color_t*)ps_malloc(snapBytes);
+    // Render current screen into an off-screen LVGL buffer (RGB565, 2 bytes/px).
+    const size_t snapBytes = (size_t)W * H * sizeof(uint16_t);
+    uint8_t* snapBuf = (uint8_t*)ps_malloc(snapBytes);
     if (!snapBuf) { OPS_LOG("Screenshot", "ps_malloc snap failed"); return false; }
 
-    lv_img_dsc_t dsc{};
-    lv_res_t res = lv_snapshot_take_to_buf(lv_scr_act(), LV_IMG_CF_TRUE_COLOR,
-                                            &dsc, snapBuf, snapBytes);
-    if (res != LV_RES_OK) {
+    lv_image_dsc_t dsc{};
+    lv_result_t res = lv_snapshot_take_to_buf(lv_scr_act(), LV_COLOR_FORMAT_NATIVE,
+                                               &dsc, snapBuf, snapBytes);
+    if (res != LV_RESULT_OK) {
         OPS_LOG("Screenshot", "snapshot failed");
         free(snapBuf);
         return false;
@@ -1094,11 +1100,15 @@ bool takeScreenshot(const char* path)
     uint8_t* rgb = (uint8_t*)ps_malloc(rgbBytes);
     if (!rgb) { OPS_LOG("Screenshot", "ps_malloc rgb failed"); free(snapBuf); return false; }
 
+    const uint16_t* px16 = (const uint16_t*)snapBuf;
     for (int i = 0; i < W * H; i++) {
-        const lv_color_t c = snapBuf[i];
-        rgb[i * 3 + 0] = (uint8_t)((c.ch.red   << 3) | (c.ch.red   >> 2));
-        rgb[i * 3 + 1] = (uint8_t)((c.ch.green << 2) | (c.ch.green >> 4));
-        rgb[i * 3 + 2] = (uint8_t)((c.ch.blue  << 3) | (c.ch.blue  >> 2));
+        uint16_t c = px16[i];
+        uint8_t r = (c >> 11) & 0x1F;
+        uint8_t g = (c >> 5)  & 0x3F;
+        uint8_t b =  c        & 0x1F;
+        rgb[i * 3 + 0] = (uint8_t)((r << 3) | (r >> 2));
+        rgb[i * 3 + 1] = (uint8_t)((g << 2) | (g >> 4));
+        rgb[i * 3 + 2] = (uint8_t)((b << 3) | (b >> 2));
     }
     free(snapBuf);
 
