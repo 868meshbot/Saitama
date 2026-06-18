@@ -72,7 +72,7 @@ static const uint8_t emoji_cat_heart_map[] = {
     0x49, 0xA0, 0xDE, 0xFD, 0xFD, 0xDE, 0xA1, 0x4A, 0x00, 0x00, 0x03, 0x00
 };
 
-const lv_image_dsc_t emoji_cat_heart = {
+const lv_img_dsc_t emoji_cat_heart = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

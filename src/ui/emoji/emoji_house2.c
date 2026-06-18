@@ -72,7 +72,7 @@ static const uint8_t emoji_house2_map[] = {
     0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x97, 0x98, 0x8C
 };
 
-const lv_image_dsc_t emoji_house2 = {
+const lv_img_dsc_t emoji_house2 = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

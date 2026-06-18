@@ -72,7 +72,7 @@ static const uint8_t emoji_yawn_map[] = {
     0xFC, 0xE8, 0x73, 0x26, 0x28, 0x12, 0x00, 0x00, 0x02, 0x01, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_yawn = {
+const lv_img_dsc_t emoji_yawn = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

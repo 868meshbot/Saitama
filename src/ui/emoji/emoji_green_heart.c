@@ -72,7 +72,7 @@ static const uint8_t emoji_green_heart_map[] = {
     0x02, 0x00, 0x00, 0x12, 0x12, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_green_heart = {
+const lv_img_dsc_t emoji_green_heart = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

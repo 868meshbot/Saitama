@@ -72,7 +72,7 @@ static const uint8_t emoji_dog_map[] = {
     0xAE, 0xAE, 0xD0, 0xCF, 0x07, 0x01, 0x00, 0x82, 0xBB, 0x37, 0xD9, 0x90
 };
 
-const lv_image_dsc_t emoji_dog = {
+const lv_img_dsc_t emoji_dog = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

@@ -72,7 +72,7 @@ static const uint8_t emoji_wave_map[] = {
     0x2E, 0x27, 0x0C, 0x83, 0xD3, 0xE9, 0xDD, 0x9C, 0x26, 0x00, 0x03, 0x00
 };
 
-const lv_image_dsc_t emoji_wave = {
+const lv_img_dsc_t emoji_wave = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

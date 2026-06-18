@@ -72,7 +72,7 @@ static const uint8_t emoji_sneeze_map[] = {
     0xCA, 0xCD, 0xE5, 0xFF, 0xFE, 0xE7, 0xAB, 0x46, 0x00, 0x00, 0x01, 0x00
 };
 
-const lv_image_dsc_t emoji_sneeze = {
+const lv_img_dsc_t emoji_sneeze = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

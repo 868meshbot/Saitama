@@ -72,7 +72,7 @@ static const uint8_t emoji_thunder_rain_map[] = {
     0x03, 0x10, 0xA5, 0x19, 0x00, 0x02, 0xBC, 0xEA, 0x0B, 0x00, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_thunder_rain = {
+const lv_img_dsc_t emoji_thunder_rain = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

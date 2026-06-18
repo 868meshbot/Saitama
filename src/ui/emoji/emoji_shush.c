@@ -72,7 +72,7 @@ static const uint8_t emoji_shush_map[] = {
     0x00, 0x00, 0xC7, 0xFF, 0xFE, 0xD2, 0x0D, 0x00, 0x03, 0x01, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_shush = {
+const lv_img_dsc_t emoji_shush = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

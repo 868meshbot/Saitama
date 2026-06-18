@@ -72,7 +72,7 @@ static const uint8_t emoji_scream_map[] = {
     0x38, 0xAC, 0xE5, 0xFE, 0xFE, 0xE5, 0xAB, 0x38, 0x53, 0xFF, 0xFF, 0x98
 };
 
-const lv_image_dsc_t emoji_scream = {
+const lv_img_dsc_t emoji_scream = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

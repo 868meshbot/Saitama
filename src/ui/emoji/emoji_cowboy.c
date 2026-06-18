@@ -72,7 +72,7 @@ static const uint8_t emoji_cowboy_map[] = {
     0x21, 0x96, 0xE1, 0xFE, 0xFE, 0xE1, 0x96, 0x21, 0x00, 0x03, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_cowboy = {
+const lv_img_dsc_t emoji_cowboy = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

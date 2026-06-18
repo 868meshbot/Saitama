@@ -72,7 +72,7 @@ static const uint8_t emoji_moto_map[] = {
     0x85, 0x00, 0x03, 0x02, 0x02, 0x04, 0x00, 0x86, 0xFF, 0xFF, 0xA7, 0x0E
 };
 
-const lv_image_dsc_t emoji_moto = {
+const lv_img_dsc_t emoji_moto = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

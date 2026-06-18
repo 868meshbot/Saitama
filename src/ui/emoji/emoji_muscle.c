@@ -72,7 +72,7 @@ static const uint8_t emoji_muscle_map[] = {
     0x88, 0xBF, 0xE1, 0xF2, 0xF4, 0xF1, 0xDB, 0xB0, 0x67, 0x0F, 0x00, 0x02
 };
 
-const lv_image_dsc_t emoji_muscle = {
+const lv_img_dsc_t emoji_muscle = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

@@ -72,7 +72,7 @@ static const uint8_t emoji_drool_map[] = {
     0x46, 0xAB, 0xE7, 0xFE, 0xFC, 0xF7, 0xC9, 0x45, 0x00, 0x00, 0x01, 0x00
 };
 
-const lv_image_dsc_t emoji_drool = {
+const lv_img_dsc_t emoji_drool = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

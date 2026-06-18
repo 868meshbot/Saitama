@@ -72,7 +72,7 @@ static const uint8_t emoji_party_map[] = {
     0x6A, 0xC6, 0xF4, 0xFE, 0xF7, 0xCE, 0x77, 0x0F, 0x00, 0x03, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_party = {
+const lv_img_dsc_t emoji_party = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

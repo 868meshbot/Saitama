@@ -72,7 +72,7 @@ static const uint8_t emoji_poop_map[] = {
     0xFC, 0xE4, 0xB8, 0x74, 0x8A, 0xCF, 0xEE, 0xFE, 0xFD, 0xF0, 0x88, 0x02
 };
 
-const lv_image_dsc_t emoji_poop = {
+const lv_img_dsc_t emoji_poop = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

@@ -72,7 +72,7 @@ static const uint8_t emoji_sleepy_map[] = {
     0x46, 0xAB, 0xE7, 0xFE, 0xFE, 0xE7, 0xAB, 0x42, 0x07, 0xC6, 0xFF, 0xA9
 };
 
-const lv_image_dsc_t emoji_sleepy = {
+const lv_img_dsc_t emoji_sleepy = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

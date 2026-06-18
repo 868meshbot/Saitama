@@ -72,7 +72,7 @@ static const uint8_t emoji_exploding_map[] = {
     0x3A, 0xA5, 0xE5, 0xFE, 0xFE, 0xE5, 0xA5, 0x3A, 0x00, 0x01, 0x01, 0x00
 };
 
-const lv_image_dsc_t emoji_exploding = {
+const lv_img_dsc_t emoji_exploding = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

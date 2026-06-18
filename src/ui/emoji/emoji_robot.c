@@ -72,7 +72,7 @@ static const uint8_t emoji_robot_map[] = {
     0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x96, 0x95, 0x55
 };
 
-const lv_image_dsc_t emoji_robot = {
+const lv_img_dsc_t emoji_robot = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

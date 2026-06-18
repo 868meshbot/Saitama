@@ -72,7 +72,7 @@ static const uint8_t emoji_hand_mouth_map[] = {
     0x74, 0xE9, 0xFC, 0xD8, 0x56, 0x13, 0x00, 0x00, 0x02, 0x01, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_hand_mouth = {
+const lv_img_dsc_t emoji_hand_mouth = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

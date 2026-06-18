@@ -72,7 +72,7 @@ static const uint8_t emoji_boom_map[] = {
     0x00, 0x04, 0x00, 0x00, 0x00, 0x03, 0x00, 0x15, 0x8A, 0x07, 0x01, 0x00
 };
 
-const lv_image_dsc_t emoji_boom = {
+const lv_img_dsc_t emoji_boom = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

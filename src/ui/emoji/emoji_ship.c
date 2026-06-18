@@ -72,7 +72,7 @@ static const uint8_t emoji_ship_map[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD, 0xFB, 0xFB, 0xFB
 };
 
-const lv_image_dsc_t emoji_ship = {
+const lv_img_dsc_t emoji_ship = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

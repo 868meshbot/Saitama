@@ -72,7 +72,7 @@ static const uint8_t emoji_sun_small_cloud_map[] = {
     0xD3, 0xFE, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xFD, 0xB9, 0x1A
 };
 
-const lv_image_dsc_t emoji_sun_small_cloud = {
+const lv_img_dsc_t emoji_sun_small_cloud = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

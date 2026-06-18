@@ -72,7 +72,7 @@ static const uint8_t emoji_us_flag_map[] = {
     0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03
 };
 
-const lv_image_dsc_t emoji_us_flag = {
+const lv_img_dsc_t emoji_us_flag = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

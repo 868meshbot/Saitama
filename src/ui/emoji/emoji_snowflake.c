@@ -72,7 +72,7 @@ static const uint8_t emoji_snowflake_map[] = {
     0x00, 0x2E, 0x00, 0x7B, 0x7B, 0x00, 0x2F, 0x00, 0x02, 0x00, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_snowflake = {
+const lv_img_dsc_t emoji_snowflake = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

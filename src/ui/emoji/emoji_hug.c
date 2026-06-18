@@ -72,7 +72,7 @@ static const uint8_t emoji_hug_map[] = {
     0xFD, 0xF0, 0x7B, 0x00, 0x00, 0x7B, 0xF0, 0xFD, 0xB3, 0x16, 0x00, 0x05
 };
 
-const lv_image_dsc_t emoji_hug = {
+const lv_img_dsc_t emoji_hug = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

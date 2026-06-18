@@ -72,7 +72,7 @@ static const uint8_t emoji_wind_map[] = {
     0x02, 0x00, 0x00, 0x00, 0x6B, 0xDD, 0xFD, 0xF0, 0x9C, 0x0F, 0x00, 0x01
 };
 
-const lv_image_dsc_t emoji_wind = {
+const lv_img_dsc_t emoji_wind = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

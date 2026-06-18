@@ -72,7 +72,7 @@ static const uint8_t emoji_ok_hand_map[] = {
     0x51, 0xC5, 0xF3, 0xFA, 0xE7, 0xBD, 0x5A, 0x00, 0x02, 0x00, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_ok_hand = {
+const lv_img_dsc_t emoji_ok_hand = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

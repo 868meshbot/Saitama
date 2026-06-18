@@ -33,8 +33,8 @@ static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
 
     for (int i = 0; i < kOpsEmojiCount; i++) {
         if (kOpsEmoji[i].codepoint == unicode) {
-            if (len < sizeof(lv_image_dsc_t)) return false;
-            memcpy(imgSrc, kOpsEmoji[i].img, sizeof(lv_image_dsc_t));
+            if (len < sizeof(lv_img_dsc_t)) return false;
+            memcpy(imgSrc, kOpsEmoji[i].img, sizeof(lv_img_dsc_t));
             return true;
         }
     }

@@ -72,7 +72,7 @@ static const uint8_t emoji_snow_map[] = {
     0x1E, 0x64, 0x64, 0x1E, 0x02, 0x02, 0x2B, 0x72, 0x51, 0x11, 0x01, 0x01
 };
 
-const lv_image_dsc_t emoji_snow = {
+const lv_img_dsc_t emoji_snow = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

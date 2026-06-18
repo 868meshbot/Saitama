@@ -72,7 +72,7 @@ static const uint8_t emoji_wales_map[] = {
     0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03
 };
 
-const lv_image_dsc_t emoji_wales = {
+const lv_img_dsc_t emoji_wales = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

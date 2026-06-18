@@ -72,7 +72,7 @@ static const uint8_t emoji_vomit_map[] = {
     0xEE, 0xF9, 0xFF, 0xFF, 0xFF, 0xFF, 0xF8, 0xED, 0xEA, 0xC3, 0x53, 0x01
 };
 
-const lv_image_dsc_t emoji_vomit = {
+const lv_img_dsc_t emoji_vomit = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

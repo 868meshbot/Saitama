@@ -252,7 +252,7 @@ static const uint8_t {name}_map[] = {{
 {hex_block}
 }};
 
-const lv_image_dsc_t {name} = {{
+const lv_img_dsc_t {name} = {{
     .header = {{
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

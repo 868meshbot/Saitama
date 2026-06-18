@@ -72,7 +72,7 @@ static const uint8_t emoji_skull_map[] = {
     0xEC, 0xCA, 0x30, 0xE1, 0xE1, 0x30, 0xCA, 0xEC, 0x2E, 0x01, 0x02, 0x00
 };
 
-const lv_image_dsc_t emoji_skull = {
+const lv_img_dsc_t emoji_skull = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,

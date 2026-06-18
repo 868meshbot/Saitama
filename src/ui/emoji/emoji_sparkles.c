@@ -72,7 +72,7 @@ static const uint8_t emoji_sparkles_map[] = {
     0x71, 0x0D, 0x02, 0x00, 0x02, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-const lv_image_dsc_t emoji_sparkles = {
+const lv_img_dsc_t emoji_sparkles = {
     .header = {
         .magic  = LV_IMAGE_HEADER_MAGIC,
         .cf     = LV_COLOR_FORMAT_RGB565A8,
