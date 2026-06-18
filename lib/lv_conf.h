@@ -93,7 +93,8 @@
 #define LV_USE_FONT_PLACEHOLDER 1
 
 /* Image decoders */
-#define LV_USE_PNG 1
+#define LV_USE_PNG     1
+#define LV_USE_LODEPNG 1
 
 /* Disable platform-specific draw backends not available on ESP32-S3 */
 #define LV_USE_DRAW_ARM2D    0
