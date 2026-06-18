@@ -909,13 +909,13 @@ void ScreenLauncher::confirmSelect() {
 
     if (s_activePage == 1) {
         int idx = s_selRow2 * 4 + s_selCol2;
-        if (idx < 6 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
+        if (idx < 6 && s_tiles2[idx]) lv_obj_send_event(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
         return;
     }
 
     lv_obj_t* target = s_homeSel ? s_homeBtn
                                  : s_tiles[s_selRow * 4 + s_selCol];
-    if (target) lv_event_send(target, LV_EVENT_CLICKED, nullptr);
+    if (target) lv_obj_send_event(target, LV_EVENT_CLICKED, nullptr);
 }
 
 }}  // namespace ops::ui

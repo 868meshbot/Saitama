@@ -129,7 +129,7 @@ static void _onRowKey(lv_event_t* e) {
     else if (key == '0')          pos = 9;
     if (pos >= 0 && s_listPtr) {
         lv_obj_t* row = lv_obj_get_child(s_listPtr, pos);
-        if (row) lv_event_send(row, LV_EVENT_CLICKED, nullptr);
+        if (row) lv_obj_send_event(row, LV_EVENT_CLICKED, nullptr);
     }
 }
 

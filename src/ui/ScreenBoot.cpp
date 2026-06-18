@@ -42,7 +42,8 @@ void ScreenBoot::show() {
     // ── Spinner (rotating arc animation) ─────────────────────────────
     // lv_spinner_create() sets up an arc widget with a built-in rotation
     // animation. We style the indicator arc (moving part) and the track.
-    lv_obj_t* spin = lv_spinner_create(_screen, 1000, 60);
+    lv_obj_t* spin = lv_spinner_create(_screen);
+    lv_spinner_set_anim_params(spin, 1000, 60);
     lv_obj_set_size(spin, 36, 36);
     lv_obj_align(spin, LV_ALIGN_CENTER, 0, 42);
     lv_obj_set_style_arc_color(spin, theme::ACCENT,   LV_PART_INDICATOR);

@@ -785,7 +785,7 @@ void ScreenHome::_showList()
         lv_obj_set_style_bg_opa(dotCont, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(dotCont, 0, 0);
         lv_obj_set_style_pad_all(dotCont, 0, 0);
-        lv_obj_clear_flag(dotCont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(dotCont, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
         lv_obj_t* dot = lv_obj_create(dotCont);
         lv_obj_set_size(dot, 8, 8);
@@ -1520,7 +1520,7 @@ void ScreenHome::_onActionNotify(lv_event_t* e)
     bool newState = !ops::config::get().channels[chIdx].notify;
     ops::config::setChannelNotify(chIdx, newState);
     // Update the button label and colour in-place
-    lv_obj_t* btn = lv_event_get_target(e);
+    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
     lv_obj_t* lbl = lv_obj_get_child(btn, 0);
     if (lbl) lv_label_set_text(lbl, newState ? "Notify: On" : "Notify: Off");
     lv_obj_set_style_bg_color(btn, newState ? theme::GREEN : theme::BG, 0);
@@ -1813,7 +1813,7 @@ void ScreenHome::_openAddContactPopup()
         lv_obj_set_style_bg_color(btn, bg, 0);
         lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
         lv_obj_set_style_border_color(btn, theme::BORDER, 0);
-        lv_obj_set_style_border_width(btn, bg.full == theme::BG.full ? 1 : 0, 0);
+        lv_obj_set_style_border_width(btn, lv_color_to_u16(bg) == lv_color_to_u16(theme::BG) ? 1 : 0, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
@@ -1882,7 +1882,7 @@ static void _codeToUtf8(uint32_t cp, char* buf)
 static void _onEmojiSearch(lv_event_t* e)
 {
     if (!s_emojiGrid || !lv_obj_is_valid(s_emojiGrid)) return;
-    const char* q = lv_textarea_get_text((lv_obj_t*)lv_event_get_target(e));
+    const char* q = lv_textarea_get_text((lv_obj_t*)(lv_obj_t*)lv_event_get_target(e));
     for (int i = 0; i < s_emojiBtnCount; i++) {
         if (!s_emojiBtns[i] || !lv_obj_is_valid(s_emojiBtns[i])) continue;
         bool show = (!q || !q[0]) || (strstr(kOpsEmoji[i].name, q) != nullptr);

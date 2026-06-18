@@ -708,7 +708,7 @@ void tick() {
                 if (dx != 0) {
                     if (onSlider) {
                         uint32_t sk = (dx > 0) ? LV_KEY_RIGHT : LV_KEY_LEFT;
-                        lv_event_send(nf, LV_EVENT_KEY, &sk);
+                        lv_obj_send_event(nf, LV_EVENT_KEY, &sk);
                     } else {
                         enc_diff = (dx > 0) ? 1 : -1;
                     }
@@ -721,9 +721,9 @@ void tick() {
                 lv_obj_t*   pf = pg ? lv_group_get_focused(pg) : nullptr;
                 if (pf) {
                     uint32_t ek = LV_KEY_ENTER;
-                    lv_event_send(pf, LV_EVENT_KEY, &ek);
+                    lv_obj_send_event(pf, LV_EVENT_KEY, &ek);
                     if (!lv_obj_is_editable(pf))
-                        lv_event_send(pf, LV_EVENT_CLICKED, nullptr);
+                        lv_obj_send_event(pf, LV_EVENT_CLICKED, nullptr);
                 }
             }
         }
@@ -759,9 +759,9 @@ void tick() {
                         lv_obj_t* foc = g ? lv_group_get_focused(g) : nullptr;
                         if (foc) {
                             uint32_t ek = LV_KEY_ENTER;
-                            lv_event_send(foc, LV_EVENT_KEY, &ek);
+                            lv_obj_send_event(foc, LV_EVENT_KEY, &ek);
                             if (!lv_obj_is_editable(foc))
-                                lv_event_send(foc, LV_EVENT_CLICKED, nullptr);
+                                lv_obj_send_event(foc, LV_EVENT_CLICKED, nullptr);
                         }
                     }
                 } else if (k != '\0' && !ScreenLauncher::isActive()) {
@@ -774,7 +774,7 @@ void tick() {
                         // Accent cycle: erase the previous variant before inserting the next.
                         if (kbRepl && lv_obj_has_class(foc, &lv_textarea_class)) {
                             uint32_t bk = LV_KEY_BACKSPACE;
-                            lv_event_send(foc, LV_EVENT_KEY, &bk);
+                            lv_obj_send_event(foc, LV_EVENT_KEY, &bk);
                         }
 
                         if ((uint8_t)k > 127) {
@@ -809,7 +809,7 @@ void tick() {
                             } else {
                                 key = (uint32_t)(uint8_t)k;
                             }
-                            lv_event_send(foc, LV_EVENT_KEY, &key);
+                            lv_obj_send_event(foc, LV_EVENT_KEY, &key);
                         }
                     }
                 }

@@ -157,7 +157,7 @@ void ScreenFileManager::_selectRow(int idx)
         lv_obj_set_style_bg_color(_rows[idx], theme::BG_CARD, 0);
         lv_obj_set_style_bg_opa(_rows[idx], LV_OPA_COVER, 0);
         lv_obj_set_style_border_side(_rows[idx],
-            LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_BOTTOM, 0);
+            (lv_border_side_t)(LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_BOTTOM), 0);
         lv_obj_set_style_border_color(_rows[idx], theme::ACCENT, 0);
         lv_obj_set_style_border_width(_rows[idx], 2, 0);
     }
@@ -628,7 +628,7 @@ void ScreenFileManager::_onRescanClick(lv_event_t*)
 
 void ScreenFileManager::_onRowClick(lv_event_t* e)
 {
-    lv_obj_t*  row = lv_event_get_target(e);
+    lv_obj_t*  row = (lv_obj_t*)lv_event_get_target(e);
     intptr_t   idx = (intptr_t)lv_obj_get_user_data(row);
 
     if (idx == (intptr_t)(-1)) {

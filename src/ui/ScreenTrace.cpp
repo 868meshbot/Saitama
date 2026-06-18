@@ -521,7 +521,7 @@ void ScreenTrace::show() {
 void ScreenTrace::_onHomeClick(lv_event_t * /*e*/) { ScreenLauncher::show(); }
 
 void ScreenTrace::_onDropChange(lv_event_t *e) {
-  lv_obj_t *dd = static_cast<lv_obj_t *>(lv_event_get_target(e));
+  lv_obj_t *dd = static_cast<lv_obj_t *>((lv_obj_t*)lv_event_get_target(e));
   int idx = (int)lv_dropdown_get_selected(dd);
 
   s_selIdx = (idx >= 0 && idx < s_numTargets) ? idx : -1;

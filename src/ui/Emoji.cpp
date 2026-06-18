@@ -25,20 +25,19 @@
 namespace ops {
 namespace emoji {
 
-// imgfont callback: called by LVGL for codepoints not in the parent font.
-static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
-                    uint32_t unicode, uint32_t /*unicodeNext*/)
+// LVGL 9 imgfont callback — returns a pointer to the image descriptor for the
+// given codepoint, or nullptr if not found.
+static const void* _pathCb(const lv_font_t* /*font*/,
+                            uint32_t unicode, uint32_t /*unicodeNext*/,
+                            int32_t* /*offset_y*/, void* /*user_data*/)
 {
-    if (unicode == 0xFE0F || unicode == 0x200D) return false;  // variation/ZWJ
+    if (unicode == 0xFE0F || unicode == 0x200D) return nullptr;  // variation/ZWJ
 
     for (int i = 0; i < kOpsEmojiCount; i++) {
-        if (kOpsEmoji[i].codepoint == unicode) {
-            if (len < sizeof(lv_img_dsc_t)) return false;
-            memcpy(imgSrc, kOpsEmoji[i].img, sizeof(lv_img_dsc_t));
-            return true;
-        }
+        if (kOpsEmoji[i].codepoint == unicode)
+            return kOpsEmoji[i].img;
     }
-    return false;
+    return nullptr;
 }
 
 static lv_font_t* s_emoji = nullptr;  // shared emoji imgfont (fallback)
@@ -51,7 +50,7 @@ static lv_font_t*       s_wrapped[kCacheMax] = {0};
 void init()
 {
     // Build the shared emoji imgfont once.  emojiFont() chains it as a fallback.
-    s_emoji = lv_imgfont_create(16, _pathCb);
+    s_emoji = lv_imgfont_create(16, _pathCb, nullptr);
     if (s_emoji) s_emoji->base_line = 0;
 }
 

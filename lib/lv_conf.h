@@ -43,7 +43,7 @@
 #define LV_USE_LOG 0
 
 /* Widgets — LVGL 9 names */
-#define LV_USE_ANIMIMAGE  1
+#define LV_USE_ANIMIMG    1
 #define LV_USE_ARC        1
 #define LV_USE_BAR        1
 #define LV_USE_BUTTON     1

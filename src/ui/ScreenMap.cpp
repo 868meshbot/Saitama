@@ -444,7 +444,7 @@ void ScreenMap::_showMountDialog()
         lv_obj_set_size(btn, 90, 30);
         lv_obj_set_style_bg_color(btn, bg, 0);
         lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(btn, bg.full == theme::BG.full ? 1 : 0, 0);
+        lv_obj_set_style_border_width(btn, lv_color_to_u16(bg) == lv_color_to_u16(theme::BG) ? 1 : 0, 0);
         lv_obj_set_style_border_color(btn, theme::BORDER, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
