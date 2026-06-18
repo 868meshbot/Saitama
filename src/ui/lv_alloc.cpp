@@ -21,12 +21,22 @@ void lv_mem_deinit(void) {}
 lv_mem_pool_t lv_mem_add_pool(void* /*mem*/, size_t /*bytes*/) { return nullptr; }
 void          lv_mem_remove_pool(lv_mem_pool_t /*pool*/)       {}
 
-// ── Core allocators — route to PSRAM, fall back to internal DRAM ─────────────
+// ── Core allocators ───────────────────────────────────────────────────────────
+// Small allocations (< PSRAM_THRESHOLD) stay in internal DRAM.  LVGL's linked
+// lists, style nodes, draw-task structs, and object fields are tiny but
+// accessed very frequently — PSRAM latency breaks rendering for these.
+// Large allocations (font bitmaps, image caches, widget render buffers) go to
+// PSRAM so they don't exhaust the ~320 KB internal DRAM that FreeRTOS task
+// stacks (MP3 player, etc.) depend on.
+static constexpr size_t PSRAM_THRESHOLD = 1024;  // bytes
+
 void* lv_malloc_core(size_t size)
 {
-    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = malloc(size);
-    return p;
+    if (size >= PSRAM_THRESHOLD) {
+        void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (p) return p;
+    }
+    return malloc(size);  // small allocs or PSRAM full: use internal DRAM
 }
 
 void lv_free_core(void* p)
@@ -36,9 +46,11 @@ void lv_free_core(void* p)
 
 void* lv_realloc_core(void* p, size_t new_size)
 {
-    void* np = heap_caps_realloc(p, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!np) np = realloc(p, new_size);
-    return np;
+    if (new_size >= PSRAM_THRESHOLD) {
+        void* np = heap_caps_realloc(p, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (np) return np;
+    }
+    return realloc(p, new_size);
 }
 
 // ── Monitor / test stubs ──────────────────────────────────────────────────────
