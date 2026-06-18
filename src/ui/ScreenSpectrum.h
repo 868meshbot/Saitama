@@ -24,7 +24,7 @@ public:
 private:
     static lv_obj_t*   _screen;
     static lv_obj_t*   _canvas;
-    static lv_color_t* _canvasBuf;
+    static uint16_t* _canvasBuf;  // RGB565 pixels matching LV_COLOR_FORMAT_NATIVE
     static lv_obj_t*   _infoLbl;
     static lv_obj_t*   _cadLbl;    // top-bar CAD status indicator
 

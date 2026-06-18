@@ -74,14 +74,14 @@ static float  s_meshFreqMHz = 869.0f; // current mesh channel frequency
 // ── Static members ────────────────────────────────────────────────────────────
 lv_obj_t*   ScreenSpectrum::_screen    = nullptr;
 lv_obj_t*   ScreenSpectrum::_canvas    = nullptr;
-lv_color_t* ScreenSpectrum::_canvasBuf = nullptr;
+uint16_t* ScreenSpectrum::_canvasBuf = nullptr;
 lv_obj_t*   ScreenSpectrum::_infoLbl   = nullptr;
 lv_obj_t*   ScreenSpectrum::_cadLbl    = nullptr;
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
 // Heat map: -140 dBm → black, -50 dBm → yellow
-static inline lv_color_t _rssiToWfColor(float rssi)
+static inline uint16_t _rssiToWfColor(float rssi)
 {
     float norm = (rssi - RSSI_MIN) / RSSI_RNG;
     if (norm < 0.0f) norm = 0.0f;
@@ -98,7 +98,7 @@ static inline lv_color_t _rssiToWfColor(float rssi)
     } else {
         r = (uint8_t)((v - 192) * 4);  g = 255;  b = 0;
     }
-    return lv_color_make(r, g, b);
+    return lv_color_to_u16(lv_color_make(r, g, b));
 }
 
 // Pixels from bottom of trace area (0=floor, TRACE_H-1=ceiling)
@@ -114,11 +114,11 @@ void ScreenSpectrum::_redrawCanvas()
 {
     if (!_canvas || !_canvasBuf) return;
 
-    static const lv_color_t kBg   = lv_color_make(0, 0, 0);
-    static const lv_color_t kGrid = lv_color_make(28, 28, 28);
-    static const lv_color_t kPeak = lv_color_make(255, 210, 0);
-    static const lv_color_t kScaleBg = lv_color_make(10, 10, 10);
-    static const lv_color_t kDiv    = lv_color_make(50, 50, 50);
+    static const uint16_t kBg   = lv_color_to_u16(lv_color_make(0, 0, 0));
+    static const uint16_t kGrid = lv_color_to_u16(lv_color_make(28, 28, 28));
+    static const uint16_t kPeak = lv_color_to_u16(lv_color_make(255, 210, 0));
+    static const uint16_t kScaleBg = lv_color_to_u16(lv_color_make(10, 10, 10));
+    static const uint16_t kDiv    = lv_color_to_u16(lv_color_make(50, 50, 50));
 
     // Pre-compute trace grid-line canvas Y coordinates
     const float kGridDbm[3] = { -80.0f, -100.0f, -120.0f };
@@ -133,13 +133,13 @@ void ScreenSpectrum::_redrawCanvas()
         int histIdx  = (s_wfRow + row) % WF_ROWS;
         int cy0      = row * 2;
         for (int x = 0; x < SPEC_W; x++) {
-            lv_color_t c = _rssiToWfColor((float)s_wf[histIdx * SPEC_W + x]);
+            uint16_t c = _rssiToWfColor((float)s_wf[histIdx * SPEC_W + x]);
             _canvasBuf[ cy0      * CANVAS_W + x] = c;
             _canvasBuf[(cy0 + 1) * CANVAS_W + x] = c;
         }
         // Scale strip: vertical colour-ramp (maps row top → RSSI)
         float rowRssi = RSSI_MAX - (float)cy0 / (WF_H - 1) * RSSI_RNG;
-        lv_color_t sc = _rssiToWfColor(rowRssi);
+        uint16_t sc = _rssiToWfColor(rowRssi);
         for (int x = SPEC_W; x < CANVAS_W; x++) {
             _canvasBuf[ cy0      * CANVAS_W + x] = sc;
             _canvasBuf[(cy0 + 1) * CANVAS_W + x] = sc;
@@ -161,14 +161,14 @@ void ScreenSpectrum::_redrawCanvas()
             bool inBar  = (ty >= barTop);
             bool isPeak = (ty == peakTop);
 
-            lv_color_t c;
+            uint16_t c;
             if (isPeak) {
                 c = kPeak;
             } else if (inBar) {
                 int relY   = ty - barTop;
                 uint8_t br = (uint8_t)(210 - relY * 150 / TRACE_H);
                 if (br < 40) br = 40;
-                c = lv_color_make(0, br, 20);
+                c = lv_color_to_u16(lv_color_make(0, br, 20));
             } else if (isGrid) {
                 c = kGrid;
             } else {
@@ -223,9 +223,9 @@ void ScreenSpectrum::_redrawCanvas()
         int meshCol = (int)((s_meshFreqMHz - viewStart) / stepMHz + 0.5f);
         if (meshCol >= 1 && meshCol < SPEC_W - 1) {
             // CAD active → bright orange; quiet → dim green
-            lv_color_t mc = s_cadDetected
-                ? lv_color_make(255, 100,  0)
-                : lv_color_make(  0, 100,  0);
+            uint16_t mc = s_cadDetected
+                ? lv_color_to_u16(lv_color_make(255, 100,  0))
+                : lv_color_to_u16(lv_color_make(  0, 100,  0));
             for (int cy = 0; cy < CANVAS_H; cy++)
                 _canvasBuf[cy * CANVAS_W + meshCol] = mc;
         }
@@ -387,9 +387,9 @@ void ScreenSpectrum::_buildScreen()
     lv_obj_set_style_text_font(_cadLbl, &lv_font_montserrat_10, 0);
 
     // ── Canvas ────────────────────────────────────────────────────────────────
-    _canvasBuf = (lv_color_t*)ps_malloc((size_t)CANVAS_W * CANVAS_H * sizeof(lv_color_t));
+    _canvasBuf = (uint16_t*)ps_malloc((size_t)CANVAS_W * CANVAS_H * sizeof(uint16_t));
     if (!_canvasBuf) { OPS_LOG("Spectrum", "ps_malloc canvas failed"); return; }
-    memset(_canvasBuf, 0, (size_t)CANVAS_W * CANVAS_H * sizeof(lv_color_t));
+    memset(_canvasBuf, 0, (size_t)CANVAS_W * CANVAS_H * sizeof(uint16_t));
 
     _canvas = lv_canvas_create(_screen);
     lv_canvas_set_buffer(_canvas, _canvasBuf, CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_NATIVE);

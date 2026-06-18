@@ -14,9 +14,10 @@
 /*=========================
    STDLIB WRAPPER SETTINGS
  *=========================*/
-/* LV_STDLIB_CLIB: use standard malloc/free/realloc (goes to internal DRAM on
- * ESP32 Arduino; our own large buffers use ps_malloc() explicitly). */
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
+/* LV_STDLIB_CUSTOM: lv_malloc_core/lv_free_core/lv_realloc_core implemented
+ * in src/ui/lv_alloc.cpp to route LVGL allocations to PSRAM, freeing internal
+ * DRAM for FreeRTOS task stacks (MP3 player, etc.). */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CUSTOM
 #define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_CLIB
 
