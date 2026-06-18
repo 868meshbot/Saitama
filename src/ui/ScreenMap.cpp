@@ -110,6 +110,15 @@ void ScreenMap::show()
             _zoom, (double)_centerLat, (double)_centerLng);
 }
 
+void ScreenMap::tick()
+{
+    if (!isActive()) return;
+    // NavBoxLib queues tile requests in invalidate(); with PSRAM (cropmode_=false)
+    // it does NOT load them synchronously — iterate() must drain the queue each frame.
+    if (s_renderer.iterate(millis()) > 0)
+        _repositionLabels();
+}
+
 bool ScreenMap::isActive()
 {
     return _screen && (lv_scr_act() == _screen);

@@ -16,6 +16,7 @@ namespace ops { namespace ui {
 class ScreenMap {
 public:
     static void show();
+    static void tick();          // drain NavBoxLib tile-load queue each frame
 
     // Called by UIScreen::tick() for trackball pan (pixels).
     static bool isActive();

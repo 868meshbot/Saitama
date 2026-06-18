@@ -883,6 +883,7 @@ void tick() {
     ScreenFinder::tick();
     ScreenPower::tick();
     ScreenPlaceholder::tick();
+    ScreenMap::tick();
     ops::BTCompanionService::instance().tick();
     ScreenSpectrum::update();
     ScreenSigGen::update();
