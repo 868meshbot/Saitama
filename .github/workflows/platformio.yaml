@@ -48,6 +48,19 @@ jobs:
         export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
         pio run -e t-deck
 
+    - name: Copy firmware artifacts (cache fallback)
+      run: |
+        # post_build.py only fires when SCons actually rebuilds the binary.
+        # On a cache hit the hook is skipped, so copy manually if needed.
+        mkdir -p firmware
+        if [ -z "$(ls firmware/saitama-*.bin 2>/dev/null | grep -v merged)" ]; then
+          VERSION=$(python3 -c "import re; m=re.search(r'OPS_VERSION_STRING\s+\"([^\"]+)\"', open('src/version.h').read()); print(m.group(1))")
+          cp .pio/build/t-deck/firmware.bin "firmware/saitama-t-deck-plus-${VERSION}.bin"
+          echo "Fallback copy → firmware/saitama-t-deck-plus-${VERSION}.bin"
+        else
+          echo "post_build already created: $(ls firmware/saitama-*.bin | grep -v merged)"
+        fi
+
     - name: Merge firmware (CI fallback)
       run: |
         APP=$(ls firmware/saitama-*.bin 2>/dev/null | grep -v merged | head -1)
