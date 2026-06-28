@@ -43,6 +43,7 @@ struct Config {
     char       mapTileDir[32];
     int        theme;             // 0 = dark
     bool       fontExtLatin;     // use extended Latin font (covers Polish, Czech, etc.)
+    uint8_t    uiLanguage;       // 0=EN, 1=IT, 2=FR, 3=DE, 4=ES (ops::lang::UiLang)
     uint8_t    radioProfile;      // 0=NAR 1=MED 2=LON
     bool       showAdverts;       // print incoming advert packets in terminal
     // Radio parameter overrides — applied after profile when radioCustom is true

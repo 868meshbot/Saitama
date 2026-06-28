@@ -27,6 +27,7 @@
 #include "Theme.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
+#include "../utils/Lang.h"
 #include "../utils/Contacts.h"
 #include "../utils/Repeaters.h"
 #include "../utils/Keymap.h"
@@ -224,49 +225,56 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
 
     const auto& cfg = ops::config::get();
 
+    const char* on  = lang::tr(lang::TR_ON);
+    const char* off = lang::tr(lang::TR_OFF);
+
     // Item indices match _onItemClick switch
-    _addRow(_list, "Device Name",     cfg.callsign, 0);
-    _addRow(_list, "Share My Contact","",           24); // show self pubkey as QR
-    _addRow(_list, "Generate Identity", "",         35);
-    _addRow(_list, "Channels",        "",           1);  // opens the 5-slot picker
+    _addRow(_list, lang::tr(lang::TR_DEVICE_NAME),    cfg.callsign, 0);
+    _addRow(_list, lang::tr(lang::TR_SHARE_CONTACT),  "",           24);
+    _addRow(_list, lang::tr(lang::TR_GEN_IDENTITY),   "",           35);
+    _addRow(_list, lang::tr(lang::TR_CHANNELS),       "",           1);
     static const char* kRadioShort[] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
         "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
         "PT 868", "CH", "US/CA", "VN"
     };
-    _addRow(_list, "Radio", kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2], 6);
+    const char* radioLabel = cfg.radioCustom
+        ? "Custom"
+        : kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2];
+    _addRow(_list, lang::tr(lang::TR_RADIO), radioLabel, 6);
     char pwrBuf[10];
     if (cfg.radioTX >= 10 && cfg.radioTX <= 22)
         snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX);
     else
-        snprintf(pwrBuf, sizeof(pwrBuf), "Default");
-    _addRow(_list, "Power", pwrBuf, 25);
-    _addRow(_list, "LoRa Duty Cycle", cfg.loraDutyCycle ? "On" : "Off", 28);
+        snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
+    _addRow(_list, lang::tr(lang::TR_POWER), pwrBuf, 25);
+    _addRow(_list, lang::tr(lang::TR_LORA_DUTY), cfg.loraDutyCycle ? on : off, 28);
     static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
-    _addRow(_list, "CPU Governor",
+    _addRow(_list, lang::tr(lang::TR_CPU_GOV),
             kGovNames[cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2], 29);
     char brightBuf[8];
     snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
-    _addRow(_list, "Brightness", brightBuf, 26);
+    _addRow(_list, lang::tr(lang::TR_BRIGHTNESS), brightBuf, 26);
     static const char* kThemeNames[] = {
         "Default", "Green", "Dracula", "Tokyo Night",
         "Catp Frappe", "Catp Mocha", "Synthwave 84",
         "Kaolin", "One Dark", "Neovim", "Nyx", "Rat Dark"
     };
     int themeIdx = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
-    _addRow(_list, "Theme", kThemeNames[themeIdx], 31);
-    _addRow(_list, "Font", cfg.fontExtLatin ? "Extended Latin" : "Standard", 33);
-    _addRow(_list, "Bluetooth",       cfg.bluetoothEnabled ? "On" : "Off", 7);
-    _addRow(_list, "Speaker",         cfg.speakerEnabled   ? "On" : "Off", 8);
+    _addRow(_list, lang::tr(lang::TR_THEME), kThemeNames[themeIdx], 31);
+    _addRow(_list, lang::tr(lang::TR_FONT),
+            cfg.fontExtLatin ? "Extended Latin" : "Standard", 33);
+    _addRow(_list, lang::tr(lang::TR_BLUETOOTH), cfg.bluetoothEnabled ? on : off, 7);
+    _addRow(_list, lang::tr(lang::TR_SPEAKER),   cfg.speakerEnabled   ? on : off, 8);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
-    _addRow(_list, "GPS",
+    _addRow(_list, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9);
     char kbBuf[8];
-    if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "Off");
+    if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "%s", off);
     else snprintf(kbBuf, sizeof(kbBuf), "%d", cfg.kbBrightness);
-    _addRow(_list, "Keyboard Light",  kbBuf, 21);
+    _addRow(_list, lang::tr(lang::TR_KB_LIGHT), kbBuf, 21);
     static const char* kLayoutShort[] = { "English", "FR AZERTY", "DE QWERTZ" };
-    _addRow(_list, "Keyboard Layout",
+    _addRow(_list, lang::tr(lang::TR_KB_LAYOUT),
             kLayoutShort[cfg.kbLayout < ops::keymap::LAYOUT_COUNT ? cfg.kbLayout : 0], 23);
 
     // Date/Time row — display in local time
@@ -278,41 +286,44 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         snprintf(dtBuf, sizeof(dtBuf), "%04d-%02d-%02d",
                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
     }
-    _addRow(_list, "Date / Time", dtBuf, 10);
+    _addRow(_list, lang::tr(lang::TR_DATE_TIME), dtBuf, 10);
 
     // Timezone row
     char tzBuf[8] = "UTC";
     int tzOff = cfg.timezoneOffsetHours;
     if (tzOff > 0)       snprintf(tzBuf, sizeof(tzBuf), "UTC+%d", tzOff);
     else if (tzOff < 0)  snprintf(tzBuf, sizeof(tzBuf), "UTC%d",  tzOff);
-    _addRow(_list, "Timezone", tzBuf, 20);
-    _addRow(_list, "Firmware Update",    "v" OPS_VERSION_STRING, 11);
-    _addRow(_list, "Auto Add Contacts",  "", 12);
+    _addRow(_list, lang::tr(lang::TR_TIMEZONE), tzBuf, 20);
+    _addRow(_list, lang::tr(lang::TR_FW_UPDATE),    "v" OPS_VERSION_STRING, 11);
+    _addRow(_list, lang::tr(lang::TR_AUTO_ADD),     "", 12);
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
-    _addRow(_list, "Screen Timeout",     toStr, 13);
+    _addRow(_list, lang::tr(lang::TR_SCR_TIMEOUT),  toStr, 13);
     {
         char soStr[12];
         _fmtScreenOffVal(soStr, sizeof(soStr), (int)cfg.screenOffSec);
-        _addRow(_list, "Screen Off", soStr, 27);
+        _addRow(_list, lang::tr(lang::TR_SCR_OFF), soStr, 27);
     }
     {
         char volStr[8];
         snprintf(volStr, sizeof(volStr), "%d%%", (int)cfg.speakerVolume);
-        _addRow(_list, "Volume", volStr, 32);
+        _addRow(_list, lang::tr(lang::TR_VOLUME), volStr, 32);
     }
-    _addRow(_list, "Notifications",      "", 16);
+    _addRow(_list, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
-    _addRow(_list, "Notification Sound",
+    _addRow(_list, lang::tr(lang::TR_NOTIFY_SOUND),
             kSndNames[cfg.notifySoundChoice < 4 ? cfg.notifySoundChoice : 0], 22);
-    _addRow(_list, "Save Messages",      cfg.saveMsgs        ? "On" : "Off", 14);
-    _addRow(_list, "Show Hops",          cfg.showHops        ? "On" : "Off", 15);
-    _addRow(_list, "Show RSSI",          cfg.showRssi        ? "On" : "Off", 19);
-    _addRow(_list, "Location Sharing",   cfg.locationSharing ? "On" : "Off", 17);
-    _addRow(_list, "Backup & Restore",   "", 30);
-
+    _addRow(_list, lang::tr(lang::TR_SAVE_MSGS),   cfg.saveMsgs        ? on : off, 14);
+    _addRow(_list, lang::tr(lang::TR_SHOW_HOPS),   cfg.showHops        ? on : off, 15);
+    _addRow(_list, lang::tr(lang::TR_SHOW_RSSI),   cfg.showRssi        ? on : off, 19);
+    _addRow(_list, lang::tr(lang::TR_LOCATION),    cfg.locationSharing ? on : off, 17);
+    _addRow(_list, lang::tr(lang::TR_BACKUP),      "", 30);
+    {
+        uint8_t li = cfg.uiLanguage < lang::LANG_COUNT ? cfg.uiLanguage : 0;
+        _addRow(_list, lang::tr(lang::TR_LANGUAGE), lang::kLangNames[li], 36);
+    }
     if (_hasLauncher())
-        _addRow(_list, "Return to Launcher", "", 34);
+        _addRow(_list, lang::tr(lang::TR_RETURN), "", 34);
 
     s_listPtr = _list;
 }
@@ -2362,13 +2373,14 @@ static void _openBrightnessDialog() {
 }
 
 // ── Radio profile picker ──────────────────────────────────────────────
+static void _openCustomRadioDialog();  // forward declaration
 
 struct RadioProfile {
     const char* name;
     const char* params;
 };
 
-static constexpr int kNumRadioProfiles = 14;
+static constexpr int kNumRadioProfiles = 15;
 
 static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Australia",          "SF10 BW250 CR5" },  // 0  915.800 MHz
@@ -2385,6 +2397,7 @@ static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Switzerland",        "SF8 BW62 CR8"   },  // 11 869.618 MHz
     { "USA/Canada",         "SF7 BW62 CR5"   },  // 12 910.525 MHz
     { "Vietnam",            "SF11 BW250 CR5" },  // 13 920.250 MHz
+    { "Custom",             ""               },  // 14 user-defined
 };
 
 static void _onRadioRowClick(lv_event_t* e) {
@@ -2393,8 +2406,15 @@ static void _onRadioRowClick(lv_event_t* e) {
     uint8_t   profIdx = (uint8_t)info[1];
     delete[] info;
 
+    if (profIdx == 14) {
+        lv_obj_del(modal);
+        _openCustomRadioDialog();
+        return;
+    }
+
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.radioProfile = profIdx;
+    cfg.radioCustom  = false;
     ops::config::save();
     ops::MeshService::instance().applyLoraProfile(profIdx);
     OPS_LOG("Settings", "Radio profile -> %d", profIdx);
@@ -2457,15 +2477,19 @@ static void _openRadioDialog() {
     lv_obj_set_flex_align(scroll,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    uint8_t curProfile = ops::config::get().radioProfile;
-    if (curProfile >= kNumRadioProfiles) curProfile = 2;
+    const auto& radioCfg = ops::config::get();
+    uint8_t curProfile = radioCfg.radioProfile;
+    bool isCustomMode  = radioCfg.radioCustom;
+    if (curProfile >= 14) curProfile = 2;
 
     for (int i = 0; i < kNumRadioProfiles; i++) {
+        bool isSelected = isCustomMode ? (i == 14) : (i == (int)curProfile);
+
         lv_obj_t* row = lv_btn_create(scroll);
         lv_obj_set_size(row, 218, 26);
-        lv_obj_set_style_bg_color(row, i == curProfile ? theme::PRIMARY : theme::BG, 0);
+        lv_obj_set_style_bg_color(row, isSelected ? theme::PRIMARY : theme::BG, 0);
         lv_obj_set_style_bg_color(row, theme::ACCENT, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(row, i == curProfile ? theme::ACCENT : theme::BORDER, 0);
+        lv_obj_set_style_border_color(row, isSelected ? theme::ACCENT : theme::BORDER, 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_radius(row, 4, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
@@ -2478,11 +2502,25 @@ static void _openRadioDialog() {
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_text(nameLbl, kRadioProfiles[i].name);
         lv_obj_set_style_text_color(nameLbl,
-            i == curProfile ? theme::ACCENT : theme::TEXT, 0);
+            isSelected ? theme::ACCENT : theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
 
         lv_obj_t* parLbl = lv_label_create(row);
-        lv_label_set_text(parLbl, kRadioProfiles[i].params);
+        if (i == 14) {
+            if (radioCfg.radioCustom && radioCfg.freqMHz > 0.0f) {
+                static char s_customParBuf[32];
+                static const char* kBWStr[] = { "", "62.5", "125", "250" };
+                const char* bwStr = (radioCfg.radioBW >= 1 && radioCfg.radioBW <= 3)
+                    ? kBWStr[radioCfg.radioBW] : "?";
+                snprintf(s_customParBuf, sizeof(s_customParBuf), "%.3f SF%d BW%s CR%d",
+                         (double)radioCfg.freqMHz, radioCfg.radioSF, bwStr, radioCfg.radioCR);
+                lv_label_set_text(parLbl, s_customParBuf);
+            } else {
+                lv_label_set_text(parLbl, "Tap to configure");
+            }
+        } else {
+            lv_label_set_text(parLbl, kRadioProfiles[i].params);
+        }
         lv_obj_set_style_text_color(parLbl, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(parLbl, &lv_font_montserrat_10, 0);
 
@@ -2525,9 +2563,205 @@ static void _openRadioDialog() {
         for (uint32_t ci = 0; ci < nRows; ci++)
             lv_group_add_obj(gR, lv_obj_get_child(scroll, (int32_t)ci));
         lv_group_add_obj(gR, exitBtn);
-        lv_obj_t* focusRow = lv_obj_get_child(scroll, (int32_t)curProfile);
+        int32_t focusIdx = isCustomMode ? 14 : (int32_t)curProfile;
+        lv_obj_t* focusRow = lv_obj_get_child(scroll, focusIdx);
         lv_group_focus_obj(focusRow);
         lv_obj_scroll_to_view(focusRow, LV_ANIM_OFF);
+    }
+}
+
+// ── Custom radio parameter dialog ─────────────────────────────────────
+
+struct RadioCustomCtx {
+    lv_obj_t* modal;
+    lv_obj_t* freqTa;
+    lv_obj_t* sfDd;
+    lv_obj_t* bwDd;
+    lv_obj_t* crDd;
+};
+static RadioCustomCtx s_rcCtx;
+
+static void _onCustomRadioSave(lv_event_t* /*e*/) {
+    const char* freqStr = lv_textarea_get_text(s_rcCtx.freqTa);
+    float freq = (float)atof(freqStr);
+    if (freq < 400.0f || freq > 960.0f) return;
+
+    uint8_t sfSel = (uint8_t)lv_dropdown_get_selected(s_rcCtx.sfDd);
+    uint8_t bwSel = (uint8_t)lv_dropdown_get_selected(s_rcCtx.bwDd);
+    uint8_t crSel = (uint8_t)lv_dropdown_get_selected(s_rcCtx.crDd);
+
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.radioCustom = true;
+    cfg.freqMHz  = freq;
+    cfg.radioSF  = 7 + sfSel;   // 7..12
+    cfg.radioBW  = 1 + bwSel;   // 1=62.5, 2=125, 3=250
+    cfg.radioCR  = 5 + crSel;   // 5..8
+    ops::config::save();
+    ops::MeshService::instance().applyRadioOverrides();
+    OPS_LOG("Settings", "Custom radio: %.3f MHz SF%d BW%d CR%d",
+            (double)cfg.freqMHz, cfg.radioSF, cfg.radioBW, cfg.radioCR);
+    lv_obj_del(s_rcCtx.modal);
+    ScreenSettings::show();
+}
+
+static void _onCustomRadioCancel(lv_event_t* /*e*/) {
+    lv_obj_del(s_rcCtx.modal);
+}
+
+static void _onCustomRadioKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
+        lv_obj_del(s_rcCtx.modal);
+}
+
+static lv_obj_t* _makeCustomRadioRow(lv_obj_t* parent, const char* label) {
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_size(row, LV_PCT(100), 28);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+        LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* lbl = lv_label_create(row);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_style_text_color(lbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_width(lbl, 60);
+    return row;
+}
+
+static lv_obj_t* _makeCustomRadioDd(lv_obj_t* parent, const char* opts, uint8_t sel) {
+    lv_obj_t* dd = lv_dropdown_create(parent);
+    lv_dropdown_set_options(dd, opts);
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_width(dd, 150);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+    lv_obj_set_style_border_color(dd, theme::ACCENT, LV_STATE_FOCUSED);
+    lv_obj_t* list = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+    lv_obj_set_style_text_color(list, theme::TEXT, 0);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(list, theme::BORDER, 0);
+    return dd;
+}
+
+static void _openCustomRadioDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_rcCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onCustomRadioKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 250, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(panel, OPS_SCREEN_H - 4, 0);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 5, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Custom Radio");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    // Freq MHz
+    lv_obj_t* freqRow = _makeCustomRadioRow(panel, "Freq MHz");
+    char freqBuf[12] = "";
+    if (cfg.freqMHz > 0.0f) snprintf(freqBuf, sizeof(freqBuf), "%.3f", (double)cfg.freqMHz);
+    lv_obj_t* freqTa = lv_textarea_create(freqRow);
+    s_rcCtx.freqTa = freqTa;
+    lv_obj_set_width(freqTa, 150);
+    lv_obj_set_height(freqTa, 26);
+    lv_obj_set_style_bg_color(freqTa, theme::BG, 0);
+    lv_obj_set_style_text_color(freqTa, theme::TEXT, 0);
+    lv_obj_set_style_border_color(freqTa, theme::BORDER, 0);
+    lv_obj_set_style_border_color(freqTa, theme::ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(freqTa, 1, 0);
+    lv_obj_set_style_text_font(freqTa, theme::bodyFont10(), 0);
+    lv_textarea_set_one_line(freqTa, true);
+    lv_textarea_set_max_length(freqTa, 9);
+    lv_textarea_set_placeholder_text(freqTa, "e.g. 869.618");
+    lv_textarea_set_text(freqTa, freqBuf);
+
+    // SF (spreading factor 7-12)
+    lv_obj_t* sfRow = _makeCustomRadioRow(panel, "SF");
+    uint8_t sfIdx = (cfg.radioSF >= 7 && cfg.radioSF <= 12) ? (cfg.radioSF - 7) : 0;
+    s_rcCtx.sfDd = _makeCustomRadioDd(sfRow, "SF7\nSF8\nSF9\nSF10\nSF11\nSF12", sfIdx);
+
+    // BW (bandwidth)
+    lv_obj_t* bwRow = _makeCustomRadioRow(panel, "BW");
+    uint8_t bwIdx = (cfg.radioBW >= 1 && cfg.radioBW <= 3) ? (cfg.radioBW - 1) : 0;
+    s_rcCtx.bwDd = _makeCustomRadioDd(bwRow, "62.5 kHz\n125 kHz\n250 kHz", bwIdx);
+
+    // CR (coding rate 5-8)
+    lv_obj_t* crRow = _makeCustomRadioRow(panel, "CR");
+    uint8_t crIdx = (cfg.radioCR >= 5 && cfg.radioCR <= 8) ? (cfg.radioCR - 5) : 0;
+    s_rcCtx.crDd = _makeCustomRadioDd(crRow, "CR5\nCR6\nCR7\nCR8", crIdx);
+
+    // suppress unused-variable warnings — rows exist as children of panel
+    (void)sfRow; (void)bwRow; (void)crRow;
+
+    // Button row
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, LV_PCT(100), 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto makeBtn = [&](const char* lbl, lv_color_t col, lv_event_cb_t cb) -> lv_obj_t* {
+        lv_obj_t* btn = lv_btn_create(btnRow);
+        lv_obj_set_size(btn, 100, 28);
+        lv_obj_set_style_bg_color(btn, col, 0);
+        lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(btn, _onCustomRadioKey, LV_EVENT_KEY, nullptr);
+        lv_obj_t* l = lv_label_create(btn);
+        lv_label_set_text(l, lbl);
+        lv_obj_set_style_text_color(l, theme::TEXT, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_center(l);
+        return btn;
+    };
+
+    lv_obj_t* saveBtn   = makeBtn(LV_SYMBOL_OK " Save",      theme::PRIMARY, _onCustomRadioSave);
+    lv_obj_t* cancelBtn = makeBtn(LV_SYMBOL_CLOSE " Cancel",  theme::BG_CARD, _onCustomRadioCancel);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, freqTa);
+        lv_group_add_obj(g, s_rcCtx.sfDd);
+        lv_group_add_obj(g, s_rcCtx.bwDd);
+        lv_group_add_obj(g, s_rcCtx.crDd);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, cancelBtn);
+        lv_group_focus_obj(freqTa);
     }
 }
 
@@ -2548,6 +2782,133 @@ static void _onKbLExit(lv_event_t* /*e*/) { lv_obj_del(s_kbLCtx.modal); }
 static void _onKbLKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_kbLCtx.modal);
+}
+
+// ── Language picker dialog ────────────────────────────────────────────
+
+struct LangCtx { lv_obj_t* modal; };
+static LangCtx s_langCtx;
+
+static void _onLangRowClick(lv_event_t* e) {
+    int* info = static_cast<int*>(lv_event_get_user_data(e));
+    lv_obj_t* modal = reinterpret_cast<lv_obj_t*>((uintptr_t)info[0]);
+    uint8_t    lang = (uint8_t)info[1];
+    delete[] info;
+
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.uiLanguage = lang;
+    ops::config::save();
+    OPS_LOG("Settings", "Language -> %d", lang);
+    lv_obj_del(modal);
+    ScreenSettings::show();
+}
+
+static void _onLangClose(lv_event_t* e) {
+    lv_obj_t* modal = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+    lv_obj_del(modal);
+}
+
+static void _openLangDialog() {
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_langCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, [](lv_event_t* ev) {
+        uint32_t key = lv_event_get_key(ev);
+        if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
+            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+    }, LV_EVENT_KEY, modal);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 230, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(panel, OPS_SCREEN_H - 4, 0);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 4, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, lang::tr(lang::TR_LANGUAGE));
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    uint8_t curLang = ops::config::get().uiLanguage;
+    if (curLang >= lang::LANG_COUNT) curLang = 0;
+
+    for (uint8_t i = 0; i < lang::LANG_COUNT; i++) {
+        bool isSelected = (i == curLang);
+
+        lv_obj_t* row = lv_btn_create(panel);
+        lv_obj_set_size(row, 212, 28);
+        lv_obj_set_style_bg_color(row, isSelected ? theme::PRIMARY : theme::BG, 0);
+        lv_obj_set_style_bg_color(row, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, isSelected ? theme::ACCENT : theme::BORDER, 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_radius(row, 4, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 8, 0);
+        lv_obj_set_style_pad_ver(row, 2, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row,
+            LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* nameLbl = lv_label_create(row);
+        lv_label_set_text(nameLbl, lang::kLangNames[i]);
+        lv_obj_set_style_text_color(nameLbl, isSelected ? theme::ACCENT : theme::TEXT, 0);
+        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+
+        int* info = new int[2];
+        info[0] = (int)(uintptr_t)modal;
+        info[1] = i;
+        lv_obj_add_event_cb(row, _onLangRowClick, LV_EVENT_CLICKED, info);
+        lv_obj_add_event_cb(row, [](lv_event_t* ev) {
+            if (lv_event_get_key(ev) == LV_KEY_ESC)
+                lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+        }, LV_EVENT_KEY, modal);
+    }
+
+    lv_obj_t* exitBtn = lv_btn_create(panel);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onLangClose, LV_EVENT_CLICKED, modal);
+    lv_obj_add_event_cb(exitBtn, [](lv_event_t* ev) {
+        if (lv_event_get_key(ev) == LV_KEY_ESC)
+            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+    }, LV_EVENT_KEY, modal);
+
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* gL = lv_group_get_default();
+    if (gL) {
+        uint32_t nRows = lv_obj_get_child_cnt(panel);
+        // skip the title label (child 0) and exit button (last child)
+        for (uint32_t ci = 1; ci < nRows - 1; ci++)
+            lv_group_add_obj(gL, lv_obj_get_child(panel, (int32_t)ci));
+        lv_group_add_obj(gL, exitBtn);
+        lv_obj_t* focusRow = lv_obj_get_child(panel, (int32_t)(curLang + 1));
+        lv_group_focus_obj(focusRow);
+    }
 }
 
 static void _openKbLayoutDialog() {
@@ -3146,6 +3507,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 23:  // Keyboard Layout → dropdown dialog
             _openKbLayoutDialog();
+            return;
+
+        case 36:  // Language → picker dialog
+            _openLangDialog();
             return;
 
         case 17:  // Location Sharing — direct toggle
