@@ -239,11 +239,13 @@ void config::init() {
     if (prefs.begin("oms", /*readOnly=*/true)) {
         size_t loaded = prefs.getBytes("cfg", &s_cfg, sizeof(s_cfg));
         prefs.end();
-        // Require an exact size match: sizeof(Config) is the implicit version.
-        // Any struct layout change (field added, removed, or reordered) changes
-        // the size, causing a mismatch → fall through to SD JSON (named-key,
-        // layout-safe).  This prevents silently loading mis-aligned field data.
-        if (loaded == sizeof(s_cfg)) {
+        // Accept blobs that cover at least all fields up to (but not including)
+        // the trailing new fields appended after v1.0.0.  Those new fields are
+        // already at their default values from setDefaults() above.
+        // New fields MUST be appended at the end of the struct so that older blobs
+        // remain layout-compatible with the prefix they cover.
+        static constexpr size_t kMinBlob = offsetof(Config, uiLanguage);
+        if (loaded >= kMinBlob) {
             bool migrated = false;
             for (int i = 1; i < 10; i++) {
                 char* n  = s_cfg.channels[i].name;
@@ -252,13 +254,16 @@ void config::init() {
                     n[0] = '\0'; sn[0] = '\0'; migrated = true;
                 }
             }
-            if (migrated) { OPS_LOG("Config", "Migrated legacy CH<n>"); config::save(); }
+            if (migrated || loaded != sizeof(s_cfg)) {
+                OPS_LOG("Config", "NVS blob migrated (%u→%u bytes)", (unsigned)loaded, (unsigned)sizeof(s_cfg));
+                config::save();
+            }
             OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
                     s_cfg.callsign, s_cfg.radioRegion);
             return;
         }
-        OPS_LOG("Config", "NVS blob size mismatch (got %u, want %u) — migrating from SD",
-                (unsigned)loaded, (unsigned)sizeof(s_cfg));
+        OPS_LOG("Config", "NVS blob too small (%u, min %u) — migrating from SD",
+                (unsigned)loaded, (unsigned)kMinBlob);
     } else {
         prefs.end();
     }
