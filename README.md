@@ -3,7 +3,7 @@
 [![License: GPL v3+](https://img.shields.io/badge/License-GPL%20v3%2B-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/868meshbot/Saitama)](https://github.com/868meshbot/Saitama/releases/latest)
 [![Release Date](https://img.shields.io/github/release-date/868meshbot/Saitama)](https://github.com/868meshbot/Saitama/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/868meshbot/Saitama/build.yml?branch=main)](https://github.com/868meshbot/Saitama/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/868meshbot/Saitama/platformio.yaml?branch=main)](https://github.com/868meshbot/Saitama/actions)
 [![Platform](https://img.shields.io/badge/platform-T--Deck%20Plus-orange)](https://www.lilygo.cc/products/t-deck)
 [![MeshCore](https://img.shields.io/badge/mesh-MeshCore-green)](https://github.com/meshcore-dev/MeshCore)
 
