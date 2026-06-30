@@ -54,10 +54,9 @@ Saitama is a community project. Development tooling includes AI coding assistant
 |--------|----------|
 | `main` | Stable releases. Tagged with versions. Don't push directly. |
 | `dev` | Active development. PRs go here. CI must pass before merge. |
-| `alpha` | Created from `dev` when enough features accumulate for an alpha release. |
-| `beta` | Created from `alpha` when features are hardware-tested and mostly working. |
+| `lvgl9` | Experimental — LVGL 9.5.0 port. Not for production use. |
 
-Workflow: contribute to `dev` via PR. When enough changes accumulate, create `alpha` or `beta` branch from `dev`. When stable, merge to `main` and tag a release.
+Workflow: contribute to `dev` via PR. When stable, merge to `main` and tag a release.
 
 ## Quick Start
 
@@ -187,12 +186,10 @@ No dynamic memory allocation after setup. No heap fragmentation. This is embedde
 
 Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags:
 
-- **`-alpha.N`** — compiles, not tested on hardware. Anything may break.
-- **`-beta.N`** — running on hardware. Core features work but bugs expected.
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **0.1.0-beta.1** (compiled and tested on LilyGo T-Deck Plus)
+Current version: **1.0.1** (compiled and tested on LilyGo T-Deck Plus)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
