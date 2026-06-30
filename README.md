@@ -1,5 +1,11 @@
 # Saitama
 
+[![License: GPL v3+](https://img.shields.io/badge/License-GPL%20v3%2B-blue.svg)](LICENSE)
+[![Latest Release](https://img.shields.io/github/v/release/868meshbot/Saitama)](https://github.com/868meshbot/Saitama/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/868meshbot/Saitama/build.yml?branch=main)](https://github.com/868meshbot/Saitama/actions)
+[![Platform](https://img.shields.io/badge/platform-T--Deck%20Plus-orange)](https://www.lilygo.cc/products/t-deck)
+[![MeshCore](https://img.shields.io/badge/mesh-MeshCore-green)](https://github.com/meshcore-dev/MeshCore)
+
 Open-source standalone firmware for LoRa mesh devices. Built on [MeshCore](https://github.com/meshcore-dev/MeshCore), designed for the LilyGo T-Deck and T-Deck Plus.
 
 **A phone in your pocket, without the phone, and without the paywall.**
