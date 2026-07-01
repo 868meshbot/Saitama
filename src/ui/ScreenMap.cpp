@@ -115,6 +115,12 @@ bool ScreenMap::isActive()
     return _screen && (lv_scr_act() == _screen);
 }
 
+void ScreenMap::tick()
+{
+    if (!isActive()) return;
+    s_renderer.iterate(millis());
+}
+
 void ScreenMap::navigate(int dxPx, int dyPx)
 {
     s_renderer.panPx((int16_t)dxPx, (int16_t)dyPx);
@@ -214,6 +220,12 @@ void ScreenMap::_build()
         lv_obj_add_event_cb(base, _onTouch, LV_EVENT_PRESSING, nullptr);
         lv_group_add_obj(lv_group_get_default(), base);
         lv_group_focus_obj(base);
+
+        // tilesBase_ (first child of base_) is lv_obj and clickable by default.
+        // In LVGL 8 events don't bubble without LV_OBJ_FLAG_EVENT_BUBBLE, so
+        // clearing clickable here lets touch fall through to base_ and our handler.
+        lv_obj_t* tilesBase = lv_obj_get_child(base, 0);
+        if (tilesBase) lv_obj_clear_flag(tilesBase, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // ── Floating zoom +/- buttons (bottom-right, clear of GT911 deadzone) ─

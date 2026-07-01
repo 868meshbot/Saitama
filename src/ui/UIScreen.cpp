@@ -871,6 +871,7 @@ void tick() {
         ScreenHome::checkPendingAck();
     }
 
+    ScreenMap::tick();
     ScreenTrace::tick();
     ScreenFinder::tick();
     ScreenPower::tick();

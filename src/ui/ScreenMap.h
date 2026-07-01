@@ -17,9 +17,10 @@ class ScreenMap {
 public:
     static void show();
 
-    // Called by UIScreen::tick() for trackball pan (pixels).
+    // Called by UIScreen::tick() every frame.
     static bool isActive();
     static void navigate(int dxPx, int dyPx);
+    static void tick();  // drain NavBoxLib tile load queue
 
 private:
     static lv_obj_t* _screen;
