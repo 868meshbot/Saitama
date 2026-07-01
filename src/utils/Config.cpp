@@ -246,31 +246,46 @@ void config::init() {
         // remain layout-compatible with the prefix they cover.
         static constexpr size_t kMinBlob = offsetof(Config, uiLanguage);
         if (loaded >= kMinBlob) {
-            bool migrated = false;
-            for (int i = 1; i < 10; i++) {
-                char* n  = s_cfg.channels[i].name;
-                char* sn = s_cfg.channels[i].shortname;
-                if (n[0]=='C' && n[1]=='H' && n[2]>='2' && n[2]<='5' && n[3]=='\0') {
-                    n[0] = '\0'; sn[0] = '\0'; migrated = true;
+            // Sanity-check: if the blob was written by the briefly-released 1.0.1
+            // build that had uiLanguage inserted in the wrong struct position, all
+            // fields after offset 920 are shifted.  touchCalXScale ends up reading
+            // {rxBoost, cpuGovernor, 0x00, 0x00} — a subnormal float near 0.
+            // Any valid calibration or factory-default (1.0f) is well above 0.01f.
+            bool blobSane = (s_cfg.touchCalXScale > 0.01f);
+            if (blobSane) {
+                bool migrated = false;
+                for (int i = 1; i < 10; i++) {
+                    char* n  = s_cfg.channels[i].name;
+                    char* sn = s_cfg.channels[i].shortname;
+                    if (n[0]=='C' && n[1]=='H' && n[2]>='2' && n[2]<='5' && n[3]=='\0') {
+                        n[0] = '\0'; sn[0] = '\0'; migrated = true;
+                    }
                 }
+                if (migrated || loaded != sizeof(s_cfg)) {
+                    OPS_LOG("Config", "NVS blob migrated (%u→%u bytes)", (unsigned)loaded, (unsigned)sizeof(s_cfg));
+                    config::save();
+                }
+                OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
+                        s_cfg.callsign, s_cfg.radioRegion);
+                return;
             }
-            if (migrated || loaded != sizeof(s_cfg)) {
-                OPS_LOG("Config", "NVS blob migrated (%u→%u bytes)", (unsigned)loaded, (unsigned)sizeof(s_cfg));
-                config::save();
-            }
-            OPS_LOG("Config", "Loaded from NVS: callsign=%s region=%s",
-                    s_cfg.callsign, s_cfg.radioRegion);
-            return;
+            OPS_LOG("Config", "NVS blob corrupted (tcXScale=%.6f) — migrating from SD",
+                    s_cfg.touchCalXScale);
+            setDefaults(s_cfg);
+        } else {
+            OPS_LOG("Config", "NVS blob too small (%u, min %u) — migrating from SD",
+                    (unsigned)loaded, (unsigned)kMinBlob);
+            setDefaults(s_cfg);
         }
-        OPS_LOG("Config", "NVS blob too small (%u, min %u) — migrating from SD",
-                (unsigned)loaded, (unsigned)kMinBlob);
     } else {
         prefs.end();
     }
 
-    // ── SD backup (migration / post-reflash) ────────────────────────────
-    // SD JSON survives reflash and is the most likely source of current data.
-    if (sdcard::hasCompleteBackup() && _loadFromSD()) {
+    // ── SD backup (migration / post-reflash / corrupted NVS blob) ──────────
+    // SD JSON is named-key and survives both reflash and struct-layout changes.
+    // Try it whenever SD is mounted, not just when hasCompleteBackup() holds —
+    // contacts.json or repeaters.json may not exist yet on a fresh device.
+    if (_loadFromSD()) {
         OPS_LOG("Config", "Restored from SD backup: callsign=%s", s_cfg.callsign);
         // Clear old per-key entries and write compact blob.
         if (prefs.begin("oms", false)) { prefs.clear(); prefs.end(); }
