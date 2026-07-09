@@ -63,7 +63,7 @@ static lv_obj_t* s_emojiGrid      = nullptr;
 static lv_obj_t* s_emojiBtns[200] = {};
 static int       s_emojiBtnCount  = 0;
 
-ScreenHome::MsgEntry ScreenHome::s_history[ScreenHome::HISTORY_MAX];
+ScreenHome::MsgEntry* ScreenHome::s_history = nullptr;
 int                  ScreenHome::s_histCount = 0;
 lv_obj_t*            ScreenHome::s_metaLabels[ScreenHome::HISTORY_MAX] = {};
 
@@ -159,6 +159,21 @@ static void _sanitizeSmartPunct(char* s)
 
 // ── History ring buffer ───────────────────────────────────────────────
 
+// Allocated once, in PSRAM — HISTORY_MAX entries is too large to keep as a
+// plain static array in internal DRAM.
+bool ScreenHome::_ensureHistoryAlloc()
+{
+    if (s_history) return true;
+    s_history = (MsgEntry*)ps_malloc(sizeof(MsgEntry) * HISTORY_MAX);
+    if (!s_history) {
+        OPS_LOG("Chat", "ps_malloc failed for history (%u bytes)",
+                (unsigned)(sizeof(MsgEntry) * HISTORY_MAX));
+        return false;
+    }
+    memset(s_history, 0, sizeof(MsgEntry) * HISTORY_MAX);
+    return true;
+}
+
 void ScreenHome::_historyAdd(bool           sent,
                               const char*    sender,
                               const char*    text,
@@ -170,9 +185,26 @@ void ScreenHome::_historyAdd(bool           sent,
                               const char*    pathStr,
                               const uint8_t* pubKeyPrefix)
 {
+    if (!_ensureHistoryAlloc()) return;
+
+    const char* tagForCompare = (channelTag && channelTag[0]) ? channelTag : "Public";
+
     if (s_histCount == HISTORY_MAX) {
-        memmove(s_history,    s_history    + 1, (HISTORY_MAX - 1) * sizeof(MsgEntry));
-        memmove(s_metaLabels, s_metaLabels + 1, (HISTORY_MAX - 1) * sizeof(lv_obj_t*));
+        // Evict the oldest entry belonging to the SAME channel/DM as the
+        // incoming message, so a busy conversation can only push out its own
+        // history, never another channel's or DM's (previously this always
+        // evicted the single global-oldest entry, so e.g. traffic on other
+        // channels could silently wipe wlesandwest-chat's messages from view).
+        int victim = 0;
+        for (int i = 0; i < s_histCount; i++) {
+            const char* t = s_history[i].channelTag[0] ? s_history[i].channelTag : "Public";
+            if (strcmp(t, tagForCompare) == 0) { victim = i; break; }
+        }
+        int moveCount = HISTORY_MAX - 1 - victim;
+        if (moveCount > 0) {
+            memmove(&s_history[victim],    &s_history[victim + 1],    moveCount * sizeof(MsgEntry));
+            memmove(&s_metaLabels[victim], &s_metaLabels[victim + 1], moveCount * sizeof(lv_obj_t*));
+        }
         s_histCount--;
     }
     MsgEntry& e = s_history[s_histCount];
