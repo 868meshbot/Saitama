@@ -22,6 +22,7 @@
 #include "ScreenSpectrum.h"
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
+#include "Screen2048.h"
 #include "Theme.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -689,6 +690,8 @@ void tick() {
             if (dx || dy) ScreenSigGen::navigate(dx, dy);
         } else if (ScreenChanScan::isActive()) {
             if (dx || dy) ScreenChanScan::navigate(dx, dy);
+        } else if (Screen2048::isActive()) {
+            if (dx || dy) Screen2048::navigate(dx, dy);
         } else {
             // dy (up/down) always changes group focus.
             // dx (left/right) moves a focused slider, or changes focus otherwise.
