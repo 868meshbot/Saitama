@@ -7,11 +7,15 @@
 //   ┌──────────────────────────────────────┐
 //   │ [⌂]  Channels                        │  header 30 px
 //   ├──────────────────────────────────────┤
-//   │ ● Public                       [≡]  │
-//   │   Mesh                         [≡]  │  channel rows 34 px each
+//   │ (PU) Public              (3) [≡]    │  channel rows 60 px each —
+//   │      Alice · 09:41                   │  avatar/icon, name, last-msg
+//   │ (Me) Mesh                    [≡]    │  subtitle, unread blob (hidden
+//   │      No messages yet                 │  when count is 0), edit btn
 //   │   ...                               │
-//   │   Direct Messages                   │
+//   │ (✉)  Direct Messages     (1)        │  aggregate row, no edit btn
+//   │      Bob · 14:02                     │
 //   └──────────────────────────────────────┘
+//   Tap a row's avatar to set a custom icon (2 initials or an emoji).
 //
 //   CHAT mode  (320 x 240):
 //   ┌──────────────────────────────────────┐
@@ -35,6 +39,7 @@
 #include "../mesh/MeshService.h"
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <esp_system.h>
 #include <time.h>
 
@@ -44,8 +49,15 @@ namespace ops { namespace ui {
 
 ScreenHome::Mode ScreenHome::s_mode        = ScreenHome::MODE_LIST;
 int              ScreenHome::s_activeChIdx = 0;
-bool             ScreenHome::s_chUnread[10] = {};
-lv_obj_t*        ScreenHome::s_rowDots[10]  = {};
+
+uint16_t  ScreenHome::s_chUnreadCount[10] = {};
+uint16_t  ScreenHome::s_dmUnreadCount     = 0;
+lv_obj_t* ScreenHome::s_rowBlob[10]       = {};
+lv_obj_t* ScreenHome::s_rowBlobLbl[10]    = {};
+lv_obj_t* ScreenHome::s_rowSubtitle[10]   = {};
+lv_obj_t* ScreenHome::s_dmRowBlob         = nullptr;
+lv_obj_t* ScreenHome::s_dmRowBlobLbl      = nullptr;
+lv_obj_t* ScreenHome::s_dmRowSubtitle     = nullptr;
 
 int      ScreenHome::s_sendMode    = 0;
 uint8_t  ScreenHome::s_dmPubKey[4] = {};
@@ -79,6 +91,14 @@ static lv_obj_t* s_addPskTa         = nullptr;
 static lv_obj_t* s_addScopeTa       = nullptr;
 static lv_obj_t* s_dmPickerOverlay  = nullptr;
 static lv_obj_t* s_addContactOverlay = nullptr;
+// Channel icon picker (avatar tap on the list row)
+static lv_obj_t* s_iconOverlay       = nullptr;
+static int       s_iconChIdx         = -1;
+static lv_obj_t* s_iconInitialsTa    = nullptr;
+static lv_obj_t* s_iconEmojiOverlay  = nullptr;
+static lv_obj_t* s_iconEmojiGrid     = nullptr;
+static lv_obj_t* s_iconEmojiBtns[200] = {};
+static int       s_iconEmojiBtnCount = 0;
 // Captured when the user taps a received bubble; consumed by _onAddContactSave.
 static char     s_pendingContactName[32] = {};
 static uint8_t  s_pendingContactKey[4]   = {};
@@ -569,7 +589,7 @@ void ScreenHome::openChannel(int chIdx)
     if (chIdx >= 0 && chIdx <= 9) {
         s_sendMode    = chIdx;
         s_activeChIdx = chIdx;
-        s_chUnread[chIdx] = false;
+        s_chUnreadCount[chIdx] = 0;
     }
     s_mode = MODE_CHAT;
     _showChat();
@@ -582,9 +602,10 @@ void ScreenHome::openDM(const uint8_t* pubKeyPrefix4, const char* name)
     memcpy(s_dmPubKey, pubKeyPrefix4, 4);
     strncpy(s_dmName, name, sizeof(s_dmName) - 1);
     s_dmName[sizeof(s_dmName) - 1] = '\0';
-    s_sendMode    = 10;
-    s_activeChIdx = -1;
-    s_mode        = MODE_CHAT;
+    s_sendMode      = 10;
+    s_activeChIdx   = -1;
+    s_dmUnreadCount = 0;
+    s_mode          = MODE_CHAT;
     _showChat();
 }
 
@@ -619,13 +640,21 @@ void ScreenHome::appendMessage(const RxMessage& msg)
         bool isViewing = (s_mode == MODE_CHAT && s_activeChIdx == slot &&
                           _screen && lv_scr_act() == _screen);
         if (!isViewing) {
-            s_chUnread[slot] = true;
-            if (s_mode == MODE_LIST && s_rowDots[slot]) {
-                lv_obj_clear_flag(s_rowDots[slot], LV_OBJ_FLAG_HIDDEN);
-            }
+            s_chUnreadCount[slot]++;
+            if (s_mode == MODE_LIST)
+                _updateChannelRowSummary(slot, msg.senderName, msg.timestamp);
         }
         if (ops::config::get().channels[slot].notify)
             ops::sound::playNotification();
+    } else if (msg.isDirect) {
+        bool isViewingDM = (s_mode == MODE_CHAT && s_sendMode == 10 &&
+                            _screen && lv_scr_act() == _screen &&
+                            strncmp(s_dmName, msg.senderName, sizeof(s_dmName) - 1) == 0);
+        if (!isViewingDM) {
+            s_dmUnreadCount++;
+            if (s_mode == MODE_LIST)
+                _updateDMRowSummary(msg.senderName, msg.timestamp);
+        }
     }
 
     const char* viewTag = _getViewTag();
@@ -669,6 +698,158 @@ void ScreenHome::checkPendingAck()
     }
 }
 
+// ── List-row icon/summary helpers ───────────────────────────────────────
+
+// Resolves the avatar glyph for a channel row: the custom icon if the user
+// has set one (emoji or up to 2 chars), else up to 2 uppercase alnum
+// initials auto-derived from the channel name.
+static void _resolveIcon(int chIdx, const char* name, char* out, int outSize)
+{
+    const auto& cfg = ops::config::get();
+    if (chIdx >= 0 && chIdx < 10 && cfg.channelIcon[chIdx][0]) {
+        snprintf(out, outSize, "%s", cfg.channelIcon[chIdx]);
+        return;
+    }
+    int n = 0;
+    for (const char* p = name; *p && n < 2 && n < outSize - 1; p++) {
+        if (isalnum((unsigned char)*p)) out[n++] = (char)toupper((unsigned char)*p);
+    }
+    if (n == 0) { out[0] = '#'; n = 1; }
+    out[n] = '\0';
+}
+
+// Deterministic-but-varied avatar background colour per channel slot.
+static lv_color_t _avatarColor(int chIdx)
+{
+    return lv_color_hsv_to_rgb((uint16_t)(((chIdx + 1) * 53) % 360), 45, 60);
+}
+
+// Reads the tail of a channel/DM's SD message log and extracts the last
+// message's sender + timestamp, for the list row subtitle. Returns false if
+// no message is on disk for this tag (or SD isn't mounted).
+static bool _lastMsgFromLog(const char* tag, char* senderOut, int senderMax, uint32_t* tsOut)
+{
+    if (!tag || !tag[0] || !ops::sdcard::isMounted()) return false;
+    char buf[512];
+    size_t n = ops::sdcard::readMsgLog(tag, buf, sizeof(buf));
+    if (n == 0) return false;
+    char* lastOpen = strrchr(buf, '{');
+    if (!lastOpen) return false;
+    bool sent = (bool)_jsonGetLong(lastOpen, "s");
+    *tsOut = (uint32_t)_jsonGetLong(lastOpen, "ts");
+    if (sent) {
+        snprintf(senderOut, senderMax, "You");
+    } else {
+        char name[32] = {};
+        _jsonGetStr(lastOpen, "n", name, sizeof(name));
+        snprintf(senderOut, senderMax, "%s", name[0] ? name : "Unknown");
+    }
+    return true;
+}
+
+// Scans every /ops/msgs/DM_*.log tail and returns the most recent message's
+// sender + timestamp, for the aggregate Direct Messages row subtitle.
+static bool _lastDMSummaryFromLogs(char* senderOut, int senderMax, uint32_t* tsOut)
+{
+    if (!ops::sdcard::isMounted()) return false;
+    char dirBuf[512];
+    size_t n = ops::sdcard::listDir("/ops/msgs", dirBuf, sizeof(dirBuf));
+    if (n == 0) return false;
+
+    bool     found   = false;
+    uint32_t bestTs   = 0;
+    char     bestSender[32] = {};
+
+    char* line = dirBuf;
+    while (*line) {
+        char* end = strchr(line, '\n');
+        if (end) *end = '\0';
+        if (strncmp(line, "DM_", 3) == 0) {
+            const char* dot = strstr(line, ".log");
+            int len = dot ? (int)(dot - line) : (int)strlen(line);
+            if (len > 31) len = 31;
+            char tag[32] = {};
+            memcpy(tag, line, len);
+            tag[len] = '\0';
+
+            char sender[32] = {};
+            uint32_t ts = 0;
+            if (_lastMsgFromLog(tag, sender, sizeof(sender), &ts)) {
+                if (!found || ts > bestTs) {
+                    found  = true;
+                    bestTs = ts;
+                    snprintf(bestSender, sizeof(bestSender), "%s", sender);
+                }
+            }
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+
+    if (!found) return false;
+    snprintf(senderOut, senderMax, "%s", bestSender);
+    *tsOut = bestTs;
+    return true;
+}
+
+// Renders a subtitle label as "<sender> - HH:MM", or a placeholder if empty.
+static void _setRowSubtitle(lv_obj_t* lbl, bool hasMsg, const char* sender, uint32_t ts)
+{
+    if (!lbl || !lv_obj_is_valid(lbl)) return;
+    if (!hasMsg) {
+        lv_label_set_text(lbl, "No messages yet");
+        return;
+    }
+    char timeBuf[8];
+    if (ts == 0) {
+        snprintf(timeBuf, sizeof(timeBuf), "--:--");
+    } else {
+        time_t t = (time_t)ts;
+        struct tm lt;
+        localtime_r(&t, &lt);
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", lt.tm_hour, lt.tm_min);
+    }
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s - %s", sender, timeBuf);  // plain ASCII — the built-in
+                                                              // montserrat_10 font doesn't
+                                                              // cover U+00B7 (middle dot)
+    lv_label_set_text(lbl, buf);
+}
+
+// Renders an unread-count blob's label + visibility from a count.
+static void _setRowBlobCount(lv_obj_t* blob, lv_obj_t* blobLbl, uint16_t count)
+{
+    if (!blob || !lv_obj_is_valid(blob)) return;
+    if (count == 0) {
+        lv_obj_add_flag(blob, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(blob, LV_OBJ_FLAG_HIDDEN);
+    if (blobLbl && lv_obj_is_valid(blobLbl)) {
+        char cntBuf[5];
+        if (count > 99) snprintf(cntBuf, sizeof(cntBuf), "99+");
+        else             snprintf(cntBuf, sizeof(cntBuf), "%u", (unsigned)count);
+        lv_label_set_text(blobLbl, cntBuf);
+    }
+}
+
+// ── _updateChannelRowSummary() / _updateDMRowSummary() ─────────────────
+// Live-updates a row's subtitle + unread blob while the list is showing
+// (mirrors the old unread-dot live-update behaviour).
+
+void ScreenHome::_updateChannelRowSummary(int chIdx, const char* sender, uint32_t ts)
+{
+    if (chIdx < 0 || chIdx >= 10) return;
+    _setRowSubtitle(s_rowSubtitle[chIdx], true, sender, ts);
+    _setRowBlobCount(s_rowBlob[chIdx], s_rowBlobLbl[chIdx], s_chUnreadCount[chIdx]);
+}
+
+void ScreenHome::_updateDMRowSummary(const char* sender, uint32_t ts)
+{
+    _setRowSubtitle(s_dmRowSubtitle, true, sender, ts);
+    _setRowBlobCount(s_dmRowBlob, s_dmRowBlobLbl, s_dmUnreadCount);
+}
+
 // ── _showList() ───────────────────────────────────────────────────────
 
 void ScreenHome::_showList()
@@ -695,7 +876,14 @@ void ScreenHome::_showList()
     s_emojiGrid  = nullptr;
     s_emojiBtnCount = 0;
     for (int i = 0; i < HISTORY_MAX; i++) s_metaLabels[i] = nullptr;
-    for (int i = 0; i < 10; i++) s_rowDots[i] = nullptr;
+    for (int i = 0; i < 10; i++) {
+        s_rowBlob[i]     = nullptr;
+        s_rowBlobLbl[i]  = nullptr;
+        s_rowSubtitle[i] = nullptr;
+    }
+    s_dmRowBlob     = nullptr;
+    s_dmRowBlobLbl  = nullptr;
+    s_dmRowSubtitle = nullptr;
 
     s_listScreen = lv_obj_create(nullptr);
     lv_obj_set_size(s_listScreen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -765,24 +953,23 @@ void ScreenHome::_showList()
     const auto& cfg = ops::config::get();
     int rowIdx = 0;
 
-    // Row width breakdown (OPS_SCREEN_W=320, pad_hor=4 each side):
-    //   content = 312 px; dot-cont=14, gap=4, name=224, gap=4, action-btn=30 → 276
-    //   action-btn right edge = pad_left(4)+14+4+224+4+30 = 280 px
-    //   DM row (no action btn): dot-cont=14, gap=4, name=294 → 312
+    // Row height is doubled from the original 34px single-line design to fit
+    // a name line + a "last message" subtitle line. Widths are resolved by
+    // flex (avatar/blob/action fixed, text column flex_grow=1) rather than
+    // hardcoded, so this no longer needs a pixel-budget comment.
+    static constexpr int ROW_H = 60;
 
-    auto addRow = [&](int chIdx, const char* name, bool hasDot, bool hasAction) {
-        bool unread = (hasDot && chIdx >= 0 && chIdx < 10) ? s_chUnread[chIdx] : false;
-
+    auto addRow = [&](int chIdx, const char* name, bool hasAction) {
         lv_obj_t* row = lv_btn_create(listBody);
-        lv_obj_set_size(row, OPS_SCREEN_W, 34);
+        lv_obj_set_size(row, OPS_SCREEN_W, ROW_H);
         lv_obj_set_style_bg_color(row, (rowIdx & 1) ? theme::BG_CARD : theme::BG, 0);
         lv_obj_set_style_bg_color(row, theme::PRIMARY, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
         lv_obj_set_style_pad_hor(row, 4, 0);
-        lv_obj_set_style_pad_ver(row, 2, 0);
-        lv_obj_set_style_pad_column(row, 4, 0);
+        lv_obj_set_style_pad_ver(row, 4, 0);
+        lv_obj_set_style_pad_column(row, 6, 0);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_group_remove_obj(row);
@@ -793,39 +980,96 @@ void ScreenHome::_showList()
             lv_obj_add_event_cb(row, _onDMRow, LV_EVENT_CLICKED, nullptr);
         }
 
-        // Unread dot container (non-clickable, 14px wide)
-        lv_obj_t* dotCont = lv_obj_create(row);
-        lv_obj_set_size(dotCont, 14, 30);
-        lv_obj_set_style_bg_opa(dotCont, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(dotCont, 0, 0);
-        lv_obj_set_style_pad_all(dotCont, 0, 0);
-        lv_obj_clear_flag(dotCont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        // ── Avatar (icon) — tap to customise for channels; fixed for DM ────
+        lv_obj_t* avatar = lv_obj_create(row);
+        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(avatar, 0, 0);
+        lv_obj_clear_flag(avatar, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t* dot = lv_obj_create(dotCont);
-        lv_obj_set_size(dot, 8, 8);
-        lv_obj_set_style_bg_color(dot, theme::RED, 0);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(dot, 0, 0);
-        lv_obj_set_style_shadow_width(dot, 0, 0);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_center(dot);
-        if (!unread) lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        char iconBuf[10];
+        if (chIdx >= 0) {
+            _resolveIcon(chIdx, name, iconBuf, sizeof(iconBuf));
+            lv_obj_set_style_bg_color(avatar, _avatarColor(chIdx), 0);
+            lv_obj_set_style_border_width(avatar, 0, 0);
+            lv_obj_add_flag(avatar, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(avatar, _onAvatarClick, LV_EVENT_CLICKED, (void*)(intptr_t)chIdx);
+        } else {
+            snprintf(iconBuf, sizeof(iconBuf), "%s", LV_SYMBOL_CALL);
+            lv_obj_set_style_bg_color(avatar, theme::BG_CARD, 0);
+            lv_obj_set_style_border_width(avatar, 1, 0);
+            lv_obj_set_style_border_color(avatar, theme::BORDER, 0);
+            lv_obj_clear_flag(avatar, LV_OBJ_FLAG_CLICKABLE);
+        }
+        lv_obj_t* iconLbl = lv_label_create(avatar);
+        lv_label_set_text(iconLbl, iconBuf);
+        lv_obj_set_style_text_color(iconLbl, theme::TEXT, 0);
+        // LV_SYMBOL_* glyphs only exist in plain Montserrat, not the emoji-capable
+        // bodyFont (that font's private-use range is reassigned to emoji images).
+        lv_obj_set_style_text_font(iconLbl, (chIdx >= 0) ? theme::bodyFont12()
+                                                          : &lv_font_montserrat_12, 0);
+        lv_obj_center(iconLbl);
 
-        if (hasDot && chIdx >= 0 && chIdx < 10) s_rowDots[chIdx] = dot;
+        // ── Text column: channel name + last-message subtitle ──────────────
+        lv_obj_t* col = lv_obj_create(row);
+        lv_obj_set_height(col, 44);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(col, 0, 0);
+        lv_obj_set_style_pad_all(col, 0, 0);
+        lv_obj_set_style_pad_row(col, 1, 0);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-        // Channel name label (fixed width)
-        lv_obj_t* nameLbl = lv_label_create(row);
+        lv_obj_t* nameLbl = lv_label_create(col);
         lv_label_set_text(nameLbl, name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, hasAction ? 224 : 294);
+        lv_obj_set_width(nameLbl, LV_PCT(100));
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
 
-        // Action button (≡) for channel rows
+        lv_obj_t* subLbl = lv_label_create(col);
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(subLbl, LV_PCT(100));
+        lv_obj_set_style_text_color(subLbl, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
+        {
+            char sender[32] = {};
+            uint32_t ts = 0;
+            bool has = (chIdx >= 0)
+                ? _lastMsgFromLog(name, sender, sizeof(sender), &ts)
+                : _lastDMSummaryFromLogs(sender, sizeof(sender), &ts);
+            _setRowSubtitle(subLbl, has, sender, ts);
+        }
+        if (chIdx >= 0 && chIdx < 10) s_rowSubtitle[chIdx] = subLbl;
+        else                          s_dmRowSubtitle = subLbl;
+
+        // ── Unread-count blob (hidden entirely when count is 0) ─────────────
+        lv_obj_t* blob = lv_obj_create(row);
+        lv_obj_set_size(blob, LV_SIZE_CONTENT, 22);
+        lv_obj_set_style_min_width(blob, 22, 0);
+        lv_obj_set_style_radius(blob, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(blob, theme::RED, 0);
+        lv_obj_set_style_bg_opa(blob, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(blob, 0, 0);
+        lv_obj_set_style_pad_hor(blob, 4, 0);
+        lv_obj_set_style_pad_ver(blob, 0, 0);
+        lv_obj_clear_flag(blob, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* blobLbl = lv_label_create(blob);
+        lv_obj_set_style_text_color(blobLbl, theme::BG, 0);
+        lv_obj_set_style_text_font(blobLbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(blobLbl);
+
+        uint16_t unreadCount = (chIdx >= 0 && chIdx < 10) ? s_chUnreadCount[chIdx] : s_dmUnreadCount;
+        _setRowBlobCount(blob, blobLbl, unreadCount);
+        if (chIdx >= 0 && chIdx < 10) { s_rowBlob[chIdx] = blob; s_rowBlobLbl[chIdx] = blobLbl; }
+        else                          { s_dmRowBlob      = blob; s_dmRowBlobLbl      = blobLbl; }
+
+        // ── Action button (≡) for channel rows ──────────────────────────────
         if (hasAction) {
             lv_obj_t* actBtn = lv_btn_create(row);
-            lv_obj_set_size(actBtn, 30, 28);
+            lv_obj_set_size(actBtn, 26, 26);
             lv_obj_set_style_bg_color(actBtn, theme::BG_CARD, 0);
             lv_obj_set_style_bg_color(actBtn, theme::ACCENT, LV_STATE_PRESSED);
             lv_obj_set_style_border_color(actBtn, theme::BORDER, 0);
@@ -833,6 +1077,7 @@ void ScreenHome::_showList()
             lv_obj_set_style_radius(actBtn, 4, 0);
             lv_obj_set_style_shadow_width(actBtn, 0, 0);
             lv_obj_set_style_pad_all(actBtn, 2, 0);
+            lv_obj_set_style_translate_x(actBtn, -45, 0);  // pull in from the flex-pushed right edge
             lv_group_remove_obj(actBtn);
             lv_obj_add_event_cb(actBtn, _onActionBtn, LV_EVENT_CLICKED,
                                 (void*)(intptr_t)chIdx);
@@ -850,17 +1095,17 @@ void ScreenHome::_showList()
     // Slot 0 (Public) — always shown
     {
         const char* name = cfg.channels[0].name[0] ? cfg.channels[0].name : "Public";
-        addRow(0, name, true, true);
+        addRow(0, name, true);
     }
 
     // Slots 1-9 — shown if name is configured
     for (int i = 1; i < 10; i++) {
         if (!cfg.channels[i].name[0]) continue;
-        addRow(i, cfg.channels[i].name, true, true);
+        addRow(i, cfg.channels[i].name, true);
     }
 
     // Direct Messages entry — always shown at bottom
-    addRow(-1, LV_SYMBOL_CALL "  Direct Messages", false, false);
+    addRow(-1, LV_SYMBOL_CALL "  Direct Messages", false);
 
     lv_scr_load(s_listScreen);
     if (oldChat) lv_obj_del(oldChat);
@@ -885,7 +1130,16 @@ void ScreenHome::_showChat()
     // Capture old screens — delete them AFTER loading the new one (safe LVGL pattern)
     lv_obj_t* oldList = s_listScreen;
     lv_obj_t* oldChat = _screen;
-    if (oldList) for (int i = 0; i < 10; i++) s_rowDots[i] = nullptr;
+    if (oldList) {
+        for (int i = 0; i < 10; i++) {
+            s_rowBlob[i]     = nullptr;
+            s_rowBlobLbl[i]  = nullptr;
+            s_rowSubtitle[i] = nullptr;
+        }
+        s_dmRowBlob     = nullptr;
+        s_dmRowBlobLbl  = nullptr;
+        s_dmRowSubtitle = nullptr;
+    }
     if (oldChat) for (int i = 0; i < HISTORY_MAX; i++) s_metaLabels[i] = nullptr;
     s_listScreen = nullptr;
     _screen      = nullptr;
@@ -1029,9 +1283,11 @@ void ScreenHome::_showChat()
         lv_group_focus_obj(_textarea);
     }
 
-    // Clear unread for this channel
+    // Clear unread for this channel / DM
     if (s_sendMode >= 0 && s_sendMode < 10)
-        s_chUnread[s_sendMode] = false;
+        s_chUnreadCount[s_sendMode] = 0;
+    else if (s_sendMode == 10)
+        s_dmUnreadCount = 0;
 
     lv_scr_load(_screen);
     if (oldList) lv_obj_del(oldList);
@@ -1280,6 +1536,9 @@ void ScreenHome::_openAddChannelDialog()
 
 void ScreenHome::_openDMPicker()
 {
+    // Opening the DM section counts as reading the aggregate DM notification.
+    s_dmUnreadCount = 0;
+
     lv_obj_t* overlay = lv_obj_create(lv_scr_act());
     lv_obj_set_size(overlay, OPS_SCREEN_W, OPS_SCREEN_H);
     lv_obj_set_pos(overlay, 0, 0);
@@ -1490,7 +1749,7 @@ void ScreenHome::_onChannelRow(lv_event_t* e)
     s_sendMode    = chIdx;
     s_activeChIdx = chIdx;
     s_mode        = MODE_CHAT;
-    s_chUnread[chIdx] = false;
+    s_chUnreadCount[chIdx] = 0;
     _showChat();
 }
 
@@ -1998,6 +2257,243 @@ void ScreenHome::_onEmojiInsert(lv_event_t* e)
         lv_obj_del(_emojiPanel);
         _emojiPanel = nullptr;
     }
+}
+
+// ── Channel icon picker ─────────────────────────────────────────────────
+// Tapping a channel row's avatar opens this: type up to 2 initials, or pick
+// an emoji from the same table used by the chat compose picker.
+
+void ScreenHome::_onAvatarClick(lv_event_t* e)
+{
+    int chIdx = (int)(intptr_t)lv_event_get_user_data(e);
+    _openIconPicker(chIdx);
+}
+
+void ScreenHome::_openIconPicker(int chIdx)
+{
+    if (chIdx < 0 || chIdx > 9) return;  // the aggregate DM row has no custom icon
+    if (s_iconOverlay) { lv_obj_del(s_iconOverlay); s_iconOverlay = nullptr; }
+    s_iconChIdx = chIdx;
+
+    const auto& cfg = ops::config::get();
+    const char* chName = (chIdx == 0)
+        ? (cfg.channels[0].name[0] ? cfg.channels[0].name : "Public")
+        : cfg.channels[chIdx].name;
+
+    s_iconOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_iconOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_iconOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_iconOverlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_iconOverlay, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_iconOverlay, 0, 0);
+    lv_obj_clear_flag(s_iconOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* box = lv_obj_create(s_iconOverlay);
+    lv_obj_set_size(box, 240, LV_SIZE_CONTENT);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(box, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 6, 0);
+    lv_obj_set_style_pad_all(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 6, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);  // absorbs clicks, prevents overlay close
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    char titleBuf[36];
+    snprintf(titleBuf, sizeof(titleBuf), "Icon: %.24s", chName);
+    lv_obj_t* tLbl = lv_label_create(box);
+    lv_label_set_text(tLbl, titleBuf);
+    lv_obj_set_style_text_color(tLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_width(tLbl, LV_PCT(100));
+
+    lv_obj_t* hint = lv_label_create(box);
+    lv_label_set_text(hint, "Up to 2 letters, or pick an emoji");
+    lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    s_iconInitialsTa = lv_textarea_create(box);
+    lv_obj_set_size(s_iconInitialsTa, 200, 32);
+    lv_textarea_set_one_line(s_iconInitialsTa, true);
+    lv_textarea_set_max_length(s_iconInitialsTa, 2);
+    lv_textarea_set_text(s_iconInitialsTa, cfg.channelIcon[chIdx]);
+    lv_obj_set_style_bg_color(s_iconInitialsTa, theme::BG, 0);
+    lv_obj_set_style_text_color(s_iconInitialsTa, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_iconInitialsTa, theme::bodyFont12(), 0);
+    lv_obj_set_style_border_color(s_iconInitialsTa, theme::BORDER, 0);
+    lv_obj_set_style_border_width(s_iconInitialsTa, 1, 0);
+    lv_obj_set_style_radius(s_iconInitialsTa, 4, 0);
+    lv_group_t* gIcon = lv_group_get_default();
+    if (gIcon) {
+        lv_group_add_obj(gIcon, s_iconInitialsTa);
+        lv_group_focus_obj(s_iconInitialsTa);
+    }
+
+    auto mkBtn = [&](const char* label, lv_color_t bg, lv_event_cb_t cb) {
+        lv_obj_t* btn = lv_btn_create(box);
+        lv_obj_set_size(btn, 200, 30);
+        lv_obj_set_style_bg_color(btn, bg, 0);
+        lv_obj_set_style_bg_color(btn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_group_remove_obj(btn);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
+        lv_obj_center(lbl);
+    };
+
+    mkBtn("Save Initials", theme::PRIMARY, _onIconInitialsSave);
+    mkBtn("Choose Emoji",  theme::BG,      _onIconEmojiOpen);
+    mkBtn("Close",         theme::BG,      _onIconPickerClose);
+}
+
+void ScreenHome::_onIconInitialsSave(lv_event_t* /*e*/)
+{
+    if (s_iconChIdx < 0 || !s_iconInitialsTa) return;
+    ops::config::setChannelIcon(s_iconChIdx, lv_textarea_get_text(s_iconInitialsTa));
+
+    if (s_iconOverlay) { lv_obj_del(s_iconOverlay); s_iconOverlay = nullptr; s_iconInitialsTa = nullptr; }
+    s_iconChIdx = -1;
+    _showList();
+}
+
+static void _onIconEmojiSearch(lv_event_t* e)
+{
+    if (!s_iconEmojiGrid || !lv_obj_is_valid(s_iconEmojiGrid)) return;
+    const char* q = lv_textarea_get_text((lv_obj_t*)lv_event_get_target(e));
+    for (int i = 0; i < s_iconEmojiBtnCount; i++) {
+        if (!s_iconEmojiBtns[i] || !lv_obj_is_valid(s_iconEmojiBtns[i])) continue;
+        bool show = (!q || !q[0]) || (strstr(kOpsEmoji[i].name, q) != nullptr);
+        if (show) lv_obj_clear_flag(s_iconEmojiBtns[i], LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag  (s_iconEmojiBtns[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void ScreenHome::_onIconEmojiOpen(lv_event_t* /*e*/)
+{
+    if (s_iconEmojiOverlay) { lv_obj_del(s_iconEmojiOverlay); s_iconEmojiOverlay = nullptr; }
+
+    static constexpr int SEARCH_H = 28;
+    static constexpr int CLOSE_H  = 30;
+
+    s_iconEmojiOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_iconEmojiOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_iconEmojiOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_iconEmojiOverlay, theme::BG_CARD, 0);
+    lv_obj_set_style_border_width(s_iconEmojiOverlay, 0, 0);
+    lv_obj_set_style_pad_all(s_iconEmojiOverlay, 0, 0);
+    lv_obj_clear_flag(s_iconEmojiOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* searchTa = lv_textarea_create(s_iconEmojiOverlay);
+    lv_obj_set_size(searchTa, OPS_SCREEN_W, SEARCH_H);
+    lv_obj_set_pos(searchTa, 0, 0);
+    lv_textarea_set_one_line(searchTa, true);
+    lv_textarea_set_placeholder_text(searchTa, "search...");
+    lv_obj_set_style_bg_color(searchTa, theme::BG, 0);
+    lv_obj_set_style_text_color(searchTa, theme::TEXT, 0);
+    lv_obj_set_style_text_font(searchTa, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(searchTa, theme::BORDER, 0);
+    lv_obj_set_style_border_width(searchTa, 1, 0);
+    lv_obj_set_style_radius(searchTa, 0, 0);
+    lv_obj_set_style_pad_hor(searchTa, 6, 0);
+    lv_obj_set_style_pad_ver(searchTa, 6, 0);
+    lv_obj_add_event_cb(searchTa, _onIconEmojiSearch, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    s_iconEmojiGrid = lv_obj_create(s_iconEmojiOverlay);
+    lv_obj_set_size(s_iconEmojiGrid, OPS_SCREEN_W, OPS_SCREEN_H - SEARCH_H - CLOSE_H);
+    lv_obj_set_pos(s_iconEmojiGrid, 0, SEARCH_H);
+    lv_obj_set_style_bg_color(s_iconEmojiGrid, theme::BG_CARD, 0);
+    lv_obj_set_style_border_width(s_iconEmojiGrid, 0, 0);
+    lv_obj_set_style_radius(s_iconEmojiGrid, 0, 0);
+    lv_obj_set_style_pad_all(s_iconEmojiGrid, 2, 0);
+    lv_obj_set_style_pad_row(s_iconEmojiGrid, 2, 0);
+    lv_obj_set_style_pad_column(s_iconEmojiGrid, 2, 0);
+    lv_obj_set_scroll_dir(s_iconEmojiGrid, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_iconEmojiGrid, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_flex_flow(s_iconEmojiGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(s_iconEmojiGrid,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    s_iconEmojiBtnCount = 0;
+    int limit = (kOpsEmojiCount < 200) ? kOpsEmojiCount : 200;
+    for (int i = 0; i < limit; i++) {
+        lv_obj_t* btn = lv_btn_create(s_iconEmojiGrid);
+        s_iconEmojiBtns[i] = btn;
+        s_iconEmojiBtnCount++;
+
+        lv_obj_set_size(btn, 56, 26);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 2, 0);
+        lv_obj_add_event_cb(btn, _onIconEmojiPick, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(
+                                static_cast<uintptr_t>(kOpsEmoji[i].codepoint)));
+
+        char utf8[5] = {};
+        _codeToUtf8(kOpsEmoji[i].codepoint, utf8);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, utf8);
+        lv_obj_set_style_text_font(lbl, theme::bodyFont12(), 0);  // emoji-capable
+        lv_obj_center(lbl);
+    }
+
+    lv_obj_t* closeBtn = lv_btn_create(s_iconEmojiOverlay);
+    lv_obj_set_size(closeBtn, OPS_SCREEN_W - 8, CLOSE_H - 4);
+    lv_obj_set_pos(closeBtn, 4, OPS_SCREEN_H - CLOSE_H + 2);
+    lv_obj_set_style_bg_color(closeBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(closeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(closeBtn, 1, 0);
+    lv_obj_set_style_radius(closeBtn, 4, 0);
+    lv_obj_set_style_shadow_width(closeBtn, 0, 0);
+    lv_obj_add_event_cb(closeBtn, _onIconPickerClose, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* closeLbl = lv_label_create(closeBtn);
+    lv_label_set_text(closeLbl, LV_SYMBOL_CLOSE " Close");
+    lv_obj_set_style_text_color(closeLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(closeLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(closeLbl);
+}
+
+void ScreenHome::_onIconEmojiPick(lv_event_t* e)
+{
+    if (s_iconChIdx < 0) return;
+    uint32_t cp = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    char utf8[5] = {};
+    _codeToUtf8(cp, utf8);
+    ops::config::setChannelIcon(s_iconChIdx, utf8);
+
+    if (s_iconEmojiOverlay) {
+        lv_obj_del(s_iconEmojiOverlay);
+        s_iconEmojiOverlay  = nullptr;
+        s_iconEmojiGrid     = nullptr;
+        s_iconEmojiBtnCount = 0;
+    }
+    if (s_iconOverlay) { lv_obj_del(s_iconOverlay); s_iconOverlay = nullptr; s_iconInitialsTa = nullptr; }
+    s_iconChIdx = -1;
+    _showList();
+}
+
+void ScreenHome::_onIconPickerClose(lv_event_t* /*e*/)
+{
+    if (s_iconEmojiOverlay) {
+        lv_obj_del(s_iconEmojiOverlay);
+        s_iconEmojiOverlay  = nullptr;
+        s_iconEmojiGrid     = nullptr;
+        s_iconEmojiBtnCount = 0;
+        return;  // just back out of the emoji grid to the icon picker box
+    }
+    if (s_iconOverlay) { lv_obj_del(s_iconOverlay); s_iconOverlay = nullptr; s_iconInitialsTa = nullptr; }
+    s_iconChIdx = -1;
 }
 
 }}  // namespace ops::ui

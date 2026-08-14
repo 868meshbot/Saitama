@@ -69,6 +69,7 @@ static void setDefaults(Config& c) {
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
     c.uiLanguage       = 0;      // default English
     c.kbAutoNight      = false;  // default off — manual kbBrightness level always applies
+    for (int i = 0; i < 10; i++) c.channelIcon[i][0] = '\0';  // empty = auto-derive initials
     c.touchCalXScale   = 1.0f;
     c.touchCalXOff     = 0.0f;
     c.touchCalYScale   = 1.0f;
@@ -135,6 +136,7 @@ static void _saveToSD() {
         ch["psk"]    = s_cfg.channels[i].psk;
         ch["notify"] = s_cfg.channels[i].notify;
         ch["scope"]  = s_cfg.channels[i].scope;
+        ch["icon"]   = s_cfg.channelIcon[i];
     }
     File f = SD.open("/ops/settings.json", FILE_WRITE);
     if (!f) return;
@@ -221,6 +223,9 @@ static bool _loadFromSD() {
             s_cfg.channels[i].psk[sizeof(s_cfg.channels[i].psk)             - 1] = '\0';
             s_cfg.channels[i].scope[sizeof(s_cfg.channels[i].scope)         - 1] = '\0';
             s_cfg.channels[i].notify = ch["notify"] | false;
+            const char* ic = ch["icon"] | "";
+            strncpy(s_cfg.channelIcon[i], ic, sizeof(s_cfg.channelIcon[i]) - 1);
+            s_cfg.channelIcon[i][sizeof(s_cfg.channelIcon[i]) - 1] = '\0';
             i++;
         }
     }
@@ -362,6 +367,10 @@ void config::init() {
             String sc = prefs.getString(key, "");
             strncpy(s_cfg.channels[i].scope, sc.c_str(), sizeof(s_cfg.channels[i].scope) - 1);
             s_cfg.channels[i].scope[sizeof(s_cfg.channels[i].scope) - 1] = '\0';
+            snprintf(key, sizeof(key), "ch%dicon", i);
+            String ic = prefs.getString(key, "");
+            strncpy(s_cfg.channelIcon[i], ic.c_str(), sizeof(s_cfg.channelIcon[i]) - 1);
+            s_cfg.channelIcon[i][sizeof(s_cfg.channelIcon[i]) - 1] = '\0';
         }
         prefs.end();
         // Clear old per-key entries and write compact blob.
@@ -423,6 +432,13 @@ void config::setTouchCal(float xScale, float xOff, float yScale, float yOff) {
 void config::setChannelNotify(int idx, bool notify) {
     if (idx < 0 || idx > 9) return;
     s_cfg.channels[idx].notify = notify;
+    save();
+}
+
+void config::setChannelIcon(int idx, const char* icon) {
+    if (idx < 0 || idx > 9) return;
+    strncpy(s_cfg.channelIcon[idx], icon ? icon : "", sizeof(s_cfg.channelIcon[idx]) - 1);
+    s_cfg.channelIcon[idx][sizeof(s_cfg.channelIcon[idx]) - 1] = '\0';
     save();
 }
 

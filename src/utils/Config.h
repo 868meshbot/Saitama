@@ -79,6 +79,11 @@ struct Config {
     // ── (which lack these bytes) can still be accepted and migrated cleanly. ──
     uint8_t    uiLanguage;       // 0=EN, 1=IT, 2=FR, 3=DE, 4=ES (ops::lang::UiLang)
     bool       kbAutoNight;      // true = auto keyboard backlight 21:00-07:00 (at kbBrightness level), off otherwise
+    // Per-channel-slot custom icon shown in the chat list: an emoji (UTF-8, up
+    // to 4 bytes) or up to 2 ASCII initials. Empty = auto-derive initials from
+    // the channel name. Kept as a top-level array (not a ChannelCfg field) so
+    // it can be appended here without shifting ChannelCfg's layout.
+    char       channelIcon[10][8];
 };
 
 namespace config {
@@ -92,6 +97,7 @@ namespace config {
     void setRegion(const char* reg);
     void setChannel(int idx, const char* name, const char* psk, const char* shortname, const char* scope = "");
     void setChannelNotify(int idx, bool notify);
+    void setChannelIcon(int idx, const char* icon);
 
     // Returns time(nullptr) adjusted by timezoneOffsetHours.
     // Use with gmtime_r() wherever local time needs to be displayed.

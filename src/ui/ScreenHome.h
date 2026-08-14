@@ -57,8 +57,16 @@ private:
     // ── Mode state ────────────────────────────────────────────────────
     static Mode     s_mode;
     static int      s_activeChIdx;   // 0-9 when CHAT channel, -1 for DM
-    static bool     s_chUnread[10];  // per-slot unread flags
-    static lv_obj_t* s_rowDots[10];  // pointers to unread dot objects in list
+
+    // ── List-row unread/summary state ───────────────────────────────────
+    static uint16_t  s_chUnreadCount[10]; // per-channel unread message count
+    static uint16_t  s_dmUnreadCount;     // aggregate unread count across all DMs
+    static lv_obj_t* s_rowBlob[10];       // unread-count blob container, per channel row
+    static lv_obj_t* s_rowBlobLbl[10];    // count label inside the blob, per channel row
+    static lv_obj_t* s_rowSubtitle[10];   // "last message" subtitle label, per channel row
+    static lv_obj_t* s_dmRowBlob;         // DM row unread-count blob container
+    static lv_obj_t* s_dmRowBlobLbl;      // DM row count label
+    static lv_obj_t* s_dmRowSubtitle;     // DM row "last message" subtitle label
 
     // ── Send mode ─────────────────────────────────────────────────────
     // 0-9 = channel slot, 10 = DM to s_dmPubKey/s_dmName
@@ -101,6 +109,12 @@ private:
     static void _showList();
     static void _showChat();
 
+    // ── List-row live update helpers ────────────────────────────────────
+    // Update a channel row's subtitle + unread blob in place (list must be showing).
+    static void _updateChannelRowSummary(int chIdx, const char* sender, uint32_t ts);
+    // Update the aggregate DM row's subtitle + unread blob in place.
+    static void _updateDMRowSummary(const char* sender, uint32_t ts);
+
     // ── Action popup + dialogs ────────────────────────────────────────
     static void _openActionPopup    (int chIdx);
     static void _openAddChannelDialog();
@@ -109,6 +123,7 @@ private:
     static void _openDMPicker();
     static void _openBubbleActionMenu();
     static void _openAddContactPopup();
+    static void _openIconPicker(int chIdx);   // avatar tapped → emoji/initials picker
 
     // ── Event callbacks ───────────────────────────────────────────────
     static void _onListBack    (lv_event_t* e);   // list  → launcher
@@ -118,6 +133,11 @@ private:
     static void _onChannelRow  (lv_event_t* e);   // channel row tapped
     static void _onDMRow       (lv_event_t* e);   // DM row tapped
     static void _onActionBtn   (lv_event_t* e);   // ≡ button tapped
+    static void _onAvatarClick (lv_event_t* e);   // channel avatar tapped → icon picker
+    static void _onIconInitialsSave(lv_event_t* e); // icon picker → initials Save
+    static void _onIconEmojiOpen   (lv_event_t* e); // icon picker → Choose Emoji
+    static void _onIconEmojiPick   (lv_event_t* e); // emoji grid → emoji selected
+    static void _onIconPickerClose (lv_event_t* e); // icon picker → Close/Cancel
 
     static void _onActionAdd   (lv_event_t* e);   // popup → Add
     static void _onActionClear (lv_event_t* e);   // popup → Clear
