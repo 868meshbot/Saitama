@@ -1055,6 +1055,11 @@ void ScreenHome::_showList()
         lv_obj_set_style_border_width(blob, 0, 0);
         lv_obj_set_style_pad_hor(blob, 4, 0);
         lv_obj_set_style_pad_ver(blob, 0, 0);
+        // The edit button is pulled 45px left of its flex slot (see actBtn below),
+        // which put it underneath the blob on channel rows. Nudge the blob clear
+        // of it. The DM row has no edit button, so it stays put (it's already
+        // flush against the row's right edge there).
+        if (hasAction) lv_obj_set_style_translate_x(blob, 30, 0);
         lv_obj_clear_flag(blob, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* blobLbl = lv_label_create(blob);
         lv_obj_set_style_text_color(blobLbl, theme::BG, 0);
