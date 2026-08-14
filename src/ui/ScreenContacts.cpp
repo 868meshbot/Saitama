@@ -9,10 +9,14 @@
 #include "Theme.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
+#include "../utils/Config.h"
 #include "../utils/Log.h"
+#include "../hardware/Board.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
+#include <cmath>
 #include <time.h>
 
 namespace ops { namespace ui {
@@ -46,6 +50,59 @@ static void fmtDateTime(uint32_t ts, char* buf, size_t len)
     else
         snprintf(buf, len, "%d %s %02d:%02d",
                  lt.tm_mday, kMon[lt.tm_mon], lt.tm_hour, lt.tm_min);
+}
+
+// ── Row styling helpers (matches ScreenHome's channel-list look) ───────
+
+// Up to 2 uppercase alnum initials, auto-derived from the contact name.
+static void _initials(const char* name, char* out, int outSize)
+{
+    int n = 0;
+    for (const char* p = name; *p && n < 2 && n < outSize - 1; p++) {
+        if (isalnum((unsigned char)*p)) out[n++] = (char)toupper((unsigned char)*p);
+    }
+    if (n == 0) { out[0] = '#'; n = 1; }
+    out[n] = '\0';
+}
+
+// Deterministic-but-varied avatar background colour per row.
+static lv_color_t _avatarColor(int idx)
+{
+    return lv_color_hsv_to_rgb((uint16_t)(((idx + 1) * 53) % 360), 45, 60);
+}
+
+static double _haversineKm(double lat1, double lon1, double lat2, double lon2)
+{
+    constexpr double kEarthRadiusKm = 6371.0;
+    constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+    double dLat = (lat2 - lat1) * kDegToRad;
+    double dLon = (lon2 - lon1) * kDegToRad;
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+               cos(lat1 * kDegToRad) * cos(lat2 * kDegToRad) *
+               sin(dLon / 2) * sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return kEarthRadiusKm * c;
+}
+
+// "--" when either end's position is unknown; "142m" / "3.4km" / "120km" otherwise.
+static void fmtDistance(const Contact& c, char* buf, size_t len)
+{
+    if (c.lat == 0 && c.lon == 0) { snprintf(buf, len, "--"); return; }
+
+    auto& b = ops::Board::instance();
+    double slat, slng;
+    if (b.hasGPSFix()) {
+        slat = b.gpsLat(); slng = b.gpsLng();
+    } else {
+        const auto& cfg = ops::config::get();
+        if (cfg.manualLat == 0.0f && cfg.manualLon == 0.0f) { snprintf(buf, len, "--"); return; }
+        slat = cfg.manualLat; slng = cfg.manualLon;
+    }
+
+    double km = _haversineKm(slat, slng, (double)c.lat / 1e6, (double)c.lon / 1e6);
+    if (km < 1.0)        snprintf(buf, len, "%.0fm", km * 1000.0);
+    else if (km < 100.0) snprintf(buf, len, "%.1fkm", km);
+    else                 snprintf(buf, len, "%.0fkm", km);
 }
 
 // ── show() ───────────────────────────────────────────────────────────
@@ -135,82 +192,113 @@ void ScreenContacts::_build()
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && c.favourite)  s_order[j++] = i; }
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && !c.favourite) s_order[j++] = i; }
 
-    static const lv_color_t kAmber = LV_COLOR_MAKE(0xFF, 0xB3, 0x00);
+    static constexpr int kRowH = 60;  // matches ScreenHome's channel-list row height
 
     for (int vi = 0; vi < cnt; vi++) {
         int si = s_order[vi];   // storage index — passed as user_data
         Contact c;
         if (!contacts::get(si, c)) continue;
 
-        char addrBuf[8];
-        snprintf(addrBuf, sizeof(addrBuf), "%02X%02X%02X",
-                 c.pubKeyPrefix[0], c.pubKeyPrefix[1], c.pubKeyPrefix[2]);
+        char idBuf[10];
+        snprintf(idBuf, sizeof(idBuf), "%02X%02X%02X%02X",
+                 c.pubKeyPrefix[0], c.pubKeyPrefix[1], c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
+
+        char distBuf[12];
+        fmtDistance(c, distBuf, sizeof(distBuf));
 
         char timeBuf[20];
         fmtDateTime(c.lastSeen, timeBuf, sizeof(timeBuf));
 
+        char subtitle[48];
+        snprintf(subtitle, sizeof(subtitle), "%s | %s | %s", idBuf, distBuf, timeBuf);
+
         lv_obj_t* row = lv_btn_create(list);
         lv_group_remove_obj(row);
-        lv_obj_set_size(row, OPS_SCREEN_W, 28);
+        lv_obj_set_size(row, OPS_SCREEN_W, kRowH);
         lv_obj_set_style_bg_color(row, (vi & 1) ? theme::BG_CARD : theme::BG, 0);
         lv_obj_set_style_bg_color(row, theme::PRIMARY, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
-        lv_obj_set_style_pad_left(row, 2, 0);
-        lv_obj_set_style_pad_right(row, 6, 0);
-        lv_obj_set_style_pad_ver(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 4, 0);
+        lv_obj_set_style_pad_ver(row, 4, 0);
+        lv_obj_set_style_pad_column(row, 6, 0);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_add_event_cb(row, _onRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)si);
 
-        // Unread dot
-        lv_obj_t* dot = lv_obj_create(row);
-        lv_obj_set_size(dot, 8, 8);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(dot, 0, 0);
-        lv_obj_set_style_shadow_width(dot, 0, 0);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-        if (c.hasUnread) {
-            lv_obj_set_style_bg_color(dot, theme::RED, 0);
-            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_bg_opa(dot, LV_OPA_TRANSP, 0);
-        }
+        // ── Avatar: auto-derived initials on a hashed-colour circle ────────
+        lv_obj_t* avatar = lv_obj_create(row);
+        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(avatar, _avatarColor(si), 0);
+        lv_obj_set_style_border_width(avatar, 0, 0);
+        lv_obj_set_style_pad_all(avatar, 0, 0);
+        lv_obj_clear_flag(avatar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-        // Favourite dot
-        lv_obj_t* favDot = lv_obj_create(row);
-        lv_obj_set_size(favDot, 8, 8);
-        lv_obj_set_style_radius(favDot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(favDot, 0, 0);
-        lv_obj_set_style_shadow_width(favDot, 0, 0);
-        lv_obj_clear_flag(favDot, LV_OBJ_FLAG_SCROLLABLE);
-        if (c.favourite) {
-            lv_obj_set_style_bg_color(favDot, kAmber, 0);
-            lv_obj_set_style_bg_opa(favDot, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_bg_opa(favDot, LV_OPA_TRANSP, 0);
-        }
+        char initials[4];
+        _initials(c.name, initials, sizeof(initials));
+        lv_obj_t* iconLbl = lv_label_create(avatar);
+        lv_label_set_text(iconLbl, initials);
+        lv_obj_set_style_text_color(iconLbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(iconLbl, theme::bodyFont12(), 0);
+        lv_obj_center(iconLbl);
 
-        lv_obj_t* nameLbl = lv_label_create(row);
+        // ── Text column: name + "id | distance | last seen" subtitle ───────
+        lv_obj_t* col = lv_obj_create(row);
+        lv_obj_set_height(col, 44);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(col, 0, 0);
+        lv_obj_set_style_pad_all(col, 0, 0);
+        lv_obj_set_style_pad_row(col, 1, 0);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+        lv_obj_t* nameLbl = lv_label_create(col);
         lv_label_set_text(nameLbl, c.name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, 112);  // reduced by 8px for fav dot
-        lv_obj_set_style_text_color(nameLbl, c.hasUnread ? theme::TEXT : theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
+        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
 
-        lv_obj_t* addrLbl = lv_label_create(row);
-        lv_label_set_text(addrLbl, addrBuf);
-        lv_obj_set_width(addrLbl, 52);
-        lv_obj_set_style_text_color(addrLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_10, 0);
+        lv_obj_t* subLbl = lv_label_create(col);
+        lv_label_set_text(subLbl, subtitle);
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(subLbl, LV_PCT(100));
+        lv_obj_set_style_text_color(subLbl, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
 
-        lv_obj_t* timeLbl = lv_label_create(row);
-        lv_label_set_text(timeLbl, timeBuf);
-        lv_obj_set_width(timeLbl, 116);
-        lv_obj_set_style_text_color(timeLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_align(timeLbl, LV_TEXT_ALIGN_RIGHT, 0);
+        // ── Unread-count blob (hidden entirely when there's nothing unread) ─
+        lv_obj_t* blob = lv_obj_create(row);
+        lv_obj_set_size(blob, LV_SIZE_CONTENT, 22);
+        lv_obj_set_style_min_width(blob, 22, 0);
+        lv_obj_set_style_radius(blob, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(blob, theme::RED, 0);
+        lv_obj_set_style_bg_opa(blob, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(blob, 0, 0);
+        lv_obj_set_style_pad_hor(blob, 4, 0);
+        lv_obj_set_style_pad_ver(blob, 0, 0);
+        lv_obj_clear_flag(blob, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        if (c.unreadCount > 0) {
+            char cntBuf[6];
+            if (c.unreadCount > 99) snprintf(cntBuf, sizeof(cntBuf), "99+");
+            else                    snprintf(cntBuf, sizeof(cntBuf), "%u", (unsigned)c.unreadCount);
+            lv_obj_t* blobLbl = lv_label_create(blob);
+            lv_label_set_text(blobLbl, cntBuf);
+            lv_obj_set_style_text_color(blobLbl, theme::BG, 0);
+            lv_obj_set_style_text_font(blobLbl, &lv_font_montserrat_10, 0);
+            lv_obj_center(blobLbl);
+        } else {
+            lv_obj_add_flag(blob, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
+        lv_obj_t* starLbl = lv_label_create(row);
+        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
+        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
+        if (!c.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
     }
 
     lv_scr_load(_screen);

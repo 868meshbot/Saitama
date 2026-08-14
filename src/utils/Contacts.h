@@ -15,7 +15,7 @@ struct Contact {
     float    lastRssi;
     bool     hasUnread;
     bool     favourite;          // pinned to top of list; occupies former _pad[0]
-    uint8_t  _pad[2];            // pad to 4-byte boundary
+    uint16_t unreadCount;        // number of unread DMs from this contact; occupies former _pad[2]
     int32_t  lat;                // last-known latitude  × 1 000 000 (0 = unknown)
     int32_t  lon;                // last-known longitude × 1 000 000 (0 = unknown)
     bool     outPathValid;       // true = outPath/outPathLen hold a usable route

@@ -32,6 +32,8 @@ static void _saveToSD() {
         obj["lastSeen"] = s_contacts[i].lastSeen;
         obj["rssi"]     = s_contacts[i].lastRssi;
         obj["unread"]   = s_contacts[i].hasUnread;
+        if (s_contacts[i].unreadCount > 0)
+            obj["unreadCnt"] = s_contacts[i].unreadCount;
         if (s_contacts[i].favourite)
             obj["fav"]  = true;
         if (s_contacts[i].lat != 0 || s_contacts[i].lon != 0) {
@@ -98,7 +100,8 @@ static bool _loadFromSD() {
 
         c.lastSeen  = obj["lastSeen"]  | (uint32_t)0;
         c.lastRssi  = obj["rssi"]      | 0.0f;
-        c.hasUnread = obj["unread"]    | false;
+        c.hasUnread   = obj["unread"]    | false;
+        c.unreadCount = (uint16_t)(obj["unreadCnt"] | (c.hasUnread ? 1 : 0));
         c.favourite = obj["fav"]       | false;
         c.lat       = obj["lat"]       | (int32_t)0;
         c.lon       = obj["lon"]       | (int32_t)0;
@@ -161,11 +164,13 @@ void contacts::add(const Contact& c)
 {
     int idx;
     if (findByKey(c.pubKeyPrefix, &idx)) {
-        bool fav      = s_contacts[idx].favourite;
-        bool unread   = s_contacts[idx].hasUnread;
+        bool     fav      = s_contacts[idx].favourite;
+        bool     unread   = s_contacts[idx].hasUnread;
+        uint16_t unreadCnt = s_contacts[idx].unreadCount;
         s_contacts[idx] = c;
-        s_contacts[idx].favourite = fav;
-        s_contacts[idx].hasUnread = unread;
+        s_contacts[idx].favourite   = fav;
+        s_contacts[idx].hasUnread   = unread;
+        s_contacts[idx].unreadCount = unreadCnt;
     } else if (s_count < contacts::CAPACITY) {
         s_contacts[s_count++] = c;
     } else {
@@ -178,8 +183,17 @@ void contacts::add(const Contact& c)
 void contacts::setUnread(int idx, bool unread)
 {
     if (idx < 0 || idx >= s_count) return;
-    if (s_contacts[idx].hasUnread == unread) return;
-    s_contacts[idx].hasUnread = unread;
+    if (unread) {
+        // Called once per incoming DM — always bump the count, even if
+        // hasUnread was already true, so the badge reflects how many
+        // messages have arrived since the contact was last opened.
+        s_contacts[idx].hasUnread = true;
+        if (s_contacts[idx].unreadCount < 0xFFFF) s_contacts[idx].unreadCount++;
+    } else {
+        if (!s_contacts[idx].hasUnread && s_contacts[idx].unreadCount == 0) return;
+        s_contacts[idx].hasUnread   = false;
+        s_contacts[idx].unreadCount = 0;
+    }
     save();
 }
 

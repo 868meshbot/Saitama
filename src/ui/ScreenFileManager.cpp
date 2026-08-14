@@ -6,10 +6,10 @@
 //   ┌──────────────────────────────────────┐  y = 0
 //   │ [⌂] /ops/msgs          [Mnt][Umnt][↺]│  top bar  28 px
 //   ├──────────────────────────────────────┤  y = 28
-//   │ < ..                                 │
-//   │ > folder                             │  scrollable list  180 px
-//   │   file.json               1.2 KB     │
-//   │   file.txt                  400 B    │
+//   │ (<)  ..                              │
+//   │ (dir) folder                         │  scrollable list  180 px —
+//   │ (file) file.json           1.2 KB    │  52px rows, 20pt font (2x the
+//   │ (file) file.txt               400 B  │  original), folder/file icons
 //   ├──────────────────────────────────────┤  y = 208
 //   │  [Copy]  [Paste]  [Delete]  [Open]   │  action bar  32 px
 //   └──────────────────────────────────────┘  y = 240
@@ -31,7 +31,9 @@ namespace ops { namespace ui {
 static constexpr int TOP_H   = 28;
 static constexpr int ACT_H   = 32;
 static constexpr int BODY_H  = OPS_SCREEN_H - TOP_H - ACT_H;  // 180
-static constexpr int ROW_H   = 26;
+static constexpr int ROW_H   = 52;   // 2x the original 26px row height
+static constexpr int ROW_ICON_W = 28;  // left icon column (folder/file glyph)
+static constexpr int ROW_SIZE_W = 90;  // right size column, widened for the larger font
 
 // ── Static member definitions ─────────────────────────────────────────────────
 lv_obj_t* ScreenFileManager::_screen      = nullptr;
@@ -370,13 +372,21 @@ void ScreenFileManager::_buildScreen()
         lv_obj_add_event_cb(upRow, _onRowClick, LV_EVENT_CLICKED, nullptr);
         lv_obj_set_user_data(upRow, (void*)(intptr_t)(-1));
 
+        lv_obj_t* upIcon = lv_label_create(upRow);
+        lv_obj_set_size(upIcon, ROW_ICON_W, ROW_H - 2);
+        lv_obj_set_pos(upIcon, 4, 1);
+        lv_obj_set_style_text_color(upIcon, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(upIcon, &lv_font_montserrat_20, 0);
+        lv_label_set_text(upIcon, LV_SYMBOL_LEFT);
+        lv_obj_set_style_text_align(upIcon, LV_TEXT_ALIGN_CENTER, 0);
+
         lv_obj_t* upLbl = lv_label_create(upRow);
         lv_label_set_long_mode(upLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_size(upLbl, OPS_SCREEN_W - 8, ROW_H - 2);
-        lv_obj_set_pos(upLbl, 4, 1);
+        lv_obj_set_size(upLbl, OPS_SCREEN_W - 8 - ROW_ICON_W, ROW_H - 2);
+        lv_obj_set_pos(upLbl, 4 + ROW_ICON_W, 1);
         lv_obj_set_style_text_color(upLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(upLbl, &lv_font_montserrat_10, 0);
-        lv_label_set_text(upLbl, "< ..");
+        lv_obj_set_style_text_font(upLbl, &lv_font_montserrat_20, 0);
+        lv_label_set_text(upLbl, "..");
     }
 
     // Empty state
@@ -384,7 +394,7 @@ void ScreenFileManager::_buildScreen()
         lv_obj_t* emptyLbl = lv_label_create(_listBox);
         lv_obj_set_style_pad_all(emptyLbl, 8, 0);
         lv_obj_set_style_text_color(emptyLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(emptyLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(emptyLbl, &lv_font_montserrat_20, 0);
         lv_label_set_text(emptyLbl,
             sdcard::isMounted() ? "(empty)" : "SD not mounted — tap Mnt");
     }
@@ -406,28 +416,32 @@ void ScreenFileManager::_buildScreen()
         lv_obj_set_user_data(row, (void*)(intptr_t)i);
         _rows[i] = row;
 
-        // Name label: 260 px wide (4px left gap, 56px reserved for size)
-        char nameBuf[68];
-        if (s_isDir[i])
-            snprintf(nameBuf, sizeof(nameBuf), "> %s", s_entries[i]);
-        else
-            snprintf(nameBuf, sizeof(nameBuf), "  %s", s_entries[i]);
+        // Icon: folder/file glyph in a fixed-width left column.
+        lv_obj_t* iconLbl = lv_label_create(row);
+        lv_obj_set_size(iconLbl, ROW_ICON_W, ROW_H - 2);
+        lv_obj_set_pos(iconLbl, 4, 1);
+        lv_obj_set_style_text_color(iconLbl,
+            s_isDir[i] ? theme::ACCENT : theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(iconLbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_align(iconLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(iconLbl, s_isDir[i] ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE);
 
+        // Name label: remaining width between the icon column and size column.
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_size(nameLbl, OPS_SCREEN_W - 60, ROW_H - 2);
-        lv_obj_set_pos(nameLbl, 4, 1);
+        lv_obj_set_size(nameLbl, OPS_SCREEN_W - ROW_ICON_W - ROW_SIZE_W - 8, ROW_H - 2);
+        lv_obj_set_pos(nameLbl, 4 + ROW_ICON_W, 1);
         lv_obj_set_style_text_color(nameLbl,
             s_isDir[i] ? theme::ACCENT : theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
-        lv_label_set_text(nameLbl, nameBuf);
+        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_20, 0);
+        lv_label_set_text(nameLbl, s_entries[i]);
 
-        // Size label: 56 px wide, right of name
+        // Size label: right of name.
         lv_obj_t* sizeLbl = lv_label_create(row);
-        lv_obj_set_size(sizeLbl, 56, ROW_H - 2);
-        lv_obj_set_pos(sizeLbl, OPS_SCREEN_W - 56, 1);
+        lv_obj_set_size(sizeLbl, ROW_SIZE_W, ROW_H - 2);
+        lv_obj_set_pos(sizeLbl, OPS_SCREEN_W - ROW_SIZE_W, 1);
         lv_obj_set_style_text_color(sizeLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(sizeLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(sizeLbl, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_align(sizeLbl, LV_TEXT_ALIGN_RIGHT, 0);
         if (!s_isDir[i]) {
             char sizeStr[16];
