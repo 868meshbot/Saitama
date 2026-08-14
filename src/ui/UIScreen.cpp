@@ -107,6 +107,7 @@ static lv_obj_t* s_prevScreen        = nullptr;
 static lv_obj_t* s_notifyPopup       = nullptr;
 // s_touchDismiss removed — touch is suppressed in touch_read during screensaver
 static bool      s_screenOff         = false;  // backlight fully off (beyond screensaver)
+static uint8_t   s_kbApplied         = 0xFF;   // last KB backlight value written (0xFF = force apply)
 static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(), consumed in tick()
 static bool      s_ssAnalog          = false;  // true = analog clock screensaver
 static lv_obj_t* s_ssCanvas          = nullptr;
@@ -841,6 +842,28 @@ void tick() {
         }
     }
 
+    // Keyboard backlight: auto night mode (on 21:00-07:00 local, at kbBrightness
+    // level; off outside that window), or a fixed manual level. Off entirely
+    // during screensaver/screen-off. Only writes I2C when the target changes.
+    {
+        const auto& cfg = ops::config::get();
+        uint8_t desired;
+        if (s_screensaverActive || s_screenOff) {
+            desired = 0;  // low-power: KB off
+        } else if (cfg.kbAutoNight) {
+            time_t t = ops::config::localEpoch();
+            struct tm lt;
+            gmtime_r(&t, &lt);
+            desired = (lt.tm_hour >= 21 || lt.tm_hour < 7) ? cfg.kbBrightness : 0;
+        } else {
+            desired = cfg.kbBrightness;  // manual: always at set level
+        }
+        if (desired != s_kbApplied) {
+            Board::instance().setKeyboardBacklight(desired);
+            s_kbApplied = desired;
+        }
+    }
+
     // Drain incoming mesh messages every tick.
     // appendLine() echoes every line to CDC serial via Serial.println().
     {
@@ -1127,5 +1150,6 @@ bool takeScreenshot(const char* path)
     return ok;
 }
 
+void resetKbBacklight() { s_kbApplied = 0xFF; }
 
 }}  // namespace ops::ui

@@ -78,6 +78,7 @@ struct Config {
     // ── fields added after v1.0.0 — MUST stay at the end so older NVS blobs ──
     // ── (which lack these bytes) can still be accepted and migrated cleanly. ──
     uint8_t    uiLanguage;       // 0=EN, 1=IT, 2=FR, 3=DE, 4=ES (ops::lang::UiLang)
+    bool       kbAutoNight;      // true = auto keyboard backlight 21:00-07:00 (at kbBrightness level), off otherwise
 };
 
 namespace config {

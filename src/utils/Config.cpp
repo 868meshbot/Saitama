@@ -68,6 +68,7 @@ static void setDefaults(Config& c) {
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
     c.uiLanguage       = 0;      // default English
+    c.kbAutoNight      = false;  // default off — manual kbBrightness level always applies
     c.touchCalXScale   = 1.0f;
     c.touchCalXOff     = 0.0f;
     c.touchCalYScale   = 1.0f;
@@ -121,6 +122,7 @@ static void _saveToSD() {
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
+    doc["kbAutoNight"]  = s_cfg.kbAutoNight;
     doc["tcXScale"]     = s_cfg.touchCalXScale;
     doc["tcXOff"]       = s_cfg.touchCalXOff;
     doc["tcYScale"]     = s_cfg.touchCalYScale;
@@ -196,6 +198,7 @@ static bool _loadFromSD() {
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);
+    s_cfg.kbAutoNight   = doc["kbAutoNight"] | false;
     s_cfg.touchCalXScale = doc["tcXScale"] | 1.0f;
     s_cfg.touchCalXOff   = doc["tcXOff"]   | 0.0f;
     s_cfg.touchCalYScale = doc["tcYScale"] | 1.0f;
@@ -336,6 +339,7 @@ void config::init() {
         s_cfg.autoForward       = prefs.getBool("autoFwd",      true);
         s_cfg.pathHashSz        = prefs.getUChar("pathHashSz",  0);
         s_cfg.timezoneOffsetHours = (int8_t)prefs.getChar("tzOff", 0);
+        s_cfg.kbAutoNight       = prefs.getBool("kbAutoNight", false);
         {
             String scope = prefs.getString("scopeTag", "");
             strncpy(s_cfg.scopeTag, scope.c_str(), sizeof(s_cfg.scopeTag) - 1);

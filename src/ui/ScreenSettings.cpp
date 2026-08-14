@@ -269,8 +269,9 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
     _addRow(_list, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9);
-    char kbBuf[8];
-    if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "%s", off);
+    char kbBuf[16];
+    if (cfg.kbAutoNight) snprintf(kbBuf, sizeof(kbBuf), "Auto");
+    else if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "%s", off);
     else snprintf(kbBuf, sizeof(kbBuf), "%d", cfg.kbBrightness);
     _addRow(_list, lang::tr(lang::TR_KB_LIGHT), kbBuf, 21);
     static const char* kLayoutShort[] = { "English", "FR AZERTY", "DE QWERTZ" };
@@ -1935,7 +1936,7 @@ static void _openScreenOffDialog() {
 // ── Keyboard brightness slider dialog ────────────────────────────────
 // lv_slider from 0 (off) to 255. Applies immediately on Save.
 
-struct KbBrightCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; uint8_t origVal; };
+struct KbBrightCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; lv_obj_t* autoCb; uint8_t origVal; };
 static KbBrightCtx s_kbCtx;
 
 static void _onKbSlide(lv_event_t* /*e*/) {
@@ -1950,21 +1951,26 @@ static void _onKbSlide(lv_event_t* /*e*/) {
 
 static void _onKbSave(lv_event_t* /*e*/) {
     uint8_t v = (uint8_t)lv_slider_get_value(s_kbCtx.slider);
+    bool autoOn = lv_obj_has_state(s_kbCtx.autoCb, LV_STATE_CHECKED);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.kbBrightness = v;
+    cfg.kbAutoNight  = autoOn;
     ops::config::save();
     ops::Board::instance().setKeyboardBacklight(v);
+    resetKbBacklight();  // let tick() re-evaluate auto/manual state immediately
     lv_obj_del(s_kbCtx.modal);
     ScreenSettings::show();
 }
 static void _onKbExit(lv_event_t* /*e*/) {
     ops::Board::instance().setKeyboardBacklight(s_kbCtx.origVal);
+    resetKbBacklight();  // re-apply KB auto/manual state after the live preview above
     lv_obj_del(s_kbCtx.modal);
 }
 static void _onKbKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
         ops::Board::instance().setKeyboardBacklight(s_kbCtx.origVal);
+        resetKbBacklight();  // re-apply KB auto/manual state after the live preview above
         lv_obj_del(s_kbCtx.modal);
     }
 }
@@ -1982,7 +1988,7 @@ static void _openKbBrightDialog() {
     lv_obj_add_event_cb(modal, _onKbKey, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 165);
+    lv_obj_set_size(panel, 240, 195);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
@@ -2017,6 +2023,14 @@ static void _openKbBrightDialog() {
     lv_obj_set_style_bg_color(s_kbCtx.slider, theme::ACCENT, LV_PART_KNOB);
     lv_obj_set_style_bg_color(s_kbCtx.slider, theme::BORDER, LV_PART_MAIN);
     lv_obj_add_event_cb(s_kbCtx.slider, _onKbSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    s_kbCtx.autoCb = lv_checkbox_create(panel);
+    lv_checkbox_set_text(s_kbCtx.autoCb, "Auto (21:00-07:00)");
+    lv_obj_set_style_text_font(s_kbCtx.autoCb, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(s_kbCtx.autoCb, theme::TEXT, 0);
+    lv_obj_set_style_bg_color(s_kbCtx.autoCb, theme::PRIMARY, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(s_kbCtx.autoCb, theme::BORDER, LV_PART_INDICATOR);
+    if (ops::config::get().kbAutoNight) lv_obj_add_state(s_kbCtx.autoCb, LV_STATE_CHECKED);
 
     lv_obj_t* row = lv_obj_create(panel);
     lv_obj_set_size(row, 220, 32);
@@ -2060,11 +2074,13 @@ static void _openKbBrightDialog() {
     lv_group_t* gKb = lv_group_get_default();
     if (gKb) {
         lv_group_add_obj(gKb, s_kbCtx.slider);
+        lv_group_add_obj(gKb, s_kbCtx.autoCb);
         lv_group_add_obj(gKb, saveBtn);
         lv_group_add_obj(gKb, exitBtn);
         lv_group_focus_obj(s_kbCtx.slider);
     }
     lv_obj_add_event_cb(s_kbCtx.slider, _onKbKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(s_kbCtx.autoCb, _onKbKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(saveBtn,        _onKbKey, LV_EVENT_KEY, nullptr);
 }
 

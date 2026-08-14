@@ -16,6 +16,10 @@ void tick();
 // Navigate to the main launcher from any screen (back / home action).
 void showLauncher();
 
+// Force the keyboard-backlight auto/manual logic to re-apply on the next tick
+// (call after a live brightness preview in Settings so the auto state reasserts).
+void resetKbBacklight();
+
 // Apply the CPU frequency for the current governor and display state.
 // Call after changing cfg.cpuGovernor so the new setting takes effect immediately.
 void applyGovernorNow();
