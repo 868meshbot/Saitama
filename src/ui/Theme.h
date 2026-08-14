@@ -41,4 +41,11 @@ void apply(lv_disp_t* disp);
 const lv_font_t* bodyFont10();  // replaces &lv_font_montserrat_10 in message areas
 const lv_font_t* bodyFont12();  // replaces &lv_font_montserrat_12 in message areas
 
+// ── Text sanitizing ─────────────────────────────────────────────────
+// Replaces 3-byte UTF-8 smart quotes/dashes with ASCII equivalents and
+// strips raw control/non-printable bytes, in-place. Needed because the
+// Montserrat font only covers U+0020-007F and U+00A0-00FF, and mesh peer
+// names/text can contain arbitrary or malformed bytes.
+void sanitizeText(char* s);
+
 }}  // namespace ops::theme

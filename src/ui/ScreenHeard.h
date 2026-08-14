@@ -21,6 +21,7 @@ public:
     static void _onSaveConfirm    (lv_event_t* e);  // user_data = overlay obj
     static void _onSaveRepConfirm (lv_event_t* e);  // user_data = overlay obj
     static void _onSaveCancel     (lv_event_t* e);  // user_data = overlay obj
+    static void _onClearList      (lv_event_t* e);  // user_data = overlay obj
 
 private:
     static lv_obj_t* _screen;

@@ -107,6 +107,7 @@ public:
     int      peerCount()  const;
     uint32_t peerSerial() const;  // increments on every peer add or update
     bool getPeer(int idx, PeerInfo& out) const;
+    void clearPeers();  // wipes the in-memory Heard list
 
     // ── ACK ───────────────────────────────────────────────────────────
     // Returns true (once) when an ACK matching a previously sent DM arrives.

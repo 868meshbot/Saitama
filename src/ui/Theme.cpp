@@ -10,6 +10,24 @@ extern const lv_font_t font_montserrat_12_ext;
 
 namespace ops { namespace theme {
 
+// ── sanitizeText() ────────────────────────────────────────────────────
+
+void sanitizeText(char* s)
+{
+    unsigned char* p = (unsigned char*)s;
+    unsigned char* w = p;
+    while (*p) {
+        if (p[0] == 0xE2 && p[1] == 0x80) {
+            unsigned char sub = p[2];
+            if (sub == 0x98 || sub == 0x99) { *w++ = '\''; p += 3; continue; }
+            if (sub == 0x9C || sub == 0x9D) { *w++ = '"';  p += 3; continue; }
+            if (sub == 0x93 || sub == 0x94) { *w++ = '-';  p += 3; continue; }
+        }
+        *w++ = *p++;
+    }
+    *w = '\0';
+}
+
 // ── Colour variable definitions ──────────────────────────────────────
 lv_color_t BG         = LV_COLOR_MAKE(13,  17,  23);
 lv_color_t BG_CARD    = LV_COLOR_MAKE(22,  27,  34);

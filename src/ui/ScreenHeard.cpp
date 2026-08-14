@@ -150,6 +150,7 @@ void ScreenHeard::_build() {
     PeerInfo peer;
     if (!MeshService::instance().getPeer(i, peer))
       continue;
+    theme::sanitizeText(peer.name);
 
     bool isRepeater = (peer.type == 2);
 
@@ -230,7 +231,7 @@ static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
   lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *box = lv_obj_create(overlay);
-  lv_obj_set_size(box, 240, 90);
+  lv_obj_set_size(box, 240, 128);
   lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
   lv_obj_set_style_border_color(box, theme::ACCENT, 0);
@@ -250,7 +251,7 @@ static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
   lv_obj_t *saveBtn = lv_btn_create(box);
   lv_group_remove_obj(saveBtn);
   lv_obj_set_size(saveBtn, 95, 26);
-  lv_obj_align(saveBtn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_align(saveBtn, LV_ALIGN_BOTTOM_LEFT, 0, -34);
   lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
   lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
   lv_obj_set_style_radius(saveBtn, 4, 0);
@@ -265,7 +266,7 @@ static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
   lv_obj_t *cancelBtn = lv_btn_create(box);
   lv_group_remove_obj(cancelBtn);
   lv_obj_set_size(cancelBtn, 95, 26);
-  lv_obj_align(cancelBtn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_align(cancelBtn, LV_ALIGN_BOTTOM_RIGHT, 0, -34);
   lv_obj_set_style_bg_color(cancelBtn, theme::BG, 0);
   lv_obj_set_style_bg_color(cancelBtn, theme::RED, LV_STATE_PRESSED);
   lv_obj_set_style_border_color(cancelBtn, theme::BORDER, 0);
@@ -279,6 +280,24 @@ static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
   lv_obj_set_style_text_color(cancelTxt, theme::TEXT_MUTED, 0);
   lv_obj_set_style_text_font(cancelTxt, &lv_font_montserrat_10, 0);
   lv_obj_center(cancelTxt);
+
+  lv_obj_t *clearBtn = lv_btn_create(box);
+  lv_group_remove_obj(clearBtn);
+  lv_obj_set_size(clearBtn, 224, 26);
+  lv_obj_align(clearBtn, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_color(clearBtn, theme::BG, 0);
+  lv_obj_set_style_bg_color(clearBtn, theme::ORANGE, LV_STATE_PRESSED);
+  lv_obj_set_style_border_color(clearBtn, theme::ORANGE, 0);
+  lv_obj_set_style_border_width(clearBtn, 1, 0);
+  lv_obj_set_style_radius(clearBtn, 4, 0);
+  lv_obj_set_style_shadow_width(clearBtn, 0, 0);
+  lv_obj_add_event_cb(clearBtn, ScreenHeard::_onClearList, LV_EVENT_CLICKED,
+                      overlay);
+  lv_obj_t *clearTxt = lv_label_create(clearBtn);
+  lv_label_set_text(clearTxt, "Clear List");
+  lv_obj_set_style_text_color(clearTxt, theme::ORANGE, 0);
+  lv_obj_set_style_text_font(clearTxt, &lv_font_montserrat_10, 0);
+  lv_obj_center(clearTxt);
 
   s_dialogOpen = true;
   return overlay;
@@ -300,6 +319,7 @@ void ScreenHeard::_onRowClick(lv_event_t *e) {
   PeerInfo peer;
   if (!MeshService::instance().getPeer(s_pendingPeer, peer))
     return;
+  theme::sanitizeText(peer.name);
 
   char msg[72];
   if (peer.type == 2) {
@@ -326,6 +346,7 @@ void ScreenHeard::_onSaveConfirm(lv_event_t *e) {
   PeerInfo peer;
   if (s_pendingPeer >= 0 &&
       MeshService::instance().getPeer(s_pendingPeer, peer)) {
+    theme::sanitizeText(peer.name);
     Contact c{};
     strncpy(c.name, peer.name, sizeof(c.name) - 1);
     memcpy(c.pubKeyPrefix, peer.pubKeyPrefix, 4);
@@ -349,6 +370,7 @@ void ScreenHeard::_onSaveRepConfirm(lv_event_t *e) {
   PeerInfo peer;
   if (s_pendingPeer >= 0 &&
       MeshService::instance().getPeer(s_pendingPeer, peer)) {
+    theme::sanitizeText(peer.name);
     Repeater r{};
     strncpy(r.name, peer.name, sizeof(r.name) - 1);
     memcpy(r.pubKeyPrefix, peer.pubKeyPrefix, 4);
@@ -370,6 +392,16 @@ void ScreenHeard::_onSaveCancel(lv_event_t *e) {
   s_dialogOpen = false;
   lv_obj_del(overlay);
   s_pendingPeer = -1;
+}
+
+// ── _onClearList() — wipe the in-memory Heard list ───────────────────
+void ScreenHeard::_onClearList(lv_event_t * /*e*/) {
+  MeshService::instance().clearPeers();
+  OPS_LOG("Heard", "Cleared heard list");
+  s_dialogOpen = false;
+  s_pendingPeer = -1;
+  show();  // deletes the old screen (which owns the dialog overlay) and
+           // rebuilds it against the now-empty peer list
 }
 
 } // namespace ui

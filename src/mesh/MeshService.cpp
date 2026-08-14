@@ -1976,6 +1976,11 @@ public:
         return true;
     }
 
+    void clearPeerInfo() {
+        _peerCount = 0;
+        _peerSerial++;
+    }
+
     RadioStats getStats() const {
         RadioStats s{};
         s.packetsSent      = radio_driver.getPacketsSent();
@@ -2263,6 +2268,10 @@ int MeshService::peerCount() const {
 
 uint32_t MeshService::peerSerial() const {
     return _initialized ? the_mesh.numPeerSerial() : 0;
+}
+
+void MeshService::clearPeers() {
+    if (_initialized) the_mesh.clearPeerInfo();
 }
 
 bool MeshService::getPeer(int idx, PeerInfo& out) const {
