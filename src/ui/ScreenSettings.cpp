@@ -6,19 +6,21 @@
 //   ┌──────────────────────────────────────┐  y = 0
 //   │ [⌂ Home]    Settings          12:34 │  top bar  28 px
 //   ├──────────────────────────────────────┤  y = 28
-//   │ Device Name          OMS-0001  >    │  \
-//   │ Channel 1            Public    >    │   |
-//   │ Channel 2            CH2       >    │   | scrollable
-//   │ Channel 3            Disabled  >    │   |  list
-//   │ Channel 4            Disabled  >    │   |
-//   │ Channel 5            Disabled  >    │   |
-//   │ Radio                EU868     >    │   |
-//   │ Bluetooth            OFF       >    │   |
-//   │ Speaker              ON        >    │   |
-//   │ GPS                  ON        >    │   |
-//   │ Date / Time          --:--     >    │   |
-//   │ Firmware Update      v0.1      >    │  /
+//   │ ┌────────────┐  ┌────────────┐      │  \
+//   │ │  (edit)    │  │  (wifi)    │      │   |
+//   │ │ Device Name│  │   Radio    │      │   |
+//   │ │  OMS-0001  │  │   EU868    │      │   | scrollable
+//   │ └────────────┘  └────────────┘      │   |  2-column
+//   │ ┌────────────┐  ┌────────────┐      │   |  icon-tile
+//   │ │(bluetooth) │  │ (speaker)  │      │   |  grid
+//   │ │ Bluetooth  │  │  Speaker   │      │   |
+//   │ │    OFF     │  │     ON     │      │   |
+//   │ └────────────┘  └────────────┘      │  /
 //   └──────────────────────────────────────┘
+//
+// Each tile: symbol icon, name (truncated), value. Tiles backed by a real
+// on/off config value are colored (green border/icon when on, muted text
+// when off) — see RowState in _addRow().
 
 #include "ScreenSettings.h"
 #include "UIScreen.h"
@@ -134,43 +136,72 @@ static void _onRowKey(lv_event_t* e) {
     }
 }
 
-// Add one row.  Uses lv_btn_create (not lv_list_add_btn) so we own the
-// layout: name label left-aligned in a fixed 160 px column, value label
-// in the remaining width with centered text.
-static lv_obj_t* _addRow(lv_obj_t* list, const char* label,
-                          const char* value, int idx) {
+// Tile coloring: most rows are plain navigational entries (ROW_NEUTRAL).
+// Rows backed by a real on/off config value are colored so state is visible
+// at a glance without reading the value text.
+enum RowState { ROW_NEUTRAL, ROW_ON, ROW_OFF };
+
+// Two-column icon-tile grid. Uses lv_btn_create (not lv_list_add_btn) so we
+// own the layout: symbol icon on top, name below (truncated to keep every
+// tile the same height), value below that in muted text.
+static constexpr int kGridPad  = 4;   // outer horizontal padding
+static constexpr int kGridGap  = 4;   // gap between columns/rows
+static constexpr int kTileW    = (OPS_SCREEN_W - 2 * kGridPad - kGridGap) / 2;
+static constexpr int kTileH    = 58;
+
+static lv_obj_t* _addRow(lv_obj_t* list, const char* icon, const char* label,
+                          const char* value, int idx, RowState state = ROW_NEUTRAL) {
     lv_obj_t* btn = lv_btn_create(list);
-    lv_obj_set_size(btn, OPS_SCREEN_W, 22);
+    lv_obj_set_size(btn, kTileW, kTileH);
+
+    lv_color_t iconColor = (state == ROW_ON)  ? theme::GREEN
+                          : (state == ROW_OFF) ? theme::TEXT_MUTED
+                                                : theme::ACCENT;
+    lv_color_t nameColor   = (state == ROW_OFF) ? theme::TEXT_MUTED : theme::TEXT;
+    lv_color_t borderColor = (state == ROW_ON)  ? theme::GREEN      : theme::BORDER;
+
     lv_obj_set_style_bg_color(btn, theme::BG_CARD, 0);
     lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(btn, theme::BG_CARD, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(btn, borderColor,    0);
     lv_obj_set_style_border_color(btn, theme::ACCENT,  LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_border_width(btn, 1, LV_STATE_FOCUSED);
-    lv_obj_set_style_radius(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_border_width(btn, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_radius(btn, 6, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_pad_hor(btn, 8, 0);
-    lv_obj_set_style_pad_ver(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 3, 0);
+    lv_obj_set_style_pad_row(btn, 1, 0);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(btn,
-        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Name: fixed 160 px, text left-aligned
+    // Icon — a plain LV_SYMBOL_* glyph needs the built-in Montserrat font,
+    // not the emoji-capable bodyFont (whose private-use range is reassigned
+    // to emoji images).
+    lv_obj_t* iconLbl = lv_label_create(btn);
+    lv_label_set_text(iconLbl, icon);
+    lv_obj_set_style_text_color(iconLbl, iconColor, 0);
+    lv_obj_set_style_text_font(iconLbl, &lv_font_montserrat_16, 0);
+
+    // Name: truncated so every tile stays the same height regardless of label length.
     lv_obj_t* nameLbl = lv_label_create(btn);
     lv_label_set_text(nameLbl, label);
-    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nameLbl, kTileW - 12);
+    lv_obj_set_style_text_color(nameLbl, nameColor, 0);
     lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_width(nameLbl, 160);
-    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(nameLbl, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Value: fills remaining width, text centered
+    // Value: always present (even if empty) so tile height stays uniform.
     lv_obj_t* valLbl = lv_label_create(btn);
     lv_label_set_text(valLbl, value);
+    lv_label_set_long_mode(valLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(valLbl, kTileW - 12);
     lv_obj_set_style_text_color(valLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(valLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_flex_grow(valLbl, 1);
     lv_obj_set_style_text_align(valLbl, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_obj_add_event_cb(btn, ScreenSettings::_onItemClick,
@@ -206,18 +237,19 @@ static bool _hasLauncher()
 
 // ── _buildList() ─────────────────────────────────────────────────────
 void ScreenSettings::_buildList(lv_obj_t* parent) {
-    // Plain flex-column scroll container — we don't use lv_list_create
-    // because lv_list_add_btn injects its own internal label with flex_grow=1
-    // that fights our two-label layout.
+    // Two-column icon-tile grid — a wrapping flex row rather than lv_list,
+    // since lv_list_add_btn injects its own internal label with flex_grow=1
+    // that fights our icon/name/value tile layout.
     _list = lv_obj_create(parent);
     lv_obj_set_size(_list, OPS_SCREEN_W, OPS_SCREEN_H - TOP_H);
     lv_obj_align(_list, LV_ALIGN_TOP_LEFT, 0, TOP_H);
     lv_obj_set_style_bg_color(_list, theme::BG, 0);
     lv_obj_set_style_border_width(_list, 0, 0);
     lv_obj_set_style_radius(_list, 0, 0);
-    lv_obj_set_style_pad_all(_list, 0, 0);
-    lv_obj_set_style_pad_row(_list, 1, 0);
-    lv_obj_set_flex_flow(_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(_list, kGridPad, 0);
+    lv_obj_set_style_pad_row(_list, kGridGap, 0);
+    lv_obj_set_style_pad_column(_list, kGridGap, 0);
+    lv_obj_set_flex_flow(_list, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(_list,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(_list, LV_DIR_VER);
@@ -229,10 +261,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     const char* off = lang::tr(lang::TR_OFF);
 
     // Item indices match _onItemClick switch
-    _addRow(_list, lang::tr(lang::TR_DEVICE_NAME),    cfg.callsign, 0);
-    _addRow(_list, lang::tr(lang::TR_SHARE_CONTACT),  "",           24);
-    _addRow(_list, lang::tr(lang::TR_GEN_IDENTITY),   "",           35);
-    _addRow(_list, lang::tr(lang::TR_CHANNELS),       "",           1);
+    _addRow(_list, LV_SYMBOL_EDIT, lang::tr(lang::TR_DEVICE_NAME),   cfg.callsign, 0);
+    _addRow(_list, LV_SYMBOL_UPLOAD, lang::tr(lang::TR_SHARE_CONTACT),  "",        24);
+    _addRow(_list, LV_SYMBOL_SAVE, lang::tr(lang::TR_GEN_IDENTITY),  "",           35);
+    _addRow(_list, LV_SYMBOL_LIST, lang::tr(lang::TR_CHANNELS),      "",           1);
     static const char* kRadioShort[] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
         "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
@@ -241,41 +273,47 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     const char* radioLabel = cfg.radioCustom
         ? "Custom"
         : kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2];
-    _addRow(_list, lang::tr(lang::TR_RADIO), radioLabel, 6);
+    _addRow(_list, LV_SYMBOL_WIFI, lang::tr(lang::TR_RADIO), radioLabel, 6);
     char pwrBuf[10];
-    if (cfg.radioTX >= 10 && cfg.radioTX <= 22)
-        snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX);
-    else
-        snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
-    _addRow(_list, lang::tr(lang::TR_POWER), pwrBuf, 25);
-    _addRow(_list, lang::tr(lang::TR_LORA_DUTY), cfg.loraDutyCycle ? on : off, 28);
+    bool pwrOn = (cfg.radioTX >= 10 && cfg.radioTX <= 22);
+    if (pwrOn) snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX);
+    else       snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
+    _addRow(_list, LV_SYMBOL_CHARGE, lang::tr(lang::TR_POWER), pwrBuf, 25,
+            pwrOn ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_REFRESH, lang::tr(lang::TR_LORA_DUTY),
+            cfg.loraDutyCycle ? on : off, 28, cfg.loraDutyCycle ? ROW_ON : ROW_OFF);
     static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
-    _addRow(_list, lang::tr(lang::TR_CPU_GOV),
+    _addRow(_list, LV_SYMBOL_SETTINGS, lang::tr(lang::TR_CPU_GOV),
             kGovNames[cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2], 29);
     char brightBuf[8];
     snprintf(brightBuf, sizeof(brightBuf), "%d%%", cfg.brightness * 100 / 255);
-    _addRow(_list, lang::tr(lang::TR_BRIGHTNESS), brightBuf, 26);
+    _addRow(_list, LV_SYMBOL_IMAGE, lang::tr(lang::TR_BRIGHTNESS), brightBuf, 26);
     static const char* kThemeNames[] = {
         "Default", "Green", "Dracula", "Tokyo Night",
         "Catp Frappe", "Catp Mocha", "Synthwave 84",
         "Kaolin", "One Dark", "Neovim", "Nyx", "Rat Dark"
     };
     int themeIdx = (cfg.theme >= 0 && cfg.theme < theme::THEME_COUNT) ? cfg.theme : 0;
-    _addRow(_list, lang::tr(lang::TR_THEME), kThemeNames[themeIdx], 31);
-    _addRow(_list, lang::tr(lang::TR_FONT),
+    _addRow(_list, LV_SYMBOL_TINT, lang::tr(lang::TR_THEME), kThemeNames[themeIdx], 31);
+    _addRow(_list, LV_SYMBOL_FILE, lang::tr(lang::TR_FONT),
             cfg.fontExtLatin ? "Extended Latin" : "Standard", 33);
-    _addRow(_list, lang::tr(lang::TR_BLUETOOTH), cfg.bluetoothEnabled ? on : off, 7);
-    _addRow(_list, lang::tr(lang::TR_SPEAKER),   cfg.speakerEnabled   ? on : off, 8);
+    _addRow(_list, LV_SYMBOL_BLUETOOTH, lang::tr(lang::TR_BLUETOOTH),
+            cfg.bluetoothEnabled ? on : off, 7, cfg.bluetoothEnabled ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_VOLUME_MAX, lang::tr(lang::TR_SPEAKER),
+            cfg.speakerEnabled ? on : off, 8, cfg.speakerEnabled ? ROW_ON : ROW_OFF);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
-    _addRow(_list, lang::tr(lang::TR_GPS),
-            gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9);
+    _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_GPS),
+            gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9,
+            cfg.gpsMode == 0 ? ROW_OFF : ROW_ON);
     char kbBuf[16];
+    bool kbOn = cfg.kbAutoNight || cfg.kbBrightness != 0;
     if (cfg.kbAutoNight) snprintf(kbBuf, sizeof(kbBuf), "Auto");
     else if (cfg.kbBrightness == 0) snprintf(kbBuf, sizeof(kbBuf), "%s", off);
     else snprintf(kbBuf, sizeof(kbBuf), "%d", cfg.kbBrightness);
-    _addRow(_list, lang::tr(lang::TR_KB_LIGHT), kbBuf, 21);
+    _addRow(_list, LV_SYMBOL_KEYBOARD, lang::tr(lang::TR_KB_LIGHT), kbBuf, 21,
+            kbOn ? ROW_ON : ROW_OFF);
     static const char* kLayoutShort[] = { "English", "FR AZERTY", "DE QWERTZ" };
-    _addRow(_list, lang::tr(lang::TR_KB_LAYOUT),
+    _addRow(_list, LV_SYMBOL_KEYBOARD, lang::tr(lang::TR_KB_LAYOUT),
             kLayoutShort[cfg.kbLayout < ops::keymap::LAYOUT_COUNT ? cfg.kbLayout : 0], 23);
 
     // Date/Time row — display in local time
@@ -287,44 +325,48 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         snprintf(dtBuf, sizeof(dtBuf), "%04d-%02d-%02d",
                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
     }
-    _addRow(_list, lang::tr(lang::TR_DATE_TIME), dtBuf, 10);
+    _addRow(_list, LV_SYMBOL_LOOP, lang::tr(lang::TR_DATE_TIME), dtBuf, 10);
 
     // Timezone row
     char tzBuf[8] = "UTC";
     int tzOff = cfg.timezoneOffsetHours;
     if (tzOff > 0)       snprintf(tzBuf, sizeof(tzBuf), "UTC+%d", tzOff);
     else if (tzOff < 0)  snprintf(tzBuf, sizeof(tzBuf), "UTC%d",  tzOff);
-    _addRow(_list, lang::tr(lang::TR_TIMEZONE), tzBuf, 20);
-    _addRow(_list, lang::tr(lang::TR_FW_UPDATE),    "v" OPS_VERSION_STRING, 11);
-    _addRow(_list, lang::tr(lang::TR_AUTO_ADD),     "", 12);
+    _addRow(_list, LV_SYMBOL_LOOP, lang::tr(lang::TR_TIMEZONE), tzBuf, 20);
+    _addRow(_list, LV_SYMBOL_DOWNLOAD, lang::tr(lang::TR_FW_UPDATE), "v" OPS_VERSION_STRING, 11);
+    _addRow(_list, LV_SYMBOL_PLUS, lang::tr(lang::TR_AUTO_ADD),     "", 12);
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
-    _addRow(_list, lang::tr(lang::TR_SCR_TIMEOUT),  toStr, 13);
+    _addRow(_list, LV_SYMBOL_EYE_CLOSE, lang::tr(lang::TR_SCR_TIMEOUT),  toStr, 13);
     {
         char soStr[12];
         _fmtScreenOffVal(soStr, sizeof(soStr), (int)cfg.screenOffSec);
-        _addRow(_list, lang::tr(lang::TR_SCR_OFF), soStr, 27);
+        _addRow(_list, LV_SYMBOL_POWER, lang::tr(lang::TR_SCR_OFF), soStr, 27);
     }
     {
         char volStr[8];
         snprintf(volStr, sizeof(volStr), "%d%%", (int)cfg.speakerVolume);
-        _addRow(_list, lang::tr(lang::TR_VOLUME), volStr, 32);
+        _addRow(_list, LV_SYMBOL_VOLUME_MID, lang::tr(lang::TR_VOLUME), volStr, 32);
     }
-    _addRow(_list, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
+    _addRow(_list, LV_SYMBOL_BELL, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
-    _addRow(_list, lang::tr(lang::TR_NOTIFY_SOUND),
+    _addRow(_list, LV_SYMBOL_AUDIO, lang::tr(lang::TR_NOTIFY_SOUND),
             kSndNames[cfg.notifySoundChoice < 4 ? cfg.notifySoundChoice : 0], 22);
-    _addRow(_list, lang::tr(lang::TR_SAVE_MSGS),   cfg.saveMsgs        ? on : off, 14);
-    _addRow(_list, lang::tr(lang::TR_SHOW_HOPS),   cfg.showHops        ? on : off, 15);
-    _addRow(_list, lang::tr(lang::TR_SHOW_RSSI),   cfg.showRssi        ? on : off, 19);
-    _addRow(_list, lang::tr(lang::TR_LOCATION),    cfg.locationSharing ? on : off, 17);
-    _addRow(_list, lang::tr(lang::TR_BACKUP),      "", 30);
+    _addRow(_list, LV_SYMBOL_SD_CARD, lang::tr(lang::TR_SAVE_MSGS),
+            cfg.saveMsgs ? on : off, 14, cfg.saveMsgs ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_DIRECTORY, lang::tr(lang::TR_SHOW_HOPS),
+            cfg.showHops ? on : off, 15, cfg.showHops ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_EYE_OPEN, lang::tr(lang::TR_SHOW_RSSI),
+            cfg.showRssi ? on : off, 19, cfg.showRssi ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_LOCATION),
+            cfg.locationSharing ? on : off, 17, cfg.locationSharing ? ROW_ON : ROW_OFF);
+    _addRow(_list, LV_SYMBOL_DRIVE, lang::tr(lang::TR_BACKUP),      "", 30);
     {
         uint8_t li = cfg.uiLanguage < lang::LANG_COUNT ? cfg.uiLanguage : 0;
-        _addRow(_list, lang::tr(lang::TR_LANGUAGE), lang::kLangNames[li], 36);
+        _addRow(_list, LV_SYMBOL_FILE, lang::tr(lang::TR_LANGUAGE), lang::kLangNames[li], 36);
     }
     if (_hasLauncher())
-        _addRow(_list, lang::tr(lang::TR_RETURN), "", 34);
+        _addRow(_list, LV_SYMBOL_HOME, lang::tr(lang::TR_RETURN), "", 34);
 
     s_listPtr = _list;
 }
