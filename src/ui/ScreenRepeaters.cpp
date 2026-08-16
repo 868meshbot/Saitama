@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <time.h>
 #include <Arduino.h>
 
@@ -60,6 +61,25 @@ static void repFmtDateTime(uint32_t ts, char* buf, size_t len)
     else
         snprintf(buf, len, "%d %s %02d:%02d",
                  lt.tm_mday, kMon[lt.tm_mon], lt.tm_hour, lt.tm_min);
+}
+
+// ── Row styling helpers (matches ScreenContacts' row look) ─────────────
+
+// Up to 2 uppercase alnum initials, auto-derived from the repeater name.
+static void _repInitials(const char* name, char* out, int outSize)
+{
+    int n = 0;
+    for (const char* p = name; *p && n < 2 && n < outSize - 1; p++) {
+        if (isalnum((unsigned char)*p)) out[n++] = (char)toupper((unsigned char)*p);
+    }
+    if (n == 0) { out[0] = '#'; n = 1; }
+    out[n] = '\0';
+}
+
+// Deterministic-but-varied avatar background colour per row.
+static lv_color_t _repAvatarColor(int idx)
+{
+    return lv_color_hsv_to_rgb((uint16_t)(((idx + 1) * 53) % 360), 45, 60);
 }
 
 // ── show() ───────────────────────────────────────────────────────────
@@ -149,16 +169,16 @@ void ScreenRepeaters::_build()
     for (int i = 0; i < cnt; i++) { Repeater r; if (repeaters::get(i, r) && r.favourite)  s_order[j++] = i; }
     for (int i = 0; i < cnt; i++) { Repeater r; if (repeaters::get(i, r) && !r.favourite) s_order[j++] = i; }
 
-    static const lv_color_t kAmber = LV_COLOR_MAKE(0xFF, 0xB3, 0x00);
+    static constexpr int kRowH = 60;  // matches ScreenContacts' row height
 
     for (int vi = 0; vi < cnt; vi++) {
         int si = s_order[vi];   // storage index — passed as user_data
         Repeater r;
         if (!repeaters::get(si, r)) continue;
 
-        char addrBuf[8];
-        snprintf(addrBuf, sizeof(addrBuf), "%02X%02X%02X",
-                 r.pubKeyPrefix[0], r.pubKeyPrefix[1], r.pubKeyPrefix[2]);
+        char idBuf[10];
+        snprintf(idBuf, sizeof(idBuf), "%02X%02X%02X%02X",
+                 r.pubKeyPrefix[0], r.pubKeyPrefix[1], r.pubKeyPrefix[2], r.pubKeyPrefix[3]);
 
         char timeBuf[20];
         repFmtDateTime(r.lastSeen, timeBuf, sizeof(timeBuf));
@@ -176,58 +196,96 @@ void ScreenRepeaters::_build()
 
         lv_obj_t* row = lv_btn_create(list);
         lv_group_remove_obj(row);
-        lv_obj_set_size(row, OPS_SCREEN_W, 28);
+        lv_obj_set_size(row, OPS_SCREEN_W, kRowH);
         lv_obj_set_style_bg_color(row, (vi & 1) ? theme::BG_CARD : theme::BG, 0);
         lv_obj_set_style_bg_color(row, theme::PRIMARY, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
-        lv_obj_set_style_pad_left(row, 4, 0);
-        lv_obj_set_style_pad_right(row, 6, 0);
-        lv_obj_set_style_pad_ver(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 4, 0);
+        lv_obj_set_style_pad_ver(row, 4, 0);
+        lv_obj_set_style_pad_column(row, 6, 0);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_add_event_cb(row, _onRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)si);
 
-        // Favourite dot
-        lv_obj_t* favDot = lv_obj_create(row);
-        lv_obj_set_size(favDot, 8, 8);
-        lv_obj_set_style_radius(favDot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(favDot, 0, 0);
-        lv_obj_set_style_shadow_width(favDot, 0, 0);
-        lv_obj_clear_flag(favDot, LV_OBJ_FLAG_SCROLLABLE);
-        if (r.favourite) {
-            lv_obj_set_style_bg_color(favDot, kAmber, 0);
-            lv_obj_set_style_bg_opa(favDot, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_bg_opa(favDot, LV_OPA_TRANSP, 0);
-        }
+        // ── Icon: auto-derived initials on a hashed-colour circle ──────────
+        lv_obj_t* avatar = lv_obj_create(row);
+        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(avatar, _repAvatarColor(si), 0);
+        lv_obj_set_style_border_width(avatar, 0, 0);
+        lv_obj_set_style_pad_all(avatar, 0, 0);
+        lv_obj_clear_flag(avatar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-        lv_obj_t* nameLbl = lv_label_create(row);
+        char initials[4];
+        _repInitials(r.name, initials, sizeof(initials));
+        lv_obj_t* iconLbl = lv_label_create(avatar);
+        lv_label_set_text(iconLbl, initials);
+        lv_obj_set_style_text_color(iconLbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(iconLbl, theme::bodyFont12(), 0);
+        lv_obj_center(iconLbl);
+
+        // ── Text column: name, then "id | rssi | last seen" subtitle ───────
+        lv_obj_t* col = lv_obj_create(row);
+        lv_obj_set_height(col, 44);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(col, 0, 0);
+        lv_obj_set_style_pad_all(col, 0, 0);
+        lv_obj_set_style_pad_row(col, 1, 0);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+        lv_obj_t* nameLbl = lv_label_create(col);
         lv_label_set_text(nameLbl, r.name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, 108);  // reduced by 8px for fav dot
+        lv_obj_set_width(nameLbl, LV_PCT(100));
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
 
-        lv_obj_t* addrLbl = lv_label_create(row);
-        lv_label_set_text(addrLbl, addrBuf);
-        lv_obj_set_width(addrLbl, 52);
-        lv_obj_set_style_text_color(addrLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_10, 0);
+        lv_obj_t* line2 = lv_obj_create(col);
+        lv_obj_set_width(line2, LV_PCT(100));
+        lv_obj_set_height(line2, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(line2, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(line2, 0, 0);
+        lv_obj_set_style_pad_all(line2, 0, 0);
+        lv_obj_set_style_pad_column(line2, 4, 0);
+        lv_obj_clear_flag(line2, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(line2, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(line2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-        lv_obj_t* rssiLbl = lv_label_create(row);
+        lv_obj_t* idLbl = lv_label_create(line2);
+        lv_label_set_text(idLbl, idBuf);
+        lv_obj_set_style_text_color(idLbl, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(idLbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* sep1Lbl = lv_label_create(line2);
+        lv_label_set_text(sep1Lbl, "|");
+        lv_obj_set_style_text_color(sep1Lbl, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(sep1Lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* rssiLbl = lv_label_create(line2);
         lv_label_set_text(rssiLbl, rssiBuf);
-        lv_obj_set_width(rssiLbl, 52);
         lv_obj_set_style_text_color(rssiLbl, rssiCol, 0);
         lv_obj_set_style_text_font(rssiLbl, &lv_font_montserrat_10, 0);
 
-        lv_obj_t* timeLbl = lv_label_create(row);
+        lv_obj_t* sep2Lbl = lv_label_create(line2);
+        lv_label_set_text(sep2Lbl, "|");
+        lv_obj_set_style_text_color(sep2Lbl, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(sep2Lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* timeLbl = lv_label_create(line2);
         lv_label_set_text(timeLbl, timeBuf);
-        lv_obj_set_width(timeLbl, 74);
         lv_obj_set_style_text_color(timeLbl, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_align(timeLbl, LV_TEXT_ALIGN_RIGHT, 0);
+
+        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
+        lv_obj_t* starLbl = lv_label_create(row);
+        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
+        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
+        if (!r.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
     }
 
     lv_scr_load(_screen);
