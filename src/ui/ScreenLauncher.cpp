@@ -22,6 +22,7 @@
 #include "ScreenZeroXZero.h"
 #include "Screen2048.h"
 #include "Theme.h"
+#include "Emoji.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
@@ -324,7 +325,11 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
         lv_obj_t* icon = lv_label_create(cell);
         lv_label_set_text(icon, kApps[i].symbol);
         lv_obj_set_style_text_color(icon, theme::ACCENT, 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_14, 0);
+        // emojiFont keeps montserrat_14 as the base (so LV_SYMBOL_* tiles are
+        // unchanged) and adds the emoji imgfont as a fallback for tiles whose
+        // icon is an emoji codepoint.
+        lv_obj_set_style_text_font(icon,
+            ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
 
         lv_obj_t* lbl = lv_label_create(cell);
         lv_label_set_text(lbl, kApps[i].label);
@@ -392,7 +397,8 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
         lv_obj_t* icon = lv_label_create(cell);
         lv_label_set_text(icon, kApps2[i].symbol);
         lv_obj_set_style_text_color(icon, theme::ACCENT, 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(icon,
+            ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
 
         lv_obj_t* lbl = lv_label_create(cell);
         lv_label_set_text(lbl, kApps2[i].label);
@@ -642,7 +648,7 @@ static void _advertRebuildList()
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_text(nameLbl, p.name[0] ? p.name : "?");
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
         lv_obj_set_width(nameLbl, 118);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
 

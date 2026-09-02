@@ -259,7 +259,7 @@ void ScreenTrace::_rebuildHopList() {
     lv_obj_t *nameLbl = lv_label_create(row);
     lv_label_set_text(nameLbl, nodeName);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_flex_grow(nameLbl, 1);
 

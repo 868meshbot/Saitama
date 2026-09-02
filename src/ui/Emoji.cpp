@@ -44,7 +44,11 @@ static bool _pathCb(const lv_font_t* /*font*/, void* imgSrc, uint16_t len,
 static lv_font_t* s_emoji = nullptr;  // shared emoji imgfont (fallback)
 
 // Cache of base→wrapped copies so each Montserrat size is copied only once.
-static const int        kCacheMax       = 6;
+// Bumped from 6: peer-name labels across chat/contacts/finder/map/trace
+// and the launcher tiles now request wrapping, spanning montserrat 10/12/14
+// plus both extended-Latin faces. A full cache still returns a valid font,
+// but leaks a copy on every call, so keep headroom.
+static const int        kCacheMax       = 10;
 static const lv_font_t* s_base[kCacheMax]    = {0};
 static lv_font_t*       s_wrapped[kCacheMax] = {0};
 

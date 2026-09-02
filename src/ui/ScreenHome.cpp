@@ -371,7 +371,7 @@ void ScreenHome::_addBubble(int         histIdx,
         lv_obj_set_flex_grow(nameLbl, 1);
         lv_obj_set_style_min_width(nameLbl, 0, 0);
         lv_obj_set_style_text_color(nameLbl, theme::ACCENT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
 
         lv_obj_t* btn = lv_btn_create(hdr);
         lv_group_remove_obj(btn);
@@ -810,9 +810,10 @@ static void _setRowSubtitle(lv_obj_t* lbl, bool hasMsg, const char* sender, uint
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", lt.tm_hour, lt.tm_min);
     }
     char buf[48];
-    snprintf(buf, sizeof(buf), "%s - %s", sender, timeBuf);  // plain ASCII — the built-in
-                                                              // montserrat_10 font doesn't
-                                                              // cover U+00B7 (middle dot)
+    snprintf(buf, sizeof(buf), "%s - %s", sender, timeBuf);  // separator stays plain ASCII:
+                                                              // no compiled font covers
+                                                              // U+00B7 (middle dot)
+    theme::sanitizeText(buf);   // sender came off the SD log; strip VS16/ZWJ
     lv_label_set_text(lbl, buf);
 }
 
@@ -1027,13 +1028,13 @@ void ScreenHome::_showList()
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(nameLbl, LV_PCT(100));
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
 
         lv_obj_t* subLbl = lv_label_create(col);
         lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(subLbl, LV_PCT(100));
         lv_obj_set_style_text_color(subLbl, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(subLbl, theme::bodyFont10(), 0);  // holds a sender name — emoji-capable
         {
             char sender[32] = {};
             uint32_t ts = 0;
@@ -1110,7 +1111,10 @@ void ScreenHome::_showList()
     }
 
     // Direct Messages entry — always shown at bottom
-    addRow(-1, LV_SYMBOL_CALL "  Direct Messages", false);
+    // Plain text only: this string lands in the name label, which uses
+    // bodyFont (no FontAwesome glyphs). The phone icon is already drawn in
+    // this row's avatar by addRow()'s chIdx < 0 branch.
+    addRow(-1, "Direct Messages", false);
 
     lv_scr_load(s_listScreen);
     if (oldChat) lv_obj_del(oldChat);
@@ -1603,7 +1607,7 @@ void ScreenHome::_openDMPicker()
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(nameLbl, 190);
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
 
         lv_obj_t* addrLbl = lv_label_create(row);
         lv_label_set_text(addrLbl, addr);
@@ -1961,7 +1965,7 @@ void ScreenHome::_openBubbleActionMenu()
     lv_obj_t* nameLbl = lv_label_create(box);
     lv_label_set_text(nameLbl, s_pendingContactName);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(nameLbl, ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
     lv_obj_set_width(nameLbl, 200);
 
     char keyHint[12];
@@ -2059,7 +2063,7 @@ void ScreenHome::_openAddContactPopup()
     lv_obj_t* nameLbl = lv_label_create(box);
     lv_label_set_text(nameLbl, s_pendingContactName);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(nameLbl, ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
 
     // Key hint
     char keyHint[12];

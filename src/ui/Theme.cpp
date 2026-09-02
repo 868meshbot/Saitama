@@ -17,6 +17,13 @@ void sanitizeText(char* s)
     unsigned char* p = (unsigned char*)s;
     unsigned char* w = p;
     while (*p) {
+        // Emoji presentation selector U+FE0F (EF B8 8F) and ZWJ U+200D
+        // (E2 80 8D). The imgfont has no glyph for either, so LVGL draws a
+        // placeholder box next to the emoji they modify — the classic
+        // "emoji plus an extra blank square". They carry no meaning for us
+        // (we render one static image per base codepoint), so drop them.
+        if (p[0] == 0xEF && p[1] == 0xB8 && p[2] == 0x8F) { p += 3; continue; }
+        if (p[0] == 0xE2 && p[1] == 0x80 && p[2] == 0x8D) { p += 3; continue; }
         if (p[0] == 0xE2 && p[1] == 0x80) {
             unsigned char sub = p[2];
             if (sub == 0x98 || sub == 0x99) { *w++ = '\''; p += 3; continue; }

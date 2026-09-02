@@ -4,6 +4,7 @@
 #include "ScreenFinder.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
+#include "Emoji.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
 #include "../utils/Repeaters.h"
@@ -159,7 +160,7 @@ void ScreenFinder::_showActionPopup(int idx)
     lv_obj_t* nameLbl = lv_label_create(s_popup);
     lv_label_set_text(nameLbl, nameBuf);
     lv_obj_set_style_text_color(nameLbl, theme::ACCENT, 0);
-    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(nameLbl, ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
     lv_obj_set_width(nameLbl, lv_pct(100));
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
 
@@ -266,17 +267,21 @@ void ScreenFinder::_rebuildList()
         // Name or hex prefix; green check if already saved
         char nameBuf[40];
         _displayName(e, nameBuf, sizeof(nameBuf));
+
+        // The tick gets its own label in plain Montserrat. Concatenating it into
+        // nameBuf would put a FontAwesome glyph into a bodyFont label, which has
+        // no such glyph and renders an empty box.
         if (_isInList(e)) {
-            char withCheck[48];
-            snprintf(withCheck, sizeof(withCheck), LV_SYMBOL_OK " %s", nameBuf);
-            strncpy(nameBuf, withCheck, sizeof(nameBuf) - 1);
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            lv_obj_t* okLbl = lv_label_create(row);
+            lv_label_set_text(okLbl, LV_SYMBOL_OK);
+            lv_obj_set_style_text_color(okLbl, theme::GREEN, 0);
+            lv_obj_set_style_text_font(okLbl, &lv_font_montserrat_10, 0);
         }
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_text(nameLbl, nameBuf);
         lv_obj_set_style_text_color(nameLbl,
             _isInList(e) ? theme::GREEN : theme::TEXT, 0);
-        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
         lv_obj_set_flex_grow(nameLbl, 1);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
 

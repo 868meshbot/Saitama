@@ -169,6 +169,13 @@ EMOJI = [
     # ── Objects & Nature (commonly used in chat) ──────────────────────────────
     ("frog",          0x1F438, "1f438", "frog green"),
     ("dog",           0x1F415, "1f415", "dog puppy"),
+    ("fox",           0x1F98A, "1f98a", "fox foxhunt animal"),
+    ("magnifier",     0x1F50D, "1f50d", "magnifying glass search inspect"),
+    ("biohazard",     0x2623,  "2623",  "biohazard toxic hazard warning"),
+    ("radioactive",   0x2622,  "2622",  "radioactive nuclear hazard warning"),
+    ("warning",       0x26A0,  "26a0",  "warning caution alert triangle"),
+    ("grapes",        0x1F347, "1f347", "grapes fruit food"),
+    ("antenna",       0x1F4E1, "1f4e1", "satellite antenna dish radio signal"),
     ("satellite",     0x1F4E1, "1f4e1", "satellite dish radio antenna"),
     ("plane",         0x2708,  "2708",  "plane airplane travel"),
     ("car",           0x1F697, "1f697", "car vehicle"),

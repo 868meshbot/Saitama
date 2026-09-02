@@ -138,6 +138,13 @@ extern const lv_img_dsc_t emoji_question;
 extern const lv_img_dsc_t emoji_zzz;
 extern const lv_img_dsc_t emoji_frog;
 extern const lv_img_dsc_t emoji_dog;
+extern const lv_img_dsc_t emoji_fox;
+extern const lv_img_dsc_t emoji_magnifier;
+extern const lv_img_dsc_t emoji_biohazard;
+extern const lv_img_dsc_t emoji_radioactive;
+extern const lv_img_dsc_t emoji_warning;
+extern const lv_img_dsc_t emoji_grapes;
+extern const lv_img_dsc_t emoji_antenna;
 extern const lv_img_dsc_t emoji_satellite;
 extern const lv_img_dsc_t emoji_plane;
 extern const lv_img_dsc_t emoji_car;
@@ -302,6 +309,13 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F4A4u, &emoji_zzz, "zzz sleep tired" },
     { 0x1F438u, &emoji_frog, "frog green" },
     { 0x1F415u, &emoji_dog, "dog puppy" },
+    { 0x1F98Au, &emoji_fox, "fox foxhunt animal" },
+    { 0x1F50Du, &emoji_magnifier, "magnifying glass search inspect" },
+    { 0x02623u, &emoji_biohazard, "biohazard toxic hazard warning" },
+    { 0x02622u, &emoji_radioactive, "radioactive nuclear hazard warning" },
+    { 0x026A0u, &emoji_warning, "warning caution alert triangle" },
+    { 0x1F347u, &emoji_grapes, "grapes fruit food" },
+    { 0x1F4E1u, &emoji_antenna, "satellite antenna dish radio signal" },
     { 0x1F4E1u, &emoji_satellite, "satellite dish radio antenna" },
     { 0x02708u, &emoji_plane, "plane airplane travel" },
     { 0x1F697u, &emoji_car, "car vehicle" },
@@ -330,4 +344,4 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F1EEu, &emoji_ireland, "ireland flag" },
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
 };
-static const int kOpsEmojiCount = 156;
+static const int kOpsEmojiCount = 163;

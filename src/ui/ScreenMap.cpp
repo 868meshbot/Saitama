@@ -301,7 +301,7 @@ void ScreenMap::_refreshMarkers()
         // Name label — parented to _screen so it floats above tile layer
         lv_obj_t* nlbl = lv_label_create(ScreenMap::_screen);
         lv_label_set_text(nlbl, name ? name : "");
-        lv_obj_set_style_text_font(nlbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(nlbl, theme::bodyFont10(), 0);
         // Convert RGB24 colour to lv_color_t for the label
         lv_obj_set_style_text_color(nlbl,
             lv_color_make((col >> 16) & 0xFF, (col >> 8) & 0xFF, col & 0xFF), 0);
