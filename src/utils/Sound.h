@@ -27,6 +27,14 @@ namespace sound {
     // Used by the CPU governor to avoid lowering APB below 80 MHz mid-playback.
     bool isPlaying();
 
+    // Play a short tone burst of arbitrary pitch and length.
+    // Gated by cfg.speakerEnabled only — NOT by notifySound, because this is a
+    // deliberate user-driven tool sound rather than a message notification.
+    // freqHz is clamped to 200-3500 Hz (Nyquist at the 8 kHz sample rate),
+    // durationMs to 10-200 ms. Returns immediately; audio drains via DMA.
+    // Added for the foxhunt proximity beeper, which needs variable rate/pitch.
+    void playBeep(uint16_t freqHz, uint16_t durationMs);
+
     // Play the boot startup jingle (DMG-style rising G-major arpeggio).
     // Gated by cfg.speakerEnabled only — not notifySound.
     // Blocks ~200 ms while queuing samples, then returns; audio finishes in DMA.

@@ -29,6 +29,15 @@ namespace sdcard {
     size_t readMsgLog   (const char* tag, char* buf, size_t bufSize);
     bool   deleteMsgLog (const char* tag);  // removes the .log file for tag
 
+    // PCAP capture helpers — /pcap/<name>.pcap. Standard libpcap file: a
+    // 24-byte global header (written once by pcapCreate) followed by one
+    // 16-byte record header + raw frame bytes per packet (pcapAppend).
+    // Link type is LINKTYPE_USER0 (147, reserved for private use) — payload
+    // is the raw MeshCore radio frame, verbatim.
+    bool pcapCreate(const char* path);
+    bool pcapAppend(const char* path, uint32_t ts_sec, uint32_t ts_usec,
+                     const uint8_t* data, size_t len);
+
     // Directory listing — newline-separated entries in buf; dirs wrapped in [].
     size_t   listDir(const char* path, char* buf, size_t bufSize);
     // Delete all files in /ops/msgs/.

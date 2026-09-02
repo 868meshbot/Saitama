@@ -192,6 +192,12 @@ class OMSMesh : public BaseChatMesh {
     TraceResult _traceResult{};
     bool        _hasTraceResult = false;
 
+    // Raw packet capture — filled by logRxRaw() below, drained by ScreenPcap.
+    static constexpr int PCAP_QUEUE_SIZE = 12;
+    CapturedPacket _pcapBuf[PCAP_QUEUE_SIZE];
+    int  _pcapHead = 0, _pcapTail = 0, _pcapCount = 0;
+    bool _pcapCaptureEnabled = false;
+
     // Tracks what binary response format to expect from the next onContactResponse()
     enum PendingResp { PENDING_NONE = 0, PENDING_STATUS, PENDING_NEIGHBOURS };
     PendingResp _pendingResp = PENDING_NONE;
@@ -851,6 +857,22 @@ class OMSMesh : public BaseChatMesh {
     // Must return true for this node to relay flood packets and forward TRACE hops.
     bool allowPacketForward(const mesh::Packet* /*packet*/) override {
         return _active && ops::config::get().autoForward;
+    }
+
+    // Fires for every received frame, before parsing — raw bytes as they came
+    // off the radio. Buffered only while ScreenPcap has a capture running.
+    void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override {
+        if (!_pcapCaptureEnabled || len <= 0) return;
+        if (_pcapCount >= PCAP_QUEUE_SIZE) return;  // drop — screen isn't draining fast enough
+        CapturedPacket& p = _pcapBuf[_pcapTail];
+        p.timestamp = (uint32_t)getRTCClock()->getCurrentTime();
+        p.usec      = (millis() % 1000) * 1000;
+        p.rssi      = rssi;
+        p.snr       = snr;
+        p.len       = (uint8_t)(len > 255 ? 255 : len);
+        memcpy(p.data, raw, p.len);
+        _pcapTail = (_pcapTail + 1) % PCAP_QUEUE_SIZE;
+        _pcapCount++;
     }
 
     // ── BaseChatMesh pure virtuals ────────────────────────────────
@@ -1967,6 +1989,19 @@ public:
         return true;
     }
 
+    void enablePcapCapture(bool en) {
+        _pcapCaptureEnabled = en;
+        if (!en) { _pcapHead = _pcapTail = _pcapCount = 0; }
+    }
+
+    bool dequeuePcap(CapturedPacket& out) {
+        if (_pcapCount == 0) return false;
+        out = _pcapBuf[_pcapHead];
+        _pcapHead = (_pcapHead + 1) % PCAP_QUEUE_SIZE;
+        _pcapCount--;
+        return true;
+    }
+
     int      rxCount()      const { return _rxCount;   }
     int      numPeers()     const { return _peerCount;  }
     uint32_t numPeerSerial() const { return _peerSerial; }
@@ -2453,6 +2488,14 @@ bool MeshService::dequeueMessage(RxMessage& out) {
 
 int MeshService::messageCount() const {
     return _initialized ? the_mesh.rxCount() : 0;
+}
+
+void MeshService::setPcapCapture(bool enable) {
+    if (_initialized) the_mesh.enablePcapCapture(enable);
+}
+
+bool MeshService::dequeueCapturedPacket(CapturedPacket& out) {
+    return _initialized && the_mesh.dequeuePcap(out);
 }
 
 int MeshService::peerCount() const {

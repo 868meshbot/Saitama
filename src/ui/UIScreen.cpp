@@ -23,6 +23,8 @@
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
 #include "Screen2048.h"
+#include "ScreenPcap.h"
+#include "ScreenFoxhunt.h"
 #include "Theme.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -693,6 +695,10 @@ void tick() {
             if (dx || dy) ScreenChanScan::navigate(dx, dy);
         } else if (Screen2048::isActive()) {
             if (dx || dy) Screen2048::navigate(dx, dy);
+        } else if (ScreenFoxhunt::isActive()) {
+            int ndy = (dy > 0) ? 1 : (dy < 0) ? -1 : 0;
+            if (ndy) ScreenFoxhunt::navigate(0, ndy);
+            if (tbPress) ScreenFoxhunt::confirmSelect();
         } else {
             // dy (up/down) always changes group focus.
             // dx (left/right) moves a focused slider, or changes focus otherwise.
@@ -906,6 +912,8 @@ void tick() {
     ScreenSpectrum::update();
     ScreenSigGen::update();
     ScreenChanScan::update();
+    ScreenPcap::tick();
+    ScreenFoxhunt::tick();
 
     // Drain discover results → ScreenFinder
     {

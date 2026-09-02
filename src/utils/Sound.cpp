@@ -46,6 +46,10 @@ static constexpr float JINGLE_FREQS[JINGLE_NOTES] = {
 static constexpr int   JINGLE_LENS[JINGLE_NOTES] = { 1600, 640, 640, 640, 640, 640, 640, 4800 };
 static constexpr int   JINGLE_TOTAL = 10240;  // 1600 + 640*6 + 4800
 
+// Foxhunt beep scratch buffer: longest burst playBeep() will render.
+static constexpr int   BEEP_MAX_MS      = 200;
+static constexpr int   BEEP_MAX_SAMPLES = (SAMPLE_RATE * BEEP_MAX_MS) / 1000;
+
 // Applies cfg.speakerVolume (0–100) scaling when writing to I2S DMA.
 // Chunks through a 256-sample stack buffer to avoid a heap allocation.
 static void _writeScaled(const int16_t* buf, int count)
@@ -70,6 +74,7 @@ static int16_t* s_pluckBuf  = nullptr;
 static int16_t* s_clearBuf  = nullptr;
 static int16_t* s_whooshBuf = nullptr;
 static int16_t* s_jingleBuf = nullptr;
+static int16_t* s_beepBuf   = nullptr;  // scratch for sound::playBeep()
 static bool     s_initialized = false;
 static uint32_t s_soundEndMs  = 0;  // millis() deadline while DMA is draining
 
@@ -167,7 +172,9 @@ void sound::init()
     s_clearBuf  = (int16_t*)ps_malloc(CLEAR_SAMPLES  * sizeof(int16_t));
     s_whooshBuf = (int16_t*)ps_malloc(WHOOSH_SAMPLES * sizeof(int16_t));
     s_jingleBuf = (int16_t*)ps_malloc(JINGLE_TOTAL   * sizeof(int16_t));
-    if (!s_pingBuf || !s_pluckBuf || !s_clearBuf || !s_whooshBuf || !s_jingleBuf) {
+    s_beepBuf   = (int16_t*)ps_malloc(BEEP_MAX_SAMPLES * sizeof(int16_t));
+    if (!s_pingBuf || !s_pluckBuf || !s_clearBuf || !s_whooshBuf || !s_jingleBuf ||
+        !s_beepBuf) {
         OPS_LOG("Sound", "ps_malloc failed for waveform buffers");
         return;
     }
@@ -212,6 +219,39 @@ void sound::init()
 bool sound::isPlaying()
 {
     return (millis() < s_soundEndMs);
+}
+
+// ── Variable tone burst (foxhunt proximity beeper) ────────────────────
+// Generated on demand rather than pre-rendered, because the caller varies
+// both pitch and length continuously with signal strength. A 5 ms raised-
+// cosine attack/release removes the click that a bare square-edged burst
+// produces on the MAX98357A.
+void sound::playBeep(uint16_t freqHz, uint16_t durationMs)
+{
+    const auto& cfg = ops::config::get();
+    if (!cfg.speakerEnabled) return;          // master switch only
+    if (!s_initialized || !s_beepBuf) return;
+
+    if (freqHz < 200)   freqHz = 200;
+    if (freqHz > 3500)  freqHz = 3500;        // Nyquist headroom at 8 kHz
+    if (durationMs < 10)  durationMs = 10;
+    if (durationMs > BEEP_MAX_MS) durationMs = BEEP_MAX_MS;
+
+    const int n = (SAMPLE_RATE * durationMs) / 1000;
+    const int ramp = (SAMPLE_RATE * 5) / 1000;   // 5 ms edges
+    for (int i = 0; i < n; i++) {
+        float t   = (float)i / (float)SAMPLE_RATE;
+        float env = 1.0f;
+        if (i < ramp)          env = 0.5f * (1.0f - cosf(M_PI * (float)i / (float)ramp));
+        else if (i > n - ramp) env = 0.5f * (1.0f - cosf(M_PI * (float)(n - i) / (float)ramp));
+        s_beepBuf[i] = (int16_t)(sinf(2.0f * M_PI * (float)freqHz * t) * env * 14000.0f);
+    }
+
+    // I2S APB clock is only stable at >=80 MHz CPU (same constraint as playPing).
+    if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
+    s_soundEndMs = millis() + durationMs + 50;
+
+    _writeScaled(s_beepBuf, n);
 }
 
 void sound::playPing()

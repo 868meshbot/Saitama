@@ -21,6 +21,8 @@
 #include "ScreenPower.h"
 #include "ScreenZeroXZero.h"
 #include "Screen2048.h"
+#include "ScreenPcap.h"
+#include "ScreenFoxhunt.h"
 #include "Theme.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
@@ -58,7 +60,7 @@ static int8_t    s_selCol     = 0;
 static bool      s_homeSel    = false;
 
 // ── Page 2 state ─────────────────────────────────────────────────────
-static lv_obj_t* s_tiles2[8]          = {};  // capacity for future games
+static lv_obj_t* s_tiles2[10]          = {};  // capacity for future games
 static int8_t    s_selRow2    = 0;
 static int8_t    s_selCol2    = 0;
 
@@ -92,7 +94,7 @@ static const AppItem kApps[12] = {
     { LV_SYMBOL_WIFI,      "Signal"    },
 };
 
-static const AppItem kApps2[8] = {
+static const AppItem kApps2[10] = {
     { LV_SYMBOL_PLAY,      "MP3"      },  // row 0
     { LV_SYMBOL_SD_CARD,   "Files"    },
     { LV_SYMBOL_UP,        "Spectrum" },
@@ -101,6 +103,8 @@ static const AppItem kApps2[8] = {
     { LV_SYMBOL_BATTERY_3, "Power"    },
     { LV_SYMBOL_EDIT,      "0x0"      },
     { LV_SYMBOL_SHUFFLE,   "2048"     },
+    { "\xF0\x9F\x94\x8D",   "PCAP"     },  // row 2 - magnifier emoji
+    { "\xF0\x9F\xA6\x8A",   "BT Foxhunt" },  // fox emoji
 };
 
 // ── Grid descriptors (shared by both pages) ──────────────────────────
@@ -129,7 +133,7 @@ static void _updateHighlight()
     for (int i = 0; i < 12; i++) {
         if (s_tiles[i])  lv_obj_clear_state(s_tiles[i],  LV_STATE_FOCUSED);
     }
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 10; i++) {
         if (s_tiles2[i]) lv_obj_clear_state(s_tiles2[i], LV_STATE_FOCUSED);
     }
     if (s_homeBtn) lv_obj_clear_state(s_homeBtn, LV_STATE_FOCUSED);
@@ -143,7 +147,7 @@ static void _updateHighlight()
         }
     } else {
         int idx = s_selRow2 * 4 + s_selCol2;
-        if (idx < 8 && s_tiles2[idx]) lv_obj_add_state(s_tiles2[idx], LV_STATE_FOCUSED);
+        if (idx < 10 && s_tiles2[idx]) lv_obj_add_state(s_tiles2[idx], LV_STATE_FOCUSED);
     }
 }
 
@@ -371,7 +375,7 @@ void ScreenLauncher::_buildGrid(lv_obj_t* parent) {
     lv_obj_set_layout(grid2, LV_LAYOUT_GRID);
     lv_obj_set_grid_dsc_array(grid2, kColDsc, kRowDsc);
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 10; i++) {
         int col = i % 4;
         int row = i / 4;
 
@@ -867,6 +871,8 @@ void ScreenLauncher::_onIconClick(lv_event_t* e) {
     else if (strcmp(name, "Power")     == 0) { ScreenPower::show();          return; }
     else if (strcmp(name, "0x0")       == 0) { ScreenZeroXZero::show();  return; }
     else if (strcmp(name, "2048")      == 0) { Screen2048::show();       return; }
+    else if (strcmp(name, "PCAP")      == 0) { ScreenPcap::show();       return; }
+    else if (strcmp(name, "BT Foxhunt") == 0) { ScreenFoxhunt::show();   return; }
     ScreenPlaceholder::show(name);
 }
 
@@ -879,13 +885,16 @@ void ScreenLauncher::navigate(int dx, int dy) {
     if (!_screen) return;
 
     if (s_activePage == 1) {
-        // Page 2: row 0 = 4 tiles (cols 0-3), row 1 = 4 tiles (cols 0-3)
+        // Page 2: row 0 = 4 tiles (cols 0-3), row 1 = 4 tiles (cols 0-3),
+        // row 2 = 1 tile (col 0 only, PCAP)
         if (dy < 0 && s_selRow2 > 0) {
             s_selRow2--;
-        } else if (dy > 0 && s_selRow2 < 1) {
+        } else if (dy > 0 && s_selRow2 < 2) {
             s_selRow2++;
         }
-        s_selCol2 = (int8_t)((s_selCol2 + dx + 4) % 4);
+        // Row 2 currently holds 2 tiles (PCAP, BT Foxhunt).
+        if (s_selRow2 == 2) s_selCol2 = (int8_t)((s_selCol2 + dx + 2) % 2);
+        else                s_selCol2 = (int8_t)((s_selCol2 + dx + 4) % 4);
         _updateHighlight();
         return;
     }
@@ -918,7 +927,7 @@ void ScreenLauncher::confirmSelect() {
 
     if (s_activePage == 1) {
         int idx = s_selRow2 * 4 + s_selCol2;
-        if (idx < 8 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
+        if (idx < 10 && s_tiles2[idx]) lv_event_send(s_tiles2[idx], LV_EVENT_CLICKED, nullptr);
         return;
     }
 

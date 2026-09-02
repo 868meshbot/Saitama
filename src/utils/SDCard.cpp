@@ -73,6 +73,56 @@ bool sdcard::readFile(const char* path, uint8_t* buf, size_t maxLen, size_t* out
     return n > 0;
 }
 
+// ── PCAP capture helpers ────────────────────────────────────────────────
+
+namespace {
+struct __attribute__((packed)) PcapGlobalHeader {
+    uint32_t magic_number;   // 0xa1b2c3d4 = microsecond timestamps, native endian
+    uint16_t version_major;
+    uint16_t version_minor;
+    int32_t  thiszone;
+    uint32_t sigfigs;
+    uint32_t snaplen;
+    uint32_t network;        // LINKTYPE_*
+};
+struct __attribute__((packed)) PcapRecordHeader {
+    uint32_t ts_sec;
+    uint32_t ts_usec;
+    uint32_t incl_len;
+    uint32_t orig_len;
+};
+constexpr uint32_t PCAP_LINKTYPE_USER0 = 147;  // reserved for private use
+}
+
+bool sdcard::pcapCreate(const char* path) {
+    if (!s_mounted) return false;
+    if (!SD.exists("/pcap")) SD.mkdir("/pcap");
+    PcapGlobalHeader hdr{};
+    hdr.magic_number  = 0xa1b2c3d4;
+    hdr.version_major = 2;
+    hdr.version_minor = 4;
+    hdr.snaplen       = 255;
+    hdr.network       = PCAP_LINKTYPE_USER0;
+    SD.remove(path);
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) { OPS_LOG("SD", "pcapCreate open failed: %s", path); return false; }
+    size_t written = f.write((const uint8_t*)&hdr, sizeof(hdr));
+    f.close();
+    return written == sizeof(hdr);
+}
+
+bool sdcard::pcapAppend(const char* path, uint32_t ts_sec, uint32_t ts_usec,
+                         const uint8_t* data, size_t len) {
+    if (!s_mounted) return false;
+    File f = SD.open(path, FILE_APPEND);
+    if (!f) { OPS_LOG("SD", "pcapAppend open failed: %s", path); return false; }
+    PcapRecordHeader rec{ ts_sec, ts_usec, (uint32_t)len, (uint32_t)len };
+    f.write((const uint8_t*)&rec, sizeof(rec));
+    size_t written = f.write(data, len);
+    f.close();
+    return written == len;
+}
+
 // ── Message log helpers ───────────────────────────────────────────────
 
 static void _buildMsgPath(const char* tag, char* path, size_t pathSize)

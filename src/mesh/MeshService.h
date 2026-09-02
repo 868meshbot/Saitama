@@ -77,6 +77,17 @@ struct PeerInfo {
     int32_t  lon;         // last-known longitude × 1 000 000 (0 = unknown)
 };
 
+// One raw over-the-air frame, captured verbatim before parsing (for PCAP export).
+// MAX_TRANS_UNIT (MeshCore.h) is 255, so a fixed 255-byte buffer always fits.
+struct CapturedPacket {
+    uint32_t timestamp;  // unix seconds (RTC)
+    uint32_t usec;       // best-effort sub-second offset, from millis()
+    float    rssi;
+    float    snr;
+    uint8_t  len;
+    uint8_t  data[255];
+};
+
 // Live FHSS status, for the settings/signal screens. See src/mesh/Fhss.h.
 struct FhssStatus {
     bool        enabled;      // user selected FHSS in settings
@@ -120,6 +131,14 @@ public:
     // ── Receive ───────────────────────────────────────────────────────
     bool dequeueMessage(RxMessage& out);
     int  messageCount() const;
+
+    // ── Raw packet capture (PCAP export) ────────────────────────────────
+    // Enables/disables buffering of raw over-the-air frames as they are
+    // received. Off by default — costs nothing when ScreenPcap isn't capturing.
+    void setPcapCapture(bool enable);
+    // Pops one buffered raw frame (call every tick while capturing to drain
+    // the small ring buffer before it fills and starts dropping frames).
+    bool dequeueCapturedPacket(CapturedPacket& out);
 
     // ── Peers ─────────────────────────────────────────────────────────
     int      peerCount()  const;
