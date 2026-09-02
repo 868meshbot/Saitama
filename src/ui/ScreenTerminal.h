@@ -25,6 +25,7 @@ private:
     static lv_obj_t* _logScroll;   // scrollable container
     static lv_obj_t* _logLabel;    // label inside scroll container
     static lv_obj_t* _input;       // textarea for command input
+    static lv_obj_t* _sendBtn;     // send button (group order anchor)
 
     // true while in repeater-admin mode (input routed to sendAdminCommand)
     static bool s_adminMode;
@@ -37,6 +38,30 @@ private:
     static void _onHomeClick(lv_event_t* e);
     static void _onSend     (lv_event_t* e);
     static void _onTermKey  (lv_event_t* e);  // ESC handler — checks s_adminMode
+
+    // ── Predictive-command bubble ────────────────────────────────────
+    // Up to 4 command-name suggestions shown above the input bar while the
+    // first word is being typed; trackball focus + press (or a tap) picks
+    // one and autocompletes it into the textarea.
+    static constexpr int SUGG_MAX = 4;
+
+    static lv_obj_t* _suggBar;
+    static lv_obj_t* _suggBtns[SUGG_MAX];
+    static lv_obj_t* _suggLbls[SUGG_MAX];
+    static char      s_suggCmds[SUGG_MAX][20];
+    static int       s_suggCount;
+
+    // Text preserved verbatim ahead of the word currently being completed —
+    // "" (or "/") for a first-word match, "/set " etc. for a second-word
+    // match — so a pick only replaces the partial word, not the whole line.
+    static char      s_suggBase[32];
+
+    static void _buildSuggBar     (lv_obj_t* parent);
+    static void _updateSuggestions();
+    static void _hideSuggestions  ();
+    static void _reclaimInputFocus(lv_group_t* g);
+    static void _onInputChanged   (lv_event_t* e);
+    static void _onSuggClick      (lv_event_t* e);
 
     // Command dispatch — called by _onSend in normal mode
     static void _dispatch(const char* input);

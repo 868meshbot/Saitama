@@ -114,6 +114,7 @@ static bool      s_govApplyPending   = false;  // deferred setCpuFrequencyMhz(),
 static bool      s_ssAnalog          = false;  // true = analog clock screensaver
 static lv_obj_t* s_ssCanvas          = nullptr;
 static void*     s_ssCanvasBuf       = nullptr;
+static bool      s_ssManual          = false;  // true = invoked via /clock, not by idle timeout
 
 // Touch calibration
 static constexpr lv_coord_t kCalTx1 = 40,  kCalTy1 = 40;
@@ -425,6 +426,7 @@ static void _deactivateScreensaver()
     s_ssNameLbl         = nullptr;
     s_ssCanvas          = nullptr;
     s_ssAnalog          = false;
+    s_ssManual          = false;
     if (s_prevScreen) {
         lv_scr_load(s_prevScreen);
         s_prevScreen = nullptr;
@@ -436,10 +438,11 @@ static void _deactivateScreensaver()
     s_govApplyPending = true;  // restore active-screen frequency via safe deferred path
 }
 
-static void _activateScreensaver(bool analog = false)
+static void _activateScreensaver(bool analog = false, bool manual = false)
 {
     if (s_screensaverActive) return;
     s_ssAnalog          = analog;
+    s_ssManual          = manual;
     s_prevScreen        = lv_scr_act();
     s_screensaverScreen = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_screensaverScreen, lv_color_black(), LV_PART_MAIN);
@@ -498,11 +501,18 @@ static void _activateScreensaver(bool analog = false)
     // reconfigures the PLL mid-construction, uses deep ESP-IDF stack, and can
     // trigger the interrupt WDT or overflow the main-task stack canary.
     s_govApplyPending    = true;
-    // Dim to ~30% of configured brightness (min 60/255) — clock must be clearly visible.
     int cfg_b = ops::config::get().brightness;
-    int dim   = cfg_b * 30 / 100;
-    if (dim < 60) dim = 60;
-    Board::instance().setDisplayBrightness((uint8_t)dim);
+    if (manual) {
+        // Explicitly asked for via /clock — the user is looking at the screen
+        // right now, so keep full configured brightness rather than dimming.
+        Board::instance().setDisplayBrightness((uint8_t)cfg_b);
+    } else {
+        // Idle timeout: dim to ~30% of configured brightness (min 60/255) —
+        // clock must still be clearly visible.
+        int dim = cfg_b * 30 / 100;
+        if (dim < 60) dim = 60;
+        Board::instance().setDisplayBrightness((uint8_t)dim);
+    }
 }
 
 // ---------- Notification popup helpers ----------
@@ -839,8 +849,16 @@ void tick() {
     // Screen off: cut backlight entirely after screenOffMin minutes of screensaver.
     if (s_screensaverActive && !s_screenOff) {
         uint8_t offSec = ops::config::get().screenOffSec;
-        if (offSec >= 20) {
-            if (now - s_screensaverStartMs >= (uint32_t)offSec * 1000UL) {
+        // s_ssManual: /clock was invoked deliberately — don't black out the
+        // display underneath the user while they're reading it.
+        if (offSec >= 20 && !s_ssManual) {
+            uint32_t elapsed = now - s_screensaverStartMs;
+            // Guard the unsigned subtraction: the screensaver may have been
+            // activated *later* in this same tick (e.g. /clock dispatched from
+            // the keyboard block above), making s_screensaverStartMs > now and
+            // wrapping `elapsed` to a huge value that fires screen-off instantly.
+            bool sane = (elapsed < 0x80000000UL);
+            if (sane && elapsed >= (uint32_t)offSec * 1000UL) {
                 s_screenOff = true;
                 Board::instance().setDisplayBrightness(0);
                 _applyGovFreq(2);  // screen-off frequency
@@ -861,6 +879,15 @@ void tick() {
             struct tm lt;
             gmtime_r(&t, &lt);
             desired = (lt.tm_hour >= 21 || lt.tm_hour < 7) ? cfg.kbBrightness : 0;
+        } else if (cfg.kbBrightness == 0) {
+            // Manual mode applies kbBrightness at all times, so a stuck 0
+            // here leaves the keyboard permanently dark with no visible way
+            // back into Settings to raise it. Self-heal once to a usable
+            // floor rather than staying dark forever.
+            auto& mcfg = const_cast<ops::Config&>(cfg);
+            mcfg.kbBrightness = 25;
+            ops::config::save();
+            desired = 25;
         } else {
             desired = cfg.kbBrightness;  // manual: always at set level
         }
@@ -1091,7 +1118,8 @@ void applyGovernorNow() {
 
 void activateScreensaver(bool analog)
 {
-    _activateScreensaver(analog);
+    // Only reachable from /clock — always a deliberate, manual invocation.
+    _activateScreensaver(analog, true);
 }
 
 void startTouchCalibration()

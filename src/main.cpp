@@ -81,7 +81,7 @@ void setup() {
         ops::MeshService::instance().startCompanionBLE();
 
     OPS_LOG("main", "Ready");
-    Serial.println("\r\nSaitama serial console ready — type /help and press Enter");
+    Serial.println("\r\nSaitama serial console ready — type help and press Enter");
     Serial.print("OPS> ");
 }
 

@@ -11,7 +11,7 @@
 //   │                                      │
 //   ├──────────────────────────────────────┤  y = 184
 //   │ > [_input___________________] [Send] │  input    44 px
-//   │ Type /help for help, ENTER to run…  │  hint     12 px
+//   │ Type help for help, ENTER to run…  │  hint     12 px
 //   └──────────────────────────────────────┘  y = 240
 
 #include "ScreenTerminal.h"
@@ -54,7 +54,76 @@ lv_obj_t* ScreenTerminal::_screen    = nullptr;
 lv_obj_t* ScreenTerminal::_logScroll = nullptr;
 lv_obj_t* ScreenTerminal::_logLabel  = nullptr;
 lv_obj_t* ScreenTerminal::_input     = nullptr;
+lv_obj_t* ScreenTerminal::_sendBtn   = nullptr;
 bool      ScreenTerminal::s_adminMode = false;
+
+lv_obj_t* ScreenTerminal::_suggBar   = nullptr;
+lv_obj_t* ScreenTerminal::_suggBtns[ScreenTerminal::SUGG_MAX] = {};
+lv_obj_t* ScreenTerminal::_suggLbls[ScreenTerminal::SUGG_MAX] = {};
+char      ScreenTerminal::s_suggCmds[ScreenTerminal::SUGG_MAX][20] = {};
+int       ScreenTerminal::s_suggCount = 0;
+char      ScreenTerminal::s_suggBase[32] = {};
+
+// Command names recognised by _dispatch(), alphabetised, for the predictive
+// bubble. Kept in sync manually with the strcmp(cmd, "...") table below —
+// "mobrep" is listed in help but never implemented, so it is omitted here.
+static const char* kCmdList[] = {
+    "advert", "adverts", "autorep", "battery", "card", "ch3", "ch4", "ch5",
+    "channel", "channels", "chscan", "clearcontacts", "clearmessages",
+    "clearrep", "clock", "contacts", "control", "filemgr", "find", "get",
+    "getpath", "gps", "help", "i2c", "identity", "import", "kbbl", "list",
+    "local", "memory", "messages", "pathsize", "play", "power", "public",
+    "quiet", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
+    "resetpath", "scope", "screenshot", "sd", "send", "set", "setchannel",
+    "setpath", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
+    nullptr
+};
+
+// Free-text commands accepted in repeater-admin mode (see showAdmin() hint).
+static const char* kAdminCmdList[] = {
+    "advert", "clock", "neighbours", "reboot", "status", nullptr
+};
+
+// Second-word completions for commands whose next token is one of a small
+// fixed set of keywords (per help usage strings) — free-form/numeric args
+// (hex keys, region names, path counts, callsigns...) aren't listed here
+// since there's nothing sensible to predict. Not used in admin mode, where
+// input is a single free-text line rather than a cmd/args pair.
+struct SubWordEntry { const char* cmd; const char** words; };
+
+static const char* kSubSet[]       = { "af", "bw", "cr", "freq", "lat", "lon", "name", "sf", "tx", nullptr };
+static const char* kSubGet[]       = { "radio", nullptr };
+static const char* kSubSd[]        = { "ls", "mount", "restore", "unmount", nullptr };
+static const char* kSubIdentity[]  = { "restore", "show", nullptr };
+static const char* kSubGps[]       = { "intermittent", "off", "on", nullptr };
+static const char* kSubClock[]     = { "analog", nullptr };
+static const char* kSubOnOff[]     = { "off", "on", nullptr };   // tbdebug
+static const char* kSubTouchCali[] = { "reset", nullptr };
+static const char* kSubPathsize[]  = { "1", "2", nullptr };
+static const char* kSubReset[]     = { "path", nullptr };
+static const char* kSubI2c[]       = { "scan", nullptr };
+
+static const SubWordEntry kSubWordTable[] = {
+    { "set",        kSubSet       },
+    { "get",        kSubGet       },
+    { "sd",         kSubSd        },
+    { "identity",   kSubIdentity  },
+    { "gps",        kSubGps       },
+    { "clock",      kSubClock     },
+    { "tbdebug",    kSubOnOff     },
+    { "touch-cali", kSubTouchCali },
+    { "pathsize",   kSubPathsize  },
+    { "reset",      kSubReset     },
+    { "i2c",        kSubI2c       },
+    { nullptr, nullptr }
+};
+
+static const char** _subWordsFor(const char* cmd) {
+    for (int i = 0; kSubWordTable[i].cmd; i++) {
+        if (strcasecmp(kSubWordTable[i].cmd, cmd) == 0) return kSubWordTable[i].words;
+    }
+    return nullptr;
+}
 char*     ScreenTerminal::_logBuf    = nullptr;
 int       ScreenTerminal::_logLen    = 0;
 char      ScreenTerminal::_serialBuf[256] = {};
@@ -69,7 +138,7 @@ void ScreenTerminal::show() {
     if (!_logBuf) {
         _logBuf = (char*)ps_malloc(LOG_BUF_SIZE);
         if (_logBuf) {
-            static const char kHello[] = "Saitama Terminal - type /help\n";
+            static const char kHello[] = "Saitama Terminal - type help\n";
             memcpy(_logBuf, kHello, sizeof(kHello));
             _logLen = (int)(sizeof(kHello) - 1);
         }
@@ -84,6 +153,7 @@ void ScreenTerminal::show() {
         _buildTopBar(_screen);
         _buildLog(_screen);
         _buildInput(_screen);
+        _buildSuggBar(_screen);
     }
 
     lv_scr_load(_screen);
@@ -107,6 +177,10 @@ void ScreenTerminal::showAdmin(const uint8_t* prefix4, const char* name)
         _logScroll = nullptr;
         _logLabel  = nullptr;
         _input     = nullptr;
+        _sendBtn   = nullptr;
+        _suggBar   = nullptr;
+        for (int i = 0; i < SUGG_MAX; i++) { _suggBtns[i] = nullptr; _suggLbls[i] = nullptr; }
+        s_suggCount = 0;
     }
 
     show();
@@ -226,7 +300,8 @@ void ScreenTerminal::_buildInput(lv_obj_t* parent) {
     lv_obj_align(prompt, LV_ALIGN_TOP_LEFT, 0, 6);
 
     // Send button
-    lv_obj_t* sendBtn = lv_btn_create(bar);
+    _sendBtn = lv_btn_create(bar);
+    lv_obj_t* sendBtn = _sendBtn;
     lv_obj_set_size(sendBtn, 44, 32);
     lv_obj_align(sendBtn, LV_ALIGN_TOP_RIGHT, 0, 2);
     lv_obj_set_style_bg_color(sendBtn, theme::PRIMARY, 0);
@@ -249,14 +324,14 @@ void ScreenTerminal::_buildInput(lv_obj_t* parent) {
     lv_obj_set_style_border_color(_input, theme::BORDER, 0);
     lv_obj_set_style_border_color(_input, theme::ACCENT, LV_STATE_FOCUSED);
     lv_obj_set_style_text_font(_input, &lv_font_montserrat_10, 0);
-    lv_textarea_set_placeholder_text(_input, s_adminMode ? "status" : "/help");
+    lv_textarea_set_placeholder_text(_input, s_adminMode ? "status" : "help");
     lv_textarea_set_one_line(_input, true);
 
     // Hint line
     lv_obj_t* hint = lv_label_create(bar);
     lv_label_set_text(hint, s_adminMode
         ? "Command (no / needed)  |  ENTER to send  |  ESC = back"
-        : "Type /help for help  |  ENTER to run  |  ESC to exit");
+        : "Type help for help  |  ENTER to run  |  ESC to exit");
     lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -1);
@@ -265,6 +340,9 @@ void ScreenTerminal::_buildInput(lv_obj_t* parent) {
     lv_obj_add_event_cb(_input, _onSend,    LV_EVENT_READY, nullptr);
     lv_obj_add_event_cb(_input, _onTermKey, LV_EVENT_KEY,   nullptr);
     lv_obj_add_event_cb(sendBtn, _onTermKey, LV_EVENT_KEY,  nullptr);
+
+    // Recompute the predictive bubble on every edit (typed char, backspace, autocomplete).
+    lv_obj_add_event_cb(_input, _onInputChanged, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -278,6 +356,229 @@ void ScreenTerminal::_buildInput(lv_obj_t* parent) {
 void ScreenTerminal::_scrollToBottom() {
     if (!_logScroll) return;
     lv_obj_scroll_to_y(_logScroll, LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+// ── _buildSuggBar() ──────────────────────────────────────────────────
+// Row of up to SUGG_MAX chip buttons, floating above the input bar. Hidden
+// (and empty) until _updateSuggestions() finds prefix matches to show.
+void ScreenTerminal::_buildSuggBar(lv_obj_t* parent) {
+    static constexpr int SUGG_H = 24;
+
+    _suggBar = lv_obj_create(parent);
+    lv_obj_set_size(_suggBar, OPS_SCREEN_W, SUGG_H);
+    lv_obj_align(_suggBar, LV_ALIGN_BOTTOM_LEFT, 0, -INPUT_H);
+    lv_obj_set_style_bg_color(_suggBar, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_opa(_suggBar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_suggBar, 1, 0);
+    lv_obj_set_style_border_color(_suggBar, theme::BORDER, 0);
+    lv_obj_set_style_border_side(_suggBar, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_radius(_suggBar, 0, 0);
+    lv_obj_set_style_pad_all(_suggBar, 2, 0);
+    lv_obj_set_style_pad_column(_suggBar, 3, 0);
+    lv_obj_clear_flag(_suggBar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(_suggBar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(_suggBar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    for (int i = 0; i < SUGG_MAX; i++) {
+        lv_obj_t* btn = lv_btn_create(_suggBar);
+        lv_obj_set_height(btn, SUGG_H - 4);
+        lv_obj_set_flex_grow(btn, 1);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::BG_CARD, LV_STATE_FOCUSED);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_color(btn, theme::ACCENT, LV_STATE_FOCUSED);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_border_width(btn, 2, LV_STATE_FOCUSED);
+        lv_obj_set_style_radius(btn, 3, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_pad_hor(btn, 2, 0);
+        lv_obj_add_event_cb(btn, _onSuggClick, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(btn, _onTermKey,   LV_EVENT_KEY,     nullptr);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(lbl, LV_PCT(100));
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(lbl);
+
+        _suggBtns[i] = btn;
+        _suggLbls[i] = lbl;
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_add_flag(_suggBar, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ── _updateSuggestions() ─────────────────────────────────────────────
+// Recomputes up to 4 matches for whichever word is currently being typed
+// and shows/hides the bubble accordingly. Predicts the command word itself
+// (first word, against kCmdList/kAdminCmdList) while there's no space yet;
+// once the command word is complete, predicts its second word (if that
+// command has a fixed keyword set in kSubWordTable) up until a further
+// space starts a third, free-form argument. Suggestion buttons are spliced
+// into the focus group between the textarea and the send button while
+// visible, so trackball up/down cycles through them.
+void ScreenTerminal::_updateSuggestions() {
+    if (!_input || !_suggBar) return;
+
+    const char* txt = lv_textarea_get_text(_input);
+    if (!txt) { _hideSuggestions(); return; }
+
+    bool hadSlash    = (txt[0] == '/');
+    const char* body = hadSlash ? txt + 1 : txt;
+    const char* sp   = strchr(body, ' ');
+
+    int count = 0;
+
+    if (!sp) {
+        // Still typing the command word itself.
+        size_t tokLen = strlen(body);
+        if (tokLen == 0) { _hideSuggestions(); return; }
+
+        const char** list = s_adminMode ? kAdminCmdList : kCmdList;
+        for (int i = 0; list[i] && count < SUGG_MAX; i++) {
+            size_t cmdLen = strlen(list[i]);
+            if (cmdLen == tokLen) continue;   // already fully typed — nothing to complete
+            if (strncasecmp(list[i], body, tokLen) != 0) continue;
+            strncpy(s_suggCmds[count], list[i], sizeof(s_suggCmds[count]) - 1);
+            s_suggCmds[count][sizeof(s_suggCmds[count]) - 1] = '\0';
+            count++;
+        }
+
+        // Completion replaces the whole command word — preserve only the
+        // leading slash (if any) ahead of it.
+        size_t baseLen = hadSlash ? 1 : 0;
+        memcpy(s_suggBase, txt, baseLen);
+        s_suggBase[baseLen] = '\0';
+    } else if (!s_adminMode) {
+        // Command word is finished — predict its second word, if that
+        // command has a known fixed set (admin-mode input is one free-text
+        // line, not a cmd/args pair, so no sub-word table applies there).
+        size_t cmdLen = (size_t)(sp - body);
+        const char* rest = sp + 1;
+        while (*rest == ' ') rest++;
+
+        // A second space means a third, free-form argument has started —
+        // nothing further to predict.
+        if (strchr(rest, ' ')) { _hideSuggestions(); return; }
+
+        char cmdBuf[20];
+        if (cmdLen >= sizeof(cmdBuf)) cmdLen = sizeof(cmdBuf) - 1;
+        memcpy(cmdBuf, body, cmdLen);
+        cmdBuf[cmdLen] = '\0';
+
+        const char** words = _subWordsFor(cmdBuf);
+        if (words) {
+            size_t restLen = strlen(rest);
+            for (int i = 0; words[i] && count < SUGG_MAX; i++) {
+                size_t wLen = strlen(words[i]);
+                if (restLen > 0 && wLen == restLen && strncasecmp(words[i], rest, restLen) == 0)
+                    continue;   // already fully typed
+                if (restLen > 0 && strncasecmp(words[i], rest, restLen) != 0) continue;
+                strncpy(s_suggCmds[count], words[i], sizeof(s_suggCmds[count]) - 1);
+                s_suggCmds[count][sizeof(s_suggCmds[count]) - 1] = '\0';
+                count++;
+            }
+
+            // Preserve everything up to the start of the partial second
+            // word verbatim (slash, casing, extra spaces and all).
+            size_t baseLen = (size_t)(rest - txt);
+            if (baseLen >= sizeof(s_suggBase)) baseLen = sizeof(s_suggBase) - 1;
+            memcpy(s_suggBase, txt, baseLen);
+            s_suggBase[baseLen] = '\0';
+        }
+    }
+
+    if (count == 0) { _hideSuggestions(); return; }
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        // Autocomplete (_onSuggClick) reaches here re-entrantly, from inside
+        // the CLICKED handler of a chip that may still be the focused group
+        // member. Move focus back to the textarea *before* unlinking
+        // anything, so lv_group_remove_obj() never has to defocus an object
+        // whose own event handler is still on the call stack.
+        _reclaimInputFocus(g);
+
+        if (_sendBtn) lv_group_remove_obj(_sendBtn);
+        for (int i = 0; i < SUGG_MAX; i++) lv_group_remove_obj(_suggBtns[i]);
+        for (int i = 0; i < count; i++) lv_group_add_obj(g, _suggBtns[i]);
+        if (_sendBtn) lv_group_add_obj(g, _sendBtn);
+    }
+
+    for (int i = 0; i < SUGG_MAX; i++) {
+        if (i < count) {
+            lv_label_set_text(_suggLbls[i], s_suggCmds[i]);
+            lv_obj_clear_flag(_suggBtns[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(_suggBtns[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    s_suggCount = count;
+    lv_obj_clear_flag(_suggBar, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ── _reclaimInputFocus() ─────────────────────────────────────────────
+// Ensures the textarea (not a chip or the send button) holds group focus
+// before we unlink any of them — see the call sites for why.
+void ScreenTerminal::_reclaimInputFocus(lv_group_t* g) {
+    if (!g || !_input) return;
+    lv_obj_t* focused = lv_group_get_focused(g);
+    if (focused == _input) return;
+    bool isOurs = (focused == _sendBtn);
+    for (int i = 0; !isOurs && i < SUGG_MAX; i++) isOurs = (focused == _suggBtns[i]);
+    if (isOurs) lv_group_focus_obj(_input);
+}
+
+// ── _hideSuggestions() ───────────────────────────────────────────────
+void ScreenTerminal::_hideSuggestions() {
+    if (s_suggCount == 0) return;
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        _reclaimInputFocus(g);
+        for (int i = 0; i < SUGG_MAX; i++) lv_group_remove_obj(_suggBtns[i]);
+        if (_sendBtn) {
+            lv_group_remove_obj(_sendBtn);
+            lv_group_add_obj(g, _sendBtn);
+        }
+    }
+    for (int i = 0; i < SUGG_MAX; i++) {
+        if (_suggBtns[i]) lv_obj_add_flag(_suggBtns[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_suggBar) lv_obj_add_flag(_suggBar, LV_OBJ_FLAG_HIDDEN);
+    s_suggCount = 0;
+}
+
+// ── _onInputChanged() ────────────────────────────────────────────────
+void ScreenTerminal::_onInputChanged(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    _updateSuggestions();
+}
+
+// ── _onSuggClick() — autocomplete the tapped/selected suggestion ────
+void ScreenTerminal::_onSuggClick(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!_input) return;
+
+    intptr_t idx = (intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= SUGG_MAX || idx >= s_suggCount) return;
+
+    // s_suggBase holds everything ahead of the partial word being completed
+    // (empty, or a legacy leading slash, for a first-word pick; the command
+    // word plus its space for a second-word pick), so this only ever
+    // replaces that one word, never the whole line.
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s%s ", s_suggBase, s_suggCmds[idx]);
+
+    // Setting the text fires LV_EVENT_VALUE_CHANGED, which re-runs
+    // _updateSuggestions() — the trailing space makes it hide the bubble.
+    lv_textarea_set_text(_input, buf);
+    lv_textarea_set_cursor_pos(_input, LV_TEXTAREA_CURSOR_LAST);
+    lv_group_focus_obj(_input);
 }
 
 // ── _onTermKey() — ESC handler: back to repeaters (admin) or launcher ──
@@ -350,8 +651,20 @@ static bool _extractJsonStr(const char* json, const char* key, char* out, int ou
 // Self-contained commands run immediately; mesh commands print [mesh not connected].
 
 void ScreenTerminal::_dispatch(const char* raw) {
+    // Trim trailing whitespace first. The predictive bubble appends a space
+    // after each word it completes, so a picked suggestion arrives as e.g.
+    // "clock analog " — which would fail every exact-match strcmp() on args
+    // below ("analog" != "analog "), and would smuggle a trailing space into
+    // free-text args like a callsign. Leading spaces are already skipped
+    // during tokenising below.
+    char trimmed[256];
+    strncpy(trimmed, raw, sizeof(trimmed) - 1);
+    trimmed[sizeof(trimmed) - 1] = '\0';
+    for (int t = (int)strlen(trimmed) - 1; t >= 0 && (trimmed[t] == ' ' || trimmed[t] == '\t'); t--)
+        trimmed[t] = '\0';
+
     // Strip optional leading '/'
-    const char* input = (raw[0] == '/') ? raw + 1 : raw;
+    const char* input = (trimmed[0] == '/') ? trimmed + 1 : trimmed;
 
     // Tokenise: cmd + remainder
     char cmd[32] = {};
@@ -369,41 +682,41 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── help ──────────────────────────────────────────────────────────
     if (strcmp(cmd, "help") == 0) {
-        appendLine("Commands (prefix with /):");
-        appendLine("  /set {name|lat|lon|freq|sf|bw|tx|cr|af} {value}");
-        appendLine("  /get radio");
-        appendLine("  /card");
-        appendLine("  /import {biz card}");
-        appendLine("  /clock [analog]");
-        appendLine("  /time <epoch-seconds>");
-        appendLine("  /memory");
-        appendLine("  /battery");
-        appendLine("  /power  - open power monitor screen");
-        appendLine("  /sd  |  /sd mount  |  /sd unmount  |  /sd restore  |  /sd ls [path]");
-        appendLine("  /identity show");
-        appendLine("  /identity restore");
-        appendLine("  /list {n}  |  /messages {n|all}  |  /clearmessages");
-        appendLine("  /clearcontacts  |  /contacts delete <prefix>");
-        appendLine("  /find <id>  |  /to <name|prefix>  |  /send <text>");
-        appendLine("  /advert [flood]");
-        appendLine("  /trace <path>  |  /getpath <hex>  |  /setpath <hex> <path>");
-        appendLine("  /reset path  |  /resetpath <hex>");
-        appendLine("  /public <text>  |  /local <text>");
-        appendLine("  /ch3 <text>  |  /ch4 <text>  |  /ch5 <text>");
-        appendLine("  /setchannel <1-10> #<name> [psk]");
-        appendLine("  /channel <1-10>  |  /channels");
-        appendLine("  /adverts  |  /quiet");
-        appendLine("  /mobrep  |  /autorep  |  /replist  |  /clearrep");
-        appendLine("  /scope #<region>  |  /scope clear  |  /scope");
-        appendLine("  /pathsize [1|2]  - 1=1-byte hashes, 2=2-byte hashes");
-        appendLine("  /control <hex>");
-        appendLine("  /repeaters [secs]  |  /repeateradmin <hex> [pass]");
-        appendLine("  /repadmin [<hex>] <cmd>  - send admin cmd (login first)");
-        appendLine("  /gps [on|off|intermittent]  - status if no arg");
-        appendLine("  /i2c scan");
-        appendLine("  /kbbl <0-255>  - probe keyboard backlight protocols");
-        appendLine("  /tbdebug on|off  - trackball ISR log to CDC serial");
-        appendLine("  /touch-cali  |  /touch-cali reset  - touchscreen calibration");
+        appendLine("Commands:");
+        appendLine("  set {name|lat|lon|freq|sf|bw|tx|cr|af} {value}");
+        appendLine("  get radio");
+        appendLine("  card");
+        appendLine("  import {biz card}");
+        appendLine("  clock [analog]");
+        appendLine("  time <epoch-seconds>");
+        appendLine("  memory");
+        appendLine("  battery");
+        appendLine("  power  - open power monitor screen");
+        appendLine("  sd  |  sd mount  |  sd unmount  |  sd restore  |  sd ls [path]");
+        appendLine("  identity show");
+        appendLine("  identity restore");
+        appendLine("  list {n}  |  messages {n|all}  |  clearmessages");
+        appendLine("  clearcontacts  |  contacts delete <prefix>");
+        appendLine("  find <id>  |  to <name|prefix>  |  send <text>");
+        appendLine("  advert [flood]");
+        appendLine("  trace <path>  |  getpath <hex>  |  setpath <hex> <path>");
+        appendLine("  reset path  |  resetpath <hex>");
+        appendLine("  public <text>  |  local <text>");
+        appendLine("  ch3 <text>  |  ch4 <text>  |  ch5 <text>");
+        appendLine("  setchannel <1-10> #<name> [psk]");
+        appendLine("  channel <1-10>  |  channels");
+        appendLine("  adverts  |  quiet");
+        appendLine("  mobrep  |  autorep  |  replist  |  clearrep");
+        appendLine("  scope #<region>  |  scope clear  |  scope");
+        appendLine("  pathsize [1|2]  - 1=1-byte hashes, 2=2-byte hashes");
+        appendLine("  control <hex>");
+        appendLine("  repeaters [secs]  |  repeateradmin <hex> [pass]");
+        appendLine("  repadmin [<hex>] <cmd>  - send admin cmd (login first)");
+        appendLine("  gps [on|off|intermittent]  - status if no arg");
+        appendLine("  i2c scan");
+        appendLine("  kbbl <0-255>  - probe keyboard backlight protocols");
+        appendLine("  tbdebug on|off  - trackball ISR log to CDC serial");
+        appendLine("  touch-cali  |  touch-cali reset  - touchscreen calibration");
         return;
     }
 
@@ -436,7 +749,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── time <epoch> ──────────────────────────────────────────────────
     if (strcmp(cmd, "time") == 0) {
-        if (args[0] == '\0') { appendLine("Usage: /time <epoch-seconds>"); return; }
+        if (args[0] == '\0') { appendLine("Usage: time <epoch-seconds>"); return; }
         time_t ts = (time_t)atol(args);
         struct timeval tv = { ts, 0 };
         settimeofday(&tv, nullptr);
@@ -484,7 +797,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             appendLine("Trackball ISR debug: OFF");
         } else {
             char buf[64];
-            snprintf(buf, sizeof(buf), "Trackball ISR debug: %s  (usage: /tbdebug on|off)",
+            snprintf(buf, sizeof(buf), "Trackball ISR debug: %s  (usage: tbdebug on|off)",
                      Board::trackballDebug ? "On" : "Off");
             appendLine(buf);
         }
@@ -539,7 +852,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 appendLine(buf);
             }
         } else {
-            appendLine("Usage: /gps on|off|intermittent");
+            appendLine("Usage: gps on|off|intermittent");
         }
         return;
     }
@@ -562,7 +875,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── channel <n> ───────────────────────────────────────────────────
     if (strcmp(cmd, "channel") == 0) {
         int n = atoi(args);
-        if (n < 1 || n > 10) { appendLine("Usage: /channel <1-10>"); return; }
+        if (n < 1 || n > 10) { appendLine("Usage: channel <1-10>"); return; }
         const auto& cfg = ops::config::get();
         const auto& ch = cfg.channels[n - 1];
         char buf[48];
@@ -575,9 +888,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── setchannel <n> #<name> [hex-psk] ─────────────────────────────
     if (strcmp(cmd, "setchannel") == 0) {
         int n = atoi(args);
-        if (n < 1 || n > 10) { appendLine("Usage: /setchannel <1-10> #<name> [hex-psk]"); return; }
+        if (n < 1 || n > 10) { appendLine("Usage: setchannel <1-10> #<name> [hex-psk]"); return; }
         const char* nameStart = strchr(args, '#');
-        if (!nameStart) { appendLine("Usage: /setchannel <1-10> #<name> [hex-psk]"); return; }
+        if (!nameStart) { appendLine("Usage: setchannel <1-10> #<name> [hex-psk]"); return; }
         nameStart++;  // skip '#'
 
         char chName[16] = {};
@@ -684,9 +997,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
     }
 
     // ── kbbl — keyboard backlight probe ──────────────────────────────
-    // Usage: /kbbl <0-255>
+    // Usage: kbbl <0-255>
     // Tries every plausible I2C protocol for the keyboard backlight and
-    // reports which writes are ACKed.  Run /i2c scan first to see addresses.
+    // reports which writes are ACKed.  Run i2c scan first to see addresses.
     if (strcmp(cmd, "kbbl") == 0) {
         int val = (args[0] != '\0') ? atoi(args) : 255;
         if (val < 0) val = 0;
@@ -772,12 +1085,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
         auto& mesh = MeshService::instance();
         char buf[64];
         if (strcmp(sub, "name") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set name <callsign>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set name <callsign>"); return; }
             ops::config::setCallsign(sub_args);
             snprintf(buf, sizeof(buf), "Callsign: %s", sub_args);
             appendLine(buf);
         } else if (strcmp(sub, "freq") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set freq <MHz>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set freq <MHz>"); return; }
             float mhz = (float)atof(sub_args);
             if (mhz < 150.0f || mhz > 960.0f) { appendLine("Freq out of range (150-960 MHz)."); return; }
             cfg.freqMHz = mhz; cfg.radioCustom = true;
@@ -786,7 +1099,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "Freq: %.3f MHz", (double)mhz);
             appendLine(buf);
         } else if (strcmp(sub, "sf") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set sf <7-12>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set sf <7-12>"); return; }
             int sf = atoi(sub_args);
             if (sf < 7 || sf > 12) { appendLine("SF out of range (7-12)."); return; }
             cfg.radioSF = (uint8_t)sf; cfg.radioCustom = true;
@@ -795,7 +1108,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "SF: %d", sf);
             appendLine(buf);
         } else if (strcmp(sub, "bw") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set bw <62|125|250>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set bw <62|125|250>"); return; }
             int bwi = atoi(sub_args);
             uint8_t bwCode; float bwKhz;
             if      (bwi <= 63)  { bwCode = 1; bwKhz = 62.5f; }
@@ -807,7 +1120,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "BW: %.1f kHz", (double)bwKhz);
             appendLine(buf);
         } else if (strcmp(sub, "cr") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set cr <5-8>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set cr <5-8>"); return; }
             int cr = atoi(sub_args);
             if (cr < 5 || cr > 8) { appendLine("CR out of range (5-8)."); return; }
             cfg.radioCR = (uint8_t)cr; cfg.radioCustom = true;
@@ -816,7 +1129,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "CR: %d", cr);
             appendLine(buf);
         } else if (strcmp(sub, "tx") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set tx <dBm>  (-17 to 22)"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set tx <dBm>  (-17 to 22)"); return; }
             int tx = atoi(sub_args);
             if (tx < -17 || tx > 22) { appendLine("TX out of range (-17 to 22 dBm)."); return; }
             cfg.radioTX = (int8_t)tx; cfg.radioCustom = true;
@@ -825,7 +1138,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "TX: %d dBm", tx);
             appendLine(buf);
         } else if (strcmp(sub, "lat") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set lat <decimal>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set lat <decimal>"); return; }
             float lat = (float)atof(sub_args);
             if (lat < -90.0f || lat > 90.0f) { appendLine("Lat out of range (-90 to 90)."); return; }
             cfg.manualLat = lat;
@@ -833,7 +1146,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             snprintf(buf, sizeof(buf), "Manual lat: %.6f", (double)lat);
             appendLine(buf);
         } else if (strcmp(sub, "lon") == 0) {
-            if (!sub_args[0]) { appendLine("Usage: /set lon <decimal>"); return; }
+            if (!sub_args[0]) { appendLine("Usage: set lon <decimal>"); return; }
             float lon = (float)atof(sub_args);
             if (lon < -180.0f || lon > 180.0f) { appendLine("Lon out of range (-180 to 180)."); return; }
             cfg.manualLon = lon;
@@ -842,7 +1155,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             appendLine(buf);
         } else if (strcmp(sub, "af") == 0) {
             if (!sub_args[0] || (strcmp(sub_args,"on")!=0 && strcmp(sub_args,"off")!=0)) {
-                appendLine("Usage: /set af on|off"); return;
+                appendLine("Usage: set af on|off"); return;
             }
             cfg.autoForward = (strcmp(sub_args, "on") == 0);
             ops::config::save();
@@ -993,7 +1306,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
         if (strcmp(sub, "delete") == 0) {
             if (strlen(sub_args) < 8) {
-                appendLine("Usage: /contacts delete <8-hex-chars>");
+                appendLine("Usage: contacts delete <8-hex-chars>");
                 return;
             }
             uint8_t prefix[4] = {};
@@ -1014,14 +1327,14 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 appendLine("Contact not found.");
             }
         } else {
-            appendLine("Usage: /contacts delete <8-hex-chars>");
+            appendLine("Usage: contacts delete <8-hex-chars>");
         }
         return;
     }
 
     // ── find <name-or-hex> ────────────────────────────────────────────
     if (strcmp(cmd, "find") == 0) {
-        if (args[0] == '\0') { appendLine("Usage: /find <name-or-hex>"); return; }
+        if (args[0] == '\0') { appendLine("Usage: find <name-or-hex>"); return; }
         char qu[32] = {};
         for (int i = 0; i < (int)sizeof(qu) - 1 && args[i]; i++) {
             char ch = args[i];
@@ -1101,7 +1414,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
                          s_dmTargetKey[0], s_dmTargetKey[1],
                          s_dmTargetKey[2], s_dmTargetKey[3]);
             } else {
-                strncpy(buf, "No DM target set.  Usage: /to <name|8-hex>", sizeof(buf));
+                strncpy(buf, "No DM target set.  Usage: to <name|8-hex>", sizeof(buf));
             }
             appendLine(buf);
             return;
@@ -1156,8 +1469,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── send <text> ───────────────────────────────────────────────────
     if (strcmp(cmd, "send") == 0) {
-        if (!s_dmTarget[0]) { appendLine("No DM target.  Use /to <name|prefix> first."); return; }
-        if (args[0] == '\0') { appendLine("Usage: /send <text>"); return; }
+        if (!s_dmTarget[0]) { appendLine("No DM target.  Use to <name|prefix> first."); return; }
+        if (args[0] == '\0') { appendLine("Usage: send <text>"); return; }
         auto& mesh = MeshService::instance();
         if (!mesh.initialized()) { appendLine("Mesh not ready."); return; }
         bool ok = mesh.sendDirect(s_dmTargetKey, args);
@@ -1178,7 +1491,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── public <text> ─────────────────────────────────────────────────
     if (strcmp(cmd, "public") == 0) {
-        if (args[0] == '\0') { appendLine("Usage: /public <text>"); return; }
+        if (args[0] == '\0') { appendLine("Usage: public <text>"); return; }
         auto& mesh = MeshService::instance();
         if (!mesh.initialized()) { appendLine("Mesh not ready."); return; }
         appendLine(mesh.sendChannel(0, args) ? "Sent to public channel." : "Send failed.");
@@ -1187,7 +1500,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── local <text> ──────────────────────────────────────────────────
     if (strcmp(cmd, "local") == 0) {
-        if (args[0] == '\0') { appendLine("Usage: /local <text>"); return; }
+        if (args[0] == '\0') { appendLine("Usage: local <text>"); return; }
         auto& mesh = MeshService::instance();
         if (!mesh.initialized()) { appendLine("Mesh not ready."); return; }
         appendLine(mesh.sendChannel(1, args)
@@ -1218,7 +1531,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── trace <name|prefix> ───────────────────────────────────────────
     if (strcmp(cmd, "trace") == 0) {
-        if (args[0] == '\0') { appendLine("Usage: /trace <name|8-hex>"); return; }
+        if (args[0] == '\0') { appendLine("Usage: trace <name|8-hex>"); return; }
         auto& mesh = MeshService::instance();
         if (!mesh.initialized()) { appendLine("Mesh not ready."); return; }
         // Resolve target to prefix
@@ -1281,7 +1594,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── getpath <8hex> ────────────────────────────────────────────────
     if (strcmp(cmd, "getpath") == 0) {
-        if (strlen(args) < 8) { appendLine("Usage: /getpath <8-hex-chars>"); return; }
+        if (strlen(args) < 8) { appendLine("Usage: getpath <8-hex-chars>"); return; }
         uint8_t prefix[4] = {};
         for (int i = 0; i < 4; i++) {
             char hb[3] = { args[i*2], args[i*2+1], '\0' };
@@ -1326,7 +1639,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── resetpath <8hex> ─────────────────────────────────────────────
     if (strcmp(cmd, "resetpath") == 0) {
-        if (strlen(args) < 8) { appendLine("Usage: /resetpath <8-hex-chars>"); return; }
+        if (strlen(args) < 8) { appendLine("Usage: resetpath <8-hex-chars>"); return; }
         uint8_t prefix[4] = {};
         for (int i = 0; i < 4; i++) {
             char hb[3] = { args[i*2], args[i*2+1], '\0' };
@@ -1379,8 +1692,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 bool complete = ops::sdcard::hasCompleteBackup();
                 appendLine(complete
                            ? "  Complete set - auto-restore active on next boot."
-                           : "  Incomplete set - /sd restore to force reload.");
-                appendLine("Run /sd restore to reload contacts+repeaters now.");
+                           : "  Incomplete set - sd restore to force reload.");
+                appendLine("Run sd restore to reload contacts+repeaters now.");
             } else {
                 appendLine("SD mount failed - no card?");
             }
@@ -1394,7 +1707,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             return;
         }
 
-        if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try /sd mount"); return; }
+        if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try sd mount"); return; }
 
         if (strcmp(sub, "restore") == 0) {
             char buf[56];
@@ -1425,7 +1738,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
                         appendLine("Identity: SD matches current node.");
                     } else {
                         appendLine("Identity: SD has DIFFERENT key.");
-                        appendLine("  Use /identity restore to switch.");
+                        appendLine("  Use identity restore to switch.");
                     }
                 } else {
                     appendLine("Identity: no SD backup.");
@@ -1480,7 +1793,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             static char lsbuf[512];
             size_t bytes = ops::sdcard::listDir("/ops/msgs", lsbuf, sizeof(lsbuf));
             if (bytes == 0) { appendLine("No message logs."); return; }
-            appendLine("Logs (use /messages <tag> [n]):");
+            appendLine("Logs (use messages <tag> [n]):");
             char* p = lsbuf;
             while (*p) {
                 char* nl = strchr(p, '\n');
@@ -1572,7 +1885,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── identity restore ─────────────────────────────────────────────
     if (strcmp(cmd, "identity") == 0 && strcmp(args, "restore") == 0) {
-        if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try /sd mount first."); return; }
+        if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try sd mount first."); return; }
         uint8_t sdId[128]; size_t sdIdLen = 0;
         if (!ops::sdcard::readFile("/ops/identity.bin", sdId, sizeof(sdId), &sdIdLen) || sdIdLen < 32) {
             appendLine("No identity.bin on SD."); return;
@@ -1604,12 +1917,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── import <8hex|64hex> <name> ────────────────────────────────────
     if (strcmp(cmd, "import") == 0) {
         const char* sp2 = strchr(args, ' ');
-        if (!sp2) { appendLine("Usage: /import <8hex|64hex> <name>"); return; }
+        if (!sp2) { appendLine("Usage: import <8hex|64hex> <name>"); return; }
         size_t hexLen = (size_t)(sp2 - args);
         const char* name = sp2 + 1;
         while (*name == ' ') name++;
         if (!name[0] || (hexLen != 8 && hexLen != 64)) {
-            appendLine("Usage: /import <8hex|64hex> <name>"); return;
+            appendLine("Usage: import <8hex|64hex> <name>"); return;
         }
         for (size_t i = 0; i < hexLen; i++) {
             char c = args[i];
@@ -1649,7 +1962,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── setpath <8hex> <hexpath> [hashsz] ────────────────────────────
     if (strcmp(cmd, "setpath") == 0) {
-        if (strlen(args) < 8) { appendLine("Usage: /setpath <8hex> <hexpath> [hashsz]"); return; }
+        if (strlen(args) < 8) { appendLine("Usage: setpath <8hex> <hexpath> [hashsz]"); return; }
         uint8_t prefix[4] = {};
         for (int i = 0; i < 4; i++) {
             char hb[3] = { args[i*2], args[i*2+1], '\0' };
@@ -1657,7 +1970,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
         const char* pathArg = args + 8;
         while (*pathArg == ' ') pathArg++;
-        if (!pathArg[0]) { appendLine("Usage: /setpath <8hex> <hexpath> [hashsz]"); return; }
+        if (!pathArg[0]) { appendLine("Usage: setpath <8hex> <hexpath> [hashsz]"); return; }
         char pathHex[66] = {};
         uint8_t hashSz = 0;
         const char* sp3 = strchr(pathArg, ' ');
@@ -1713,7 +2026,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             appendLine(buf);
         } else {
             int sz = atoi(args);
-            if (sz != 1 && sz != 2) { appendLine("Usage: /pathsize [1|2]"); return; }
+            if (sz != 1 && sz != 2) { appendLine("Usage: pathsize [1|2]"); return; }
             cfg.pathHashSz = (uint8_t)sz;
             ops::config::save();
             char buf[40];
@@ -1729,7 +2042,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         if (!mesh.initialized()) { appendLine("Mesh not ready."); return; }
         int n = ops::repeaters::count();
         if (n == 0) {
-            appendLine("No repeaters in list.  Add via /autorep or Repeaters screen.");
+            appendLine("No repeaters in list.  Add via autorep or Repeaters screen.");
             return;
         }
         int secs = (args[0] != '\0') ? atoi(args) : 30;
@@ -1744,7 +2057,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── repeateradmin <8hex> [pass] ───────────────────────────────────
     if (strcmp(cmd, "repeateradmin") == 0) {
         if (strlen(args) < 8) {
-            appendLine("Usage: /repeateradmin <8hex> [password]");
+            appendLine("Usage: repeateradmin <8hex> [password]");
             return;
         }
         auto& mesh = MeshService::instance();
@@ -1754,7 +2067,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             char c = args[i];
             if (!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) { hexOk = false; break; }
         }
-        if (!hexOk) { appendLine("Invalid hex prefix.  Usage: /repeateradmin <8hex> [password]"); return; }
+        if (!hexOk) { appendLine("Invalid hex prefix.  Usage: repeateradmin <8hex> [password]"); return; }
         uint8_t prefix[4] = {};
         for (int i = 0; i < 4; i++) {
             char hb[3] = { args[i*2], args[i*2+1], '\0' };
@@ -1767,7 +2080,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
         appendLine(pass[0] ? "Sending login request..." : "Sending login (no password)...");
         mesh.sendRepeaterLogin(prefix, pass);
-        // Store as active admin target for subsequent /repadmin commands
+        // Store as active admin target for subsequent repadmin commands
         memcpy(s_adminKey, prefix, 4);
         // Try to resolve a display name from repeater/contact list
         {
@@ -1804,9 +2117,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
                          s_adminName,
                          s_adminKey[0], s_adminKey[1], s_adminKey[2], s_adminKey[3]);
                 appendLine(buf);
-                appendLine("Usage: /repadmin <cmd>  or  /repadmin <8hex> <cmd>");
+                appendLine("Usage: repadmin <cmd>  or  repadmin <8hex> <cmd>");
             } else {
-                appendLine("No admin target.  Use /repeateradmin <8hex> [pass] first.");
+                appendLine("No admin target.  Use repeateradmin <8hex> [pass] first.");
             }
             return;
         }
@@ -1832,55 +2145,55 @@ void ScreenTerminal::_dispatch(const char* raw) {
         }
         if (!hasExplicitTarget) {
             if (!s_adminName[0]) {
-                appendLine("No admin target.  Use /repeateradmin <8hex> [pass] first.");
+                appendLine("No admin target.  Use repeateradmin <8hex> [pass] first.");
                 return;
             }
             memcpy(targetKey, s_adminKey, 4);
         }
-        if (command[0] == '\0') { appendLine("Usage: /repadmin [<8hex>] <command>"); return; }
+        if (command[0] == '\0') { appendLine("Usage: repadmin [<8hex>] <command>"); return; }
         mesh.sendAdminCommand(targetKey, command);
         return;
     }
 
-    // ── play [path] ─ hidden, not in /help ───────────────────────────
-    // /play         → open the MP3 player screen (file browser)
-    // /play <path>  → open the screen and immediately start that file
+    // ── play [path] ─ hidden, not in help ───────────────────────────
+    // play         → open the MP3 player screen (file browser)
+    // play <path>  → open the screen and immediately start that file
     if (strcmp(cmd, "play") == 0) {
         ops::ui::ScreenMP3Player::show(args[0] ? args : nullptr);
         return;
     }
 
-    // ── spectrum ─ hidden, not in /help ──────────────────────────────
+    // ── spectrum ─ hidden, not in help ──────────────────────────────
     if (strcmp(cmd, "spectrum") == 0) {
         ops::ui::ScreenSpectrum::show();
         return;
     }
 
-    // ── siggen ─ hidden, not in /help ────────────────────────────────
+    // ── siggen ─ hidden, not in help ────────────────────────────────
     // RF signal generator: CW or LoRa preamble output for antenna testing.
     if (strcmp(cmd, "siggen") == 0) {
         ops::ui::ScreenSigGen::show();
         return;
     }
 
-    // ── chscan ─ hidden, not in /help ────────────────────────────────
+    // ── chscan ─ hidden, not in help ────────────────────────────────
     // CAD channel scanner across EU868 / US915 standard channel plan.
     if (strcmp(cmd, "chscan") == 0) {
         ops::ui::ScreenChanScan::show();
         return;
     }
 
-    // ── filemgr ─ hidden, not in /help ───────────────────────────────
+    // ── filemgr ─ hidden, not in help ───────────────────────────────
     if (strcmp(cmd, "filemgr") == 0) {
         ops::ui::ScreenFileManager::show();
         return;
     }
 
-    // ── screenshot [filename] ─ hidden, not in /help ──────────────────
+    // ── screenshot [filename] ─ hidden, not in help ──────────────────
     // Saves a PNG of the current screen to the SD card root.
-    // /screenshot          → /screenshot_001.png (first unused slot)
-    // /screenshot foo      → /foo.png
-    // /screenshot foo.png  → /foo.png
+    // screenshot          → /screenshot_001.png (first unused slot)
+    // screenshot foo      → /foo.png
+    // screenshot foo.png  → /foo.png
     if (strcmp(cmd, "screenshot") == 0) {
         if (!ops::sdcard::isMounted()) { appendLine("[screenshot] SD not mounted"); return; }
         char path[48];
@@ -1918,7 +2231,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
     // ── Unknown ───────────────────────────────────────────────────────
     char buf[64];
-    snprintf(buf, sizeof(buf), "Unknown command: %s  (try /help)", cmd);
+    snprintf(buf, sizeof(buf), "Unknown command: %s  (try help)", cmd);
     appendLine(buf);
 }
 

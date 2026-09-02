@@ -1998,6 +1998,10 @@ static void _onKbSlide(lv_event_t* /*e*/) {
 static void _onKbSave(lv_event_t* /*e*/) {
     uint8_t v = (uint8_t)lv_slider_get_value(s_kbCtx.slider);
     bool autoOn = lv_obj_has_state(s_kbCtx.autoCb, LV_STATE_CHECKED);
+    // Manual mode applies kbBrightness at all times (see UIScreen::tick()).
+    // Leaving it at 0 here means the keyboard goes permanently dark with no
+    // visible way back into Settings to fix it, so floor it to a usable level.
+    if (!autoOn && v == 0) v = 25;
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.kbBrightness = v;
     cfg.kbAutoNight  = autoOn;
