@@ -21,7 +21,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Channels",             // TR_CHANNELS
         "Radio",                // TR_RADIO
         "Power",                // TR_POWER
-        "LoRa Duty Cycle",      // TR_LORA_DUTY
+        "Radio Mode",           // TR_LORA_DUTY
         "CPU Governor",         // TR_CPU_GOV
         "Brightness",           // TR_BRIGHTNESS
         "Theme",                // TR_THEME
@@ -58,7 +58,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Canali",
         "Radio",
         "Potenza",
-        "Ciclo LoRa",
+        "Modo Radio",
         "Governatore CPU",
         "Luminosita",
         "Tema",
@@ -95,7 +95,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Canaux",
         "Radio",
         "Puissance",
-        "Cycle LoRa",
+        "Mode Radio",
         "Gouverneur CPU",
         "Luminosite",
         "Theme",
@@ -132,7 +132,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Kanaele",
         "Radio",
         "Leistung",
-        "LoRa Zyklus",
+        "Funkmodus",
         "CPU-Regler",
         "Helligkeit",
         "Thema",
@@ -169,7 +169,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Canales",
         "Radio",
         "Potencia",
-        "Ciclo LoRa",
+        "Modo Radio",
         "Gobernador CPU",
         "Brillo",
         "Tema",

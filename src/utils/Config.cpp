@@ -64,6 +64,7 @@ static void setDefaults(Config& c) {
     c.timezoneOffsetHours = 0;
     c.scopeTag[0]      = '\0';
     c.loraDutyCycle    = false;
+    c.radioPowerMode   = RADIO_POWER_CONTINUOUS;
     c.rxBoost          = false;
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -119,6 +120,7 @@ static void _saveToSD() {
     doc["tzOff"]        = s_cfg.timezoneOffsetHours;
     doc["scopeTag"]     = s_cfg.scopeTag;
     doc["loraDC"]       = s_cfg.loraDutyCycle;
+    doc["radioPwrMode"] = s_cfg.radioPowerMode;
     doc["rxBoost"]      = s_cfg.rxBoost;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
@@ -196,6 +198,10 @@ static bool _loadFromSD() {
     strncpy(s_cfg.scopeTag, doc["scopeTag"] | "", sizeof(s_cfg.scopeTag) - 1);
     s_cfg.scopeTag[sizeof(s_cfg.scopeTag) - 1] = '\0';
     s_cfg.loraDutyCycle = doc["loraDC"]   | false;
+    // Older settings.json has no radioPwrMode — fall back to the legacy
+    // loraDutyCycle bool so a restored backup keeps its power behaviour.
+    s_cfg.radioPowerMode = (uint8_t)(doc["radioPwrMode"] |
+        (s_cfg.loraDutyCycle ? (int)RADIO_POWER_DUTY_CYCLE : (int)RADIO_POWER_CONTINUOUS));
     s_cfg.rxBoost       = doc["rxBoost"]  | false;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
@@ -262,6 +268,15 @@ void config::init() {
             bool blobSane = (s_cfg.touchCalXScale > 0.01f);
             if (blobSane) {
                 bool migrated = false;
+                // radioPowerMode was appended after the loraDutyCycle bool it
+                // supersedes. A blob that predates it left the field at its
+                // setDefaults() value, so carry the old bool across rather than
+                // silently dropping the user's duty-cycle setting.
+                if (loaded < offsetof(Config, radioPowerMode) + sizeof(s_cfg.radioPowerMode)) {
+                    s_cfg.radioPowerMode = s_cfg.loraDutyCycle
+                        ? RADIO_POWER_DUTY_CYCLE : RADIO_POWER_CONTINUOUS;
+                    migrated = true;
+                }
                 for (int i = 1; i < 10; i++) {
                     char* n  = s_cfg.channels[i].name;
                     char* sn = s_cfg.channels[i].shortname;

@@ -84,6 +84,20 @@ struct Config {
     // the channel name. Kept as a top-level array (not a ChannelCfg field) so
     // it can be appended here without shifting ChannelCfg's layout.
     char       channelIcon[10][8];
+    // Radio power/channel strategy — mutually exclusive, replaces the old
+    // standalone loraDutyCycle bool (which is kept above for NVS layout
+    // stability and migrated into this field on first load by config::init).
+    //   0 = Continuous RX (no power saving, fixed frequency)
+    //   1 = LoRa duty cycle (hardware RX duty cycle, fixed frequency)
+    //   2 = FHSS (frequency hopping; see src/mesh/Fhss.h and docs/FHSS.md)
+    uint8_t    radioPowerMode;
+};
+
+// Values for Config::radioPowerMode.
+enum RadioPowerMode : uint8_t {
+    RADIO_POWER_CONTINUOUS = 0,
+    RADIO_POWER_DUTY_CYCLE = 1,
+    RADIO_POWER_FHSS       = 2,
 };
 
 namespace config {

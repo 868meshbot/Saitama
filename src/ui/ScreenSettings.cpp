@@ -38,6 +38,7 @@
 #include "../utils/SDCard.h"
 #include <SD.h>
 #include "../mesh/MeshService.h"
+#include "../mesh/Fhss.h"
 #include "../hardware/Board.h"
 #include "../utils/GpsMgr.h"
 #include "../version.h"
@@ -280,8 +281,11 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     else       snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
     _addRow(_list, LV_SYMBOL_CHARGE, lang::tr(lang::TR_POWER), pwrBuf, 25,
             pwrOn ? ROW_ON : ROW_OFF);
+    static const char* kRadioModeNames[] = { "Continuous", "Duty Cycle", "FHSS" };
+    uint8_t rpm = cfg.radioPowerMode < 3 ? cfg.radioPowerMode : 0;
     _addRow(_list, LV_SYMBOL_REFRESH, lang::tr(lang::TR_LORA_DUTY),
-            cfg.loraDutyCycle ? on : off, 28, cfg.loraDutyCycle ? ROW_ON : ROW_OFF);
+            kRadioModeNames[rpm], 28,
+            rpm == ops::RADIO_POWER_CONTINUOUS ? ROW_OFF : ROW_ON);
     static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
     _addRow(_list, LV_SYMBOL_SETTINGS, lang::tr(lang::TR_CPU_GOV),
             kGovNames[cfg.cpuGovernor < 4 ? cfg.cpuGovernor : 2], 29);
@@ -3326,6 +3330,224 @@ static void _openNotifSoundDialog() {
     }
 }
 
+// ── Radio Mode radio-button dialog ────────────────────────────────────
+// Continuous / Duty Cycle / FHSS are mutually exclusive radio strategies,
+// so this is a true radio group rather than three toggles.
+// FHSS background: src/mesh/Fhss.h and docs/FHSS.md.
+
+struct RadioModeCtx {
+    lv_obj_t* modal;
+    lv_obj_t* btn[3];
+    lv_obj_t* note;
+    uint8_t   sel;
+};
+static RadioModeCtx s_rmCtx;
+
+static void _rmUpdateNote() {
+    if (!s_rmCtx.note) return;
+    auto st = ops::MeshService::instance().fhssStatus();
+    char buf[192];
+    switch (s_rmCtx.sel) {
+        case ops::RADIO_POWER_DUTY_CYCLE:
+            snprintf(buf, sizeof(buf),
+                     "Radio sleeps 250ms/250ms when idle.\n"
+                     "Saves power; adds receive latency.\n"
+                     "Stays on %.3f MHz.", (double)st.freqMHz);
+            break;
+        case ops::RADIO_POWER_FHSS:
+            if (!st.planAvailable) {
+                uint8_t prof = ops::config::get().radioProfile;
+                if (ops::fhss::availability(prof) ==
+                        ops::fhss::Unavailable::EuSubBandTradeoff) {
+                    snprintf(buf, sizeof(buf),
+                             "Not offered on EU 868. The hop plan\n"
+                             "sits at 868.1-868.5 (25mW / 1%% duty)\n"
+                             "vs %.3f (500mW / 10%%), for only\n"
+                             "3 channels. Not worth the trade.",
+                             (double)st.freqMHz);
+                } else {
+                    snprintf(buf, sizeof(buf),
+                             "Unavailable: no hop plan for the\n"
+                             "433 MHz band. Use a 915 MHz\n"
+                             "profile (US/AU/NZ) for FHSS.");
+                }
+            } else if (!st.clockValid) {
+                snprintf(buf, sizeof(buf),
+                         "%s, %u channels.\n"
+                         "Waiting for GPS/RTC time - hopping\n"
+                         "starts once the clock is set.",
+                         st.regionName, st.numChannels);
+            } else {
+                // Warn when the hop plan is in a different sub-band than the
+                // profile's normal frequency — the EU case, where it also
+                // means a lower legal power limit.
+                float fixedF = st.freqMHz;
+                bool moves = (fixedF < st.hopLoMHz - 0.2f) || (fixedF > st.hopHiMHz + 0.2f);
+                if (moves) {
+                    snprintf(buf, sizeof(buf),
+                             "%s: %u ch, %.1f-%.1f MHz.\n"
+                             "NOTE: moves off %.3f MHz and\n"
+                             "caps TX at %d dBm for that band.",
+                             st.regionName, st.numChannels,
+                             (double)st.hopLoMHz, (double)st.hopHiMHz,
+                             (double)fixedF, st.maxTxDbm);
+                } else {
+                    snprintf(buf, sizeof(buf),
+                             "%s: %u ch, %.1f-%.1f MHz, %u s/hop.\n"
+                             "All nodes need the same public\n"
+                             "channel PSK and a valid clock.",
+                             st.regionName, st.numChannels,
+                             (double)st.hopLoMHz, (double)st.hopHiMHz,
+                             (unsigned)(ops::fhss::FRAME_DURATION_MS / 1000));
+                }
+            }
+            break;
+        default:
+            snprintf(buf, sizeof(buf),
+                     "Radio listens continuously on\n"
+                     "%.3f MHz. Highest power draw,\n"
+                     "lowest latency.", (double)st.freqMHz);
+            break;
+    }
+    lv_label_set_text(s_rmCtx.note, buf);
+}
+
+static void _rmRefreshChecks() {
+    for (int i = 0; i < 3; i++) {
+        if (!s_rmCtx.btn[i]) continue;
+        if (i == s_rmCtx.sel) lv_obj_add_state(s_rmCtx.btn[i], LV_STATE_CHECKED);
+        else                  lv_obj_clear_state(s_rmCtx.btn[i], LV_STATE_CHECKED);
+    }
+    _rmUpdateNote();
+}
+
+static void _onRMPick(lv_event_t* e) {
+    s_rmCtx.sel = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    _rmRefreshChecks();
+}
+
+static void _onRMSave(lv_event_t* /*e*/) {
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.radioPowerMode = s_rmCtx.sel < 3 ? s_rmCtx.sel : 0;
+    // Keep the legacy bool in step so an older build reading this NVS blob
+    // (or the SD settings.json) still behaves sensibly.
+    cfg.loraDutyCycle  = (cfg.radioPowerMode == ops::RADIO_POWER_DUTY_CYCLE);
+    ops::config::save();
+    lv_obj_del(s_rmCtx.modal);
+    ScreenSettings::show();
+}
+static void _onRMExit(lv_event_t* /*e*/) { lv_obj_del(s_rmCtx.modal); }
+static void _onRMKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_rmCtx.modal);
+}
+
+static void _openRadioModeDialog() {
+    const auto& cfg = ops::config::get();
+    s_rmCtx.sel = cfg.radioPowerMode < 3 ? cfg.radioPowerMode : 0;
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_rmCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onRMKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 280, 214);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 3, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, lang::tr(lang::TR_LORA_DUTY));
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    // Round indicator turns the checkbox into a radio button (LVGL 8 idiom).
+    static lv_style_t styleRadio;
+    static bool styleInit = false;
+    if (!styleInit) {
+        lv_style_init(&styleRadio);
+        lv_style_set_radius(&styleRadio, LV_RADIUS_CIRCLE);
+        styleInit = true;
+    }
+
+    static const char* kOpt[3] = { "Continuous RX", "LoRa Duty Cycle", "FHSS (hopping)" };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* cb = lv_checkbox_create(panel);
+        s_rmCtx.btn[i] = cb;
+        lv_checkbox_set_text(cb, kOpt[i]);
+        lv_obj_add_style(cb, &styleRadio, LV_PART_INDICATOR);
+        lv_obj_set_style_text_color(cb, theme::TEXT, 0);
+        lv_obj_set_style_text_font(cb, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_bg_color(cb, theme::ACCENT, LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_border_color(cb, theme::BORDER, LV_PART_INDICATOR);
+        lv_obj_add_event_cb(cb, _onRMPick, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
+        lv_obj_add_event_cb(cb, _onRMKey,  LV_EVENT_KEY,     nullptr);
+    }
+
+    s_rmCtx.note = lv_label_create(panel);
+    lv_obj_set_width(s_rmCtx.note, 258);
+    lv_label_set_long_mode(s_rmCtx.note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(s_rmCtx.note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_rmCtx.note, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 258, 30);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onRMSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onRMKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_12, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onRMExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onRMKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Cancel");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_12, 0);
+    lv_obj_center(exitLbl);
+
+    _rmRefreshChecks();
+}
+
 // ── CPU Governor dropdown dialog ──────────────────────────────────────
 
 struct CpuGovCtx { lv_obj_t* modal; lv_obj_t* dd; };
@@ -3591,10 +3813,9 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             ops::config::save();
             break;
 
-        case 28:  // LoRa Duty Cycle — direct toggle
-            cfg.loraDutyCycle = !cfg.loraDutyCycle;
-            ops::config::save();
-            break;
+        case 28:  // Radio Mode → radio-button dialog
+            _openRadioModeDialog();
+            return;
 
         case 29:  // CPU Governor → dropdown dialog
             _openCpuGovDialog();

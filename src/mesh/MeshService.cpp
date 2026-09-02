@@ -5,6 +5,7 @@
 // Owns the SX1262 radio, identity, and the BaseChatMesh loop.
 
 #include "MeshService.h"
+#include "Fhss.h"
 #include "../bt/BTCompanionService.h"
 #include "../version.h"
 #include "../hardware/Board.h"
@@ -2161,6 +2162,194 @@ void MeshService::normalizePsk(const char* in, char* out, int outSize)
     out[outSize - 1] = '\0';
 }
 
+// ── FHSS state ──────────────────────────────────────────────────────
+// See src/mesh/Fhss.h and docs/FHSS.md. The hop channel is a pure function
+// of (networkKey, frameNumber, region); nothing here is negotiated over the
+// air, so every node must compute it identically or the mesh partitions.
+static const ops::fhss::Region* s_fhssRegion   = nullptr;
+static uint8_t  s_fhssKey[32]  = {};
+static char     s_fhssKeyPsk[28] = {};   // PSK the cached key was derived from
+static bool     s_fhssKeyReady = false;
+static bool     s_fhssActive   = false;   // true while we are actually hopping
+static uint8_t  s_fhssChannel  = 0xFF;    // 0xFF = not on a hop channel
+static uint32_t s_fhssFrame    = 0;
+static uint32_t s_fhssHopCount = 0;
+static bool     s_fhssTxClamped    = false;  // TX power reduced for band limit
+static bool     s_fhssNoPlanWarned = false;
+static bool     s_fhssNoClockWarned = false;
+
+// The fixed (non-hopping) frequency this node uses outside FHSS mode —
+// same resolution order as MeshService::getFreqMHz().
+static float _fixedFreqMHz()
+{
+    const auto& cfg = ops::config::get();
+    if (cfg.radioCustom && cfg.freqMHz > 0.0f) return cfg.freqMHz;
+    static const float kFreqs[14] = {
+        915.800f, 916.575f, 869.618f, 869.525f, 869.525f,
+        869.525f, 433.650f, 917.375f, 917.375f, 433.375f,
+        869.618f, 869.618f, 910.525f, 920.250f,
+    };
+    uint8_t p = cfg.radioProfile;
+    return kFreqs[p < 14 ? p : 2];
+}
+
+// Hop-sequence key = SHA-256(public channel PSK). Mirrors the slot-0 PSK
+// resolution in syncChannelSlot() so the key follows the channel the user
+// actually configured — nodes on the same public channel hop together, and
+// two meshes with different PSKs hop independently with no extra setup.
+// Resolve the effective public-channel PSK — same order as syncChannelSlot().
+static void _fhssEffectivePsk(char* out, size_t outSize)
+{
+    const auto& cfg = ops::config::get();
+    if (cfg.channels[0].psk[0]) {
+        strncpy(out, cfg.channels[0].psk, outSize - 1);
+    } else {
+        strncpy(out, PUBLIC_GROUP_PSK, outSize - 1);
+    }
+    out[outSize - 1] = '\0';
+}
+
+// Rebuilds s_fhssKey if the effective PSK has changed since last time.
+// Editing the public channel must change the hop sequence — a cached key
+// would leave this node hopping on the old mesh's sequence, silently.
+static bool _fhssSyncKey()
+{
+    char psk64[28] = {};
+    _fhssEffectivePsk(psk64, sizeof(psk64));
+    if (s_fhssKeyReady && strcmp(psk64, s_fhssKeyPsk) == 0) return false;
+    ops::fhss::deriveNetworkKey(psk64, s_fhssKey);
+    strncpy(s_fhssKeyPsk, psk64, sizeof(s_fhssKeyPsk) - 1);
+    s_fhssKeyPsk[sizeof(s_fhssKeyPsk) - 1] = '\0';
+    s_fhssKeyReady = true;
+    return true;   // key changed — caller must force a retune
+}
+
+// The TX power the user configured, before any FHSS clamp.
+static int8_t _configuredTxDbm()
+{
+    const auto& cfg = ops::config::get();
+    if (cfg.radioCustom && cfg.radioTX != 0) return cfg.radioTX;
+    return 22;   // SX1262 default used when no override is set
+}
+
+// Hop plans can land in a sub-band with a lower legal power limit than the
+// node's normal fixed frequency. EU is the sharp case: the EU profiles run at
+// 869.525/869.618 (869.4-869.65 = 500 mW / 10 % duty), while the EU868 hop
+// plan sits at 868.1-868.5 (868.0-868.6 = 25 mW / 1 % duty). Carrying 22 dBm
+// across that boundary would transmit ~8 dB over the limit, so clamp to the
+// region's maxTxPowerDbm for as long as we are hopping.
+static void _fhssApplyTxLimit(const ops::fhss::Region* region)
+{
+    int8_t want = _configuredTxDbm();
+    int8_t lim  = region->maxTxPowerDbm;
+    if (want > lim) {
+        sx1262.setOutputPower(lim);
+        if (!s_fhssTxClamped) {
+            OPS_LOG("Mesh", "FHSS: TX clamped %d -> %d dBm for %s band limit",
+                    want, lim, region->name);
+            s_fhssTxClamped = true;
+        }
+    }
+}
+
+static void _fhssRestoreFixedFreq(const char* why)
+{
+    s_fhssActive  = false;
+    s_fhssChannel = 0xFF;
+    if (s_fhssTxClamped) {
+        sx1262.setOutputPower(_configuredTxDbm());
+        s_fhssTxClamped = false;
+        OPS_LOG("Mesh", "FHSS: TX restored to %d dBm", _configuredTxDbm());
+    }
+    sx1262.setFrequency(_fixedFreqMHz());
+    sx1262.startReceive();
+    OPS_LOG("Mesh", "FHSS off (%s) — fixed %.3f MHz", why, (double)_fixedFreqMHz());
+}
+
+static void _tickFhss()
+{
+    const auto& cfg = ops::config::get();
+
+    if (cfg.radioPowerMode != RADIO_POWER_FHSS) {
+        if (s_fhssActive) _fhssRestoreFixedFreq("mode changed");
+        return;
+    }
+
+    // FHSS is not offered on every profile: the 433 MHz bands have no hop
+    // plan, and the EU 868 profiles decline the one that exists (see the
+    // rationale on fhss::availability()). Either way — stay on fixed.
+    const ops::fhss::Region* region = ops::fhss::regionForProfile(cfg.radioProfile);
+    if (!region) {
+        if (s_fhssActive) _fhssRestoreFixedFreq("not offered on this profile");
+        if (!s_fhssNoPlanWarned) {
+            OPS_LOG("Mesh", "FHSS unavailable on profile %u (%s)", cfg.radioProfile,
+                    ops::fhss::availability(cfg.radioProfile) ==
+                        ops::fhss::Unavailable::EuSubBandTradeoff
+                        ? "EU 868 — sub-band/power trade not worth it"
+                        : "no hop plan for this band");
+            s_fhssNoPlanWarned = true;
+        }
+        return;
+    }
+
+    // The frame number comes from UTC (see the DEVIATION note in Fhss.h), so
+    // an unset clock means we cannot know which channel the rest of the mesh
+    // is on. Hopping on a guessed frame number is strictly worse than not
+    // hopping: it puts us on a channel nobody is listening to, silently.
+    uint32_t utc = (uint32_t)rtc_clock.getCurrentTime();
+    if (!ops::fhss::clockIsValid(utc)) {
+        if (s_fhssActive) _fhssRestoreFixedFreq("clock lost");
+        if (!s_fhssNoClockWarned) {
+            OPS_LOG("Mesh", "FHSS waiting for clock (GPS/RTC not set yet)");
+            s_fhssNoClockWarned = true;
+        }
+        return;
+    }
+    s_fhssNoClockWarned = false;
+
+    s_fhssNoPlanWarned = false;
+
+    // A changed PSK or a changed region means the sequence we were following
+    // is no longer the right one — force a retune rather than waiting for the
+    // next natural channel change.
+    if (_fhssSyncKey() || region != s_fhssRegion) {
+        s_fhssRegion  = region;
+        s_fhssChannel = 0xFF;
+    }
+
+    uint32_t frame = ops::fhss::frameNumberForUtc(utc);
+    if (s_fhssActive && frame == s_fhssFrame) return;   // still inside this frame
+
+    uint8_t ch = ops::fhss::hopSequence(s_fhssKey, frame, region);
+    if (s_fhssActive && ch == s_fhssChannel) {
+        s_fhssFrame = frame;    // new frame, same channel — nothing to retune
+        return;
+    }
+
+    // Never retune underneath an in-flight transmission.
+    if (digitalRead(P_LORA_BUSY) == HIGH) return;   // retry on the next tick
+
+    float f = ops::fhss::channelToFreqMHz(ch, region);
+    if (f <= 0.0f) return;
+
+    // Clamp power before the first hop puts us in the new sub-band, not after.
+    _fhssApplyTxLimit(region);
+
+    sx1262.setFrequency(f);
+    sx1262.startReceive();
+    s_fhssFrame   = frame;
+    s_fhssChannel = ch;
+    s_fhssHopCount++;
+    if (!s_fhssActive) {
+        s_fhssActive = true;
+        OPS_LOG("Mesh", "FHSS engaged: %s, %u ch, %.3f-%.3f MHz, frame %u",
+                region->name, region->numChannels,
+                (double)ops::fhss::channelToFreqMHz(0, region),
+                (double)ops::fhss::channelToFreqMHz((uint8_t)(region->numChannels - 1), region),
+                frame);
+    }
+}
+
 static void _tickDutyCycle() {
     const auto& cfg = config::get();
 
@@ -2180,7 +2369,10 @@ static void _tickDutyCycle() {
         s_dcApplied       = false;     // TX finished; MeshCore will call startReceive() shortly
     }
 
-    if (!cfg.loraDutyCycle || s_dcSuspended) {
+    // Duty cycle and FHSS are mutually exclusive strategies — the hardware
+    // RX duty cycle parks the radio asleep on one frequency, which is exactly
+    // what a hopping node must not do.
+    if (cfg.radioPowerMode != RADIO_POWER_DUTY_CYCLE || s_dcSuspended) {
         if (s_dcApplied) {
             sx1262.startReceive();
             s_dcApplied = false;
@@ -2234,6 +2426,7 @@ void MeshService::tick() {
     if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
     the_mesh.checkSerialInterface();
+    _tickFhss();
     _tickDutyCycle();
 }
 
@@ -2326,6 +2519,30 @@ bool MeshService::pollLoginResult(bool& ok) {
     return _initialized && the_mesh.dequeueLoginResult(ok);
 }
 
+FhssStatus MeshService::fhssStatus() const {
+    const auto& cfg = ops::config::get();
+    FhssStatus s{};
+    s.enabled       = (cfg.radioPowerMode == RADIO_POWER_FHSS);
+    s.hopping       = s_fhssActive;
+    s.clockValid    = _initialized &&
+                      ops::fhss::clockIsValid((uint32_t)rtc_clock.getCurrentTime());
+    const ops::fhss::Region* r = ops::fhss::regionForProfile(cfg.radioProfile);
+    s.planAvailable = (r != nullptr);
+    s.regionName    = r ? r->name : "";
+    s.numChannels   = r ? r->numChannels : 0;
+    s.channel       = s_fhssChannel;
+    // Report the fixed frequency here even while hopping: the dialog uses it
+    // to tell the user which frequency FHSS would move them *off* of.
+    s.freqMHz       = _fixedFreqMHz();
+    s.hopLoMHz      = r ? ops::fhss::channelToFreqMHz(0, r) : 0.0f;
+    s.hopHiMHz      = r ? ops::fhss::channelToFreqMHz((uint8_t)(r->numChannels - 1), r) : 0.0f;
+    s.maxTxDbm      = r ? r->maxTxPowerDbm : 0;
+    s.txClamped     = s_fhssTxClamped;
+    s.frameNumber   = s_fhssFrame;
+    s.hopCount      = s_fhssHopCount;
+    return s;
+}
+
 RadioStats MeshService::radioStats() const {
     if (!_initialized) return RadioStats{};
     return the_mesh.getStats();
@@ -2373,15 +2590,14 @@ bool MeshService::isTxBusy() const {
 }
 
 float MeshService::getFreqMHz() const {
-    const auto& cfg = ops::config::get();
-    if (cfg.radioCustom && cfg.freqMHz > 0.0f) return cfg.freqMHz;
-    static const float kFreqs[14] = {
-        915.800f, 916.575f, 869.618f, 869.525f, 869.525f,
-        869.525f, 433.650f, 917.375f, 917.375f, 433.375f,
-        869.618f, 869.618f, 910.525f, 920.250f,
-    };
-    uint8_t p = cfg.radioProfile;
-    return kFreqs[p < 14 ? p : 2];
+    // While FHSS is hopping, the radio is genuinely on the current hop
+    // channel — report that rather than the configured fixed frequency, so
+    // the Signal/PCAP/scan screens show where we are actually listening.
+    if (s_fhssActive && s_fhssRegion) {
+        float f = ops::fhss::channelToFreqMHz(s_fhssChannel, s_fhssRegion);
+        if (f > 0.0f) return f;
+    }
+    return _fixedFreqMHz();
 }
 
 void MeshService::setFreqMHz(float mhz) {

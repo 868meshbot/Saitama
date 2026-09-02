@@ -77,6 +77,24 @@ struct PeerInfo {
     int32_t  lon;         // last-known longitude × 1 000 000 (0 = unknown)
 };
 
+// Live FHSS status, for the settings/signal screens. See src/mesh/Fhss.h.
+struct FhssStatus {
+    bool        enabled;      // user selected FHSS in settings
+    bool        hopping;      // actually hopping right now
+    bool        clockValid;   // RTC holds a usable UTC time
+    bool        planAvailable;// this radio profile's band has a hop plan
+    const char* regionName;   // "EU868" etc, or "" when unavailable
+    uint16_t    numChannels;
+    uint8_t     channel;      // current hop channel (0xFF when not hopping)
+    float       freqMHz;      // current centre frequency
+    float       hopLoMHz;     // lowest channel in the plan (0 when unavailable)
+    float       hopHiMHz;     // highest channel in the plan
+    int8_t      maxTxDbm;     // region power limit enforced while hopping
+    bool        txClamped;    // true when TX power is currently reduced
+    uint32_t    frameNumber;
+    uint32_t    hopCount;     // retunes since boot
+};
+
 // Result from a DISCOVER_REQ zero-hop scan (direct RF neighbors only).
 struct DiscoverEntry {
     char     name[32];       // node name if found in peer list; empty if unknown
@@ -187,6 +205,8 @@ public:
     bool sigGenActive() const;
 
     void suspendDutyCycle(bool suspend);
+    // Live FHSS state for the UI. Safe to call regardless of the active mode.
+    FhssStatus fhssStatus() const;
     RadioStats radioStats() const;
     void  setActive(bool active);
     bool  isActive() const;
