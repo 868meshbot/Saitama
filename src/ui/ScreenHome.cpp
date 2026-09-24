@@ -2187,9 +2187,11 @@ void ScreenHome::_onAddContactCancel(lv_event_t* /*e*/)
 // ── Path view (full screen, one row per repeater hop) ─────────────────
 
 // Finds the saved repeater whose key starts with hashBytes. `extra` receives
-// the number of further matches — 1-byte hashes collide easily.
+// the number of further matches — 1-byte hashes collide easily. `rssiOut`
+// is that repeater's last directly-heard RSSI (0 when never heard).
 static bool _findRepeaterByHash(const uint8_t* hashBytes, int hashSz,
-                                char* nameOut, int nameMax, int* extra)
+                                char* nameOut, int nameMax, int* extra,
+                                float* rssiOut)
 {
     bool found = false;
     *extra = 0;
@@ -2200,9 +2202,45 @@ static bool _findRepeaterByHash(const uint8_t* hashBytes, int hashSz,
         if (memcmp(r.pubKeyPrefix, hashBytes, hashSz) != 0) continue;
         if (found) { (*extra)++; continue; }
         snprintf(nameOut, nameMax, "%s", r.name);
+        *rssiOut = r.lastRssi;
         found = true;
     }
     return found;
+}
+
+// 3-bar signal icon: 3 green = strong, 2 yellow = medium, 1 red = weak.
+// Fixed colours rather than theme ones — the green theme swaps GREEN to blue.
+// Thresholds match the RSSI colouring on ScreenRepeaters.
+static void _addSignalBars(lv_obj_t* parent, float rssi)
+{
+    static constexpr int BAR_W = 4, BAR_GAP = 2, BAR_H_MAX = 14;
+    int lit;
+    lv_color_t col;
+    if      (rssi >= -80.0f)  { lit = 3; col = lv_color_hex(0x3FB950); }
+    else if (rssi >= -100.0f) { lit = 2; col = lv_color_hex(0xE3B341); }
+    else                      { lit = 1; col = lv_color_hex(0xF85149); }
+
+    lv_obj_t* icon = lv_obj_create(parent);
+    lv_obj_set_size(icon, 3 * BAR_W + 2 * BAR_GAP, BAR_H_MAX);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(icon, 0, 0);
+    lv_obj_set_style_pad_all(icon, 0, 0);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(icon, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    for (int i = 0; i < 3; i++) {
+        int h = 6 + i * 4;   // 6, 10, 14 px
+        lv_obj_t* bar = lv_obj_create(icon);
+        lv_obj_set_size(bar, BAR_W, h);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, i * (BAR_W + BAR_GAP), 0);
+        lv_obj_set_style_radius(bar, 1, 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_pad_all(bar, 0, 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(bar, i < lit ? col : theme::BORDER, 0);
+        lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    }
 }
 
 void ScreenHome::_onBubbleShowPath(lv_event_t* /*e*/)
@@ -2274,7 +2312,10 @@ void ScreenHome::_openPathView()
     lv_obj_set_flex_flow(s_pathList, LV_FLEX_FLOW_COLUMN);
     lv_obj_add_event_cb(s_pathList, _onPathKey, LV_EVENT_KEY, nullptr);
 
-    auto addLine = [](const char* code, const char* name, lv_color_t nameColor) {
+    // Right-hand column: "-87dBm" + bars, when the repeater has been heard.
+    static constexpr int SIG_W = 76;
+    auto addLine = [](const char* code, const char* name, lv_color_t nameColor,
+                      float rssi) {
         lv_obj_t* row = lv_obj_create(s_pathList);
         lv_obj_set_size(row, LV_PCT(100), 20);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -2292,11 +2333,22 @@ void ScreenHome::_openPathView()
         if (name && name[0]) {
             lv_obj_t* nameLbl = lv_label_create(row);
             lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-            lv_obj_set_width(nameLbl, OPS_SCREEN_W - 70);
+            lv_obj_set_width(nameLbl, OPS_SCREEN_W - 12 - 50 - (rssi != 0.0f ? SIG_W : 0));
             lv_label_set_text(nameLbl, name);
             lv_obj_set_style_text_color(nameLbl, nameColor, 0);
             lv_obj_set_style_text_font(nameLbl, ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
             lv_obj_align(nameLbl, LV_ALIGN_LEFT_MID, 50, 0);
+        }
+
+        if (rssi != 0.0f) {
+            _addSignalBars(row, rssi);
+            char dbm[12];
+            snprintf(dbm, sizeof(dbm), "%ddBm", (int)rssi);
+            lv_obj_t* dbmLbl = lv_label_create(row);
+            lv_label_set_text(dbmLbl, dbm);
+            lv_obj_set_style_text_color(dbmLbl, theme::TEXT_MUTED, 0);
+            lv_obj_set_style_text_font(dbmLbl, &lv_font_montserrat_12, 0);
+            lv_obj_align(dbmLbl, LV_ALIGN_RIGHT_MID, -20, 0);
         }
     };
 
@@ -2318,14 +2370,15 @@ void ScreenHome::_openPathView()
             }
             char name[48] = {};
             int extra = 0;
-            if (_findRepeaterByHash(hash, hashSz, name, 32, &extra)) {
+            float rssi = 0.0f;
+            if (_findRepeaterByHash(hash, hashSz, name, 32, &extra, &rssi)) {
                 if (extra > 0) {
                     size_t n = strlen(name);
                     snprintf(name + n, sizeof(name) - n, " (+%d)", extra);
                 }
-                addLine(code, name, theme::TEXT);
+                addLine(code, name, theme::TEXT, rssi);
             } else {
-                addLine(code, "", theme::TEXT_MUTED);
+                addLine(code, "", theme::TEXT_MUTED, 0.0f);
             }
             shown++;
         }
@@ -2334,13 +2387,13 @@ void ScreenHome::_openPathView()
     }
 
     if (s_pendingHops == 0 && shown == 0) {
-        addLine("", "Direct - no repeaters", theme::TEXT_MUTED);
+        addLine("", "Direct - no repeaters", theme::TEXT_MUTED, 0.0f);
     } else if (shown == 0) {
-        addLine("", "Path not recorded", theme::TEXT_MUTED);
+        addLine("", "Path not recorded", theme::TEXT_MUTED, 0.0f);
     } else if (shown < s_pendingHops) {
         char more[32];
         snprintf(more, sizeof(more), "+%d more (not stored)", s_pendingHops - shown);
-        addLine("", more, theme::TEXT_MUTED);
+        addLine("", more, theme::TEXT_MUTED, 0.0f);
     }
 
     lv_group_t* grp = lv_group_get_default();
