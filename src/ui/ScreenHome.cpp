@@ -34,6 +34,7 @@
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
+#include "../utils/Repeaters.h"
 #include "../utils/SDCard.h"
 #include "../utils/Sound.h"
 #include "../mesh/MeshService.h"
@@ -102,6 +103,10 @@ static int       s_iconEmojiBtnCount = 0;
 // Captured when the user taps a received bubble; consumed by _onAddContactSave.
 static char     s_pendingContactName[32] = {};
 static uint8_t  s_pendingContactKey[4]   = {};
+static char     s_pendingPath[36]        = {};
+static uint8_t  s_pendingHops            = 0;
+static lv_obj_t* s_pathOverlay           = nullptr;
+static lv_obj_t* s_pathList              = nullptr;
 
 // ── Msg JSON helpers (no heap — hand-rolled for hot path) ─────────────
 
@@ -159,6 +164,40 @@ static int _jsonGetStr(const char* json, const char* key, char* out, int outSize
     return n;
 }
 
+// ── Outgoing text shortcuts ───────────────────────────────────────────
+
+// Rewrites every "meshpic <code>" (case-insensitive, whole word) as
+// "https://meshpic.uk/i/<code>". <code> is the run of printable non-space
+// ASCII following the keyword; a bare "meshpic" with no code is left alone.
+static void _expandMeshpic(const char* in, char* out, size_t outSize)
+{
+    static const char KW[]     = "meshpic";
+    static const size_t KW_LEN = sizeof(KW) - 1;
+    static const char URL[]    = "https://meshpic.uk/i/";
+
+    size_t o = 0;
+    const char* p = in;
+    while (*p && o < outSize - 1) {
+        bool wordStart = (p == in) || isspace((unsigned char)p[-1]);
+        if (wordStart && strncasecmp(p, KW, KW_LEN) == 0 && p[KW_LEN] == ' ') {
+            const char* code = p + KW_LEN;
+            while (*code == ' ') code++;
+            const char* end = code;
+            while (*end > ' ' && *end < 0x7F) end++;
+            if (end > code) {
+                int n = snprintf(out + o, outSize - o, "%s%.*s",
+                                 URL, (int)(end - code), code);
+                if (n < 0 || (size_t)n >= outSize - o) { o = outSize - 1; break; }
+                o += n;
+                p = end;
+                continue;
+            }
+        }
+        out[o++] = *p++;
+    }
+    out[o] = '\0';
+}
+
 // ── History ring buffer ───────────────────────────────────────────────
 
 // Allocated once, in PSRAM — HISTORY_MAX entries is too large to keep as a
@@ -213,6 +252,7 @@ void ScreenHome::_historyAdd(bool           sent,
     e.sent = sent;
     strncpy(e.senderName, sender ? sender : "", sizeof(e.senderName) - 1);
     e.senderName[sizeof(e.senderName) - 1] = '\0';
+    theme::sanitizeText(e.senderName);
     strncpy(e.text, text ? text : "", sizeof(e.text) - 1);
     e.text[sizeof(e.text) - 1] = '\0';
     theme::sanitizeText(e.text);
@@ -1661,8 +1701,11 @@ void ScreenHome::_openDMPicker()
 void ScreenHome::_onSend(lv_event_t* /*e*/)
 {
     if (!_textarea || !_msgArea) return;
-    const char* txt = lv_textarea_get_text(_textarea);
-    if (!txt || txt[0] == '\0') return;
+    const char* raw = lv_textarea_get_text(_textarea);
+    if (!raw || raw[0] == '\0') return;
+
+    char txt[256];
+    _expandMeshpic(raw, txt, sizeof(txt));
 
     if (!ops::MeshService::instance().initialized()) {
         OPS_LOG("Chat", "Send failed: radio not ready");
@@ -1928,6 +1971,9 @@ void ScreenHome::_onBubbleClick(lv_event_t* e)
     strncpy(s_pendingContactName, entry.senderName, sizeof(s_pendingContactName) - 1);
     s_pendingContactName[sizeof(s_pendingContactName) - 1] = '\0';
     memcpy(s_pendingContactKey, entry.pubKeyPrefix, 4);
+    strncpy(s_pendingPath, entry.pathStr, sizeof(s_pendingPath) - 1);
+    s_pendingPath[sizeof(s_pendingPath) - 1] = '\0';
+    s_pendingHops = entry.hops;
     _openBubbleActionMenu();
 }
 
@@ -1999,6 +2045,7 @@ void ScreenHome::_openBubbleActionMenu()
     };
 
     mkBtn(LV_SYMBOL_LEFT " Reply", theme::PRIMARY, _onBubbleReply, false);
+    mkBtn(LV_SYMBOL_SHUFFLE " Show Path", theme::PRIMARY, _onBubbleShowPath, false);
     if (hasKey)
         mkBtn(alreadySaved ? LV_SYMBOL_OK " Already in Contacts" : LV_SYMBOL_PLUS " Add Contact",
               alreadySaved ? theme::BG : theme::PRIMARY,
@@ -2135,6 +2182,194 @@ void ScreenHome::_onAddContactSave(lv_event_t* /*e*/)
 void ScreenHome::_onAddContactCancel(lv_event_t* /*e*/)
 {
     if (s_addContactOverlay) { lv_obj_del(s_addContactOverlay); s_addContactOverlay = nullptr; }
+}
+
+// ── Path view (full screen, one row per repeater hop) ─────────────────
+
+// Finds the saved repeater whose key starts with hashBytes. `extra` receives
+// the number of further matches — 1-byte hashes collide easily.
+static bool _findRepeaterByHash(const uint8_t* hashBytes, int hashSz,
+                                char* nameOut, int nameMax, int* extra)
+{
+    bool found = false;
+    *extra = 0;
+    int nr = ops::repeaters::count();
+    for (int i = 0; i < nr; i++) {
+        ops::Repeater r;
+        if (!ops::repeaters::get(i, r)) continue;
+        if (memcmp(r.pubKeyPrefix, hashBytes, hashSz) != 0) continue;
+        if (found) { (*extra)++; continue; }
+        snprintf(nameOut, nameMax, "%s", r.name);
+        found = true;
+    }
+    return found;
+}
+
+void ScreenHome::_onBubbleShowPath(lv_event_t* /*e*/)
+{
+    // Deleting our own parent from its child's handler — must be async.
+    if (s_addContactOverlay) { lv_obj_del_async(s_addContactOverlay); s_addContactOverlay = nullptr; }
+    _openPathView();
+}
+
+void ScreenHome::_openPathView()
+{
+    if (s_pathOverlay) return;
+
+    s_pathOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_pathOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_pathOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_pathOverlay, theme::BG, 0);
+    lv_obj_set_style_bg_opa(s_pathOverlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_pathOverlay, 0, 0);
+    lv_obj_set_style_radius(s_pathOverlay, 0, 0);
+    lv_obj_set_style_pad_all(s_pathOverlay, 0, 0);
+    lv_obj_clear_flag(s_pathOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Title bar: "N hops" + X
+    static constexpr int TITLE_H = 30;
+    lv_obj_t* bar = lv_obj_create(s_pathOverlay);
+    lv_obj_set_size(bar, OPS_SCREEN_W, TITLE_H);
+    lv_obj_set_pos(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(bar, theme::BORDER, 0);
+    lv_obj_set_style_border_width(bar, 1, 0);
+    lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_pad_all(bar, 0, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    char title[24];
+    snprintf(title, sizeof(title), "%u hop%s",
+             (unsigned)s_pendingHops, s_pendingHops == 1 ? "" : "s");
+    lv_obj_t* titleLbl = lv_label_create(bar);
+    lv_label_set_text(titleLbl, title);
+    lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_14, 0);
+    lv_obj_align(titleLbl, LV_ALIGN_LEFT_MID, 8, 0);
+
+    lv_obj_t* xBtn = lv_btn_create(bar);
+    lv_group_remove_obj(xBtn);
+    lv_obj_set_size(xBtn, 30, TITLE_H - 4);
+    lv_obj_align(xBtn, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(xBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(xBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(xBtn, 0, 0);
+    lv_obj_set_style_radius(xBtn, 4, 0);
+    lv_obj_add_event_cb(xBtn, _onPathClose, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* xLbl = lv_label_create(xBtn);
+    lv_label_set_text(xLbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(xLbl, theme::TEXT, 0);
+    lv_obj_center(xLbl);
+
+    // Scrollable hop list — focused so backspace (ESC) and trackball reach it.
+    s_pathList = lv_obj_create(s_pathOverlay);
+    lv_obj_set_size(s_pathList, OPS_SCREEN_W, OPS_SCREEN_H - TITLE_H);
+    lv_obj_set_pos(s_pathList, 0, TITLE_H);
+    lv_obj_set_style_bg_opa(s_pathList, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_pathList, 0, 0);
+    lv_obj_set_style_radius(s_pathList, 0, 0);
+    lv_obj_set_style_pad_all(s_pathList, 6, 0);
+    lv_obj_set_style_pad_row(s_pathList, 2, 0);
+    lv_obj_set_flex_flow(s_pathList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_event_cb(s_pathList, _onPathKey, LV_EVENT_KEY, nullptr);
+
+    auto addLine = [](const char* code, const char* name, lv_color_t nameColor) {
+        lv_obj_t* row = lv_obj_create(s_pathList);
+        lv_obj_set_size(row, LV_PCT(100), 20);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* codeLbl = lv_label_create(row);
+        lv_label_set_text(codeLbl, code);
+        lv_obj_set_style_text_color(codeLbl, theme::ACCENT, 0);
+        lv_obj_set_style_text_font(codeLbl, &lv_font_montserrat_14, 0);
+        lv_obj_align(codeLbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+        if (name && name[0]) {
+            lv_obj_t* nameLbl = lv_label_create(row);
+            lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(nameLbl, OPS_SCREEN_W - 70);
+            lv_label_set_text(nameLbl, name);
+            lv_obj_set_style_text_color(nameLbl, nameColor, 0);
+            lv_obj_set_style_text_font(nameLbl, ops::emoji::emojiFont(&lv_font_montserrat_14), 0);
+            lv_obj_align(nameLbl, LV_ALIGN_LEFT_MID, 50, 0);
+        }
+    };
+
+    // Parse "AA>B1>3F" (or 2-byte "AABB>..."); stored path may be truncated
+    // for long routes, so s_pendingHops stays the authoritative count.
+    int shown = 0;
+    const char* p = s_pendingPath;
+    while (*p) {
+        const char* end = strchr(p, '>');
+        int len = end ? (int)(end - p) : (int)strlen(p);
+        if (len >= 2 && len <= 8 && (len % 2) == 0) {
+            char code[9] = {};
+            memcpy(code, p, len);
+            uint8_t hash[4] = {};
+            int hashSz = len / 2;
+            for (int b = 0; b < hashSz; b++) {
+                char hx[3] = { code[b * 2], code[b * 2 + 1], '\0' };
+                hash[b] = (uint8_t)strtoul(hx, nullptr, 16);
+            }
+            char name[48] = {};
+            int extra = 0;
+            if (_findRepeaterByHash(hash, hashSz, name, 32, &extra)) {
+                if (extra > 0) {
+                    size_t n = strlen(name);
+                    snprintf(name + n, sizeof(name) - n, " (+%d)", extra);
+                }
+                addLine(code, name, theme::TEXT);
+            } else {
+                addLine(code, "", theme::TEXT_MUTED);
+            }
+            shown++;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+
+    if (s_pendingHops == 0 && shown == 0) {
+        addLine("", "Direct - no repeaters", theme::TEXT_MUTED);
+    } else if (shown == 0) {
+        addLine("", "Path not recorded", theme::TEXT_MUTED);
+    } else if (shown < s_pendingHops) {
+        char more[32];
+        snprintf(more, sizeof(more), "+%d more (not stored)", s_pendingHops - shown);
+        addLine("", more, theme::TEXT_MUTED);
+    }
+
+    lv_group_t* grp = lv_group_get_default();
+    if (grp) {
+        lv_group_add_obj(grp, s_pathList);
+        lv_group_focus_obj(s_pathList);
+    }
+}
+
+static void _closePathView()
+{
+    if (!s_pathOverlay) return;
+    lv_group_t* grp = lv_group_get_default();
+    if (grp && s_pathList) lv_group_remove_obj(s_pathList);
+    // Called from handlers on the overlay's own children — delete async.
+    lv_obj_del_async(s_pathOverlay);
+    s_pathOverlay = nullptr;
+    s_pathList    = nullptr;
+}
+
+void ScreenHome::_onPathClose(lv_event_t* /*e*/)
+{
+    _closePathView();
+    if (_textarea && lv_group_get_default()) lv_group_focus_obj(_textarea);
+}
+
+void ScreenHome::_onPathKey(lv_event_t* e)
+{
+    if (lv_event_get_key(e) == LV_KEY_ESC) _onPathClose(e);
 }
 
 // ── Emoji picker ───────────────────────────────────────────────────────

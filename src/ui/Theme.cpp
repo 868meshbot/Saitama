@@ -4,6 +4,8 @@
 #include "Theme.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
+#include <cctype>
+#include <cstring>
 
 extern const lv_font_t font_montserrat_10_ext;
 extern const lv_font_t font_montserrat_12_ext;
@@ -11,6 +13,34 @@ extern const lv_font_t font_montserrat_12_ext;
 namespace ops { namespace theme {
 
 // ── sanitizeText() ────────────────────────────────────────────────────
+
+// Regional-indicator letter (U+1F1E6..1F1FF, F0 9F 87 A6..BF) → 'A'..'Z', else 0.
+static char _riLetter(const unsigned char* p)
+{
+    if (p[0] == 0xF0 && p[1] == 0x9F && p[2] == 0x87 && p[3] >= 0xA6 && p[3] <= 0xBF)
+        return (char)('A' + (p[3] - 0xA6));
+    return 0;
+}
+
+// Tag character (U+E0020..E007F, F3 A0 80 A0..81 BF) → its ASCII value, else 0.
+// U+E007F CANCEL TAG maps to 0x7F.
+static char _tagChar(const unsigned char* p)
+{
+    if (p[0] != 0xF3 || p[1] != 0xA0) return 0;
+    if (p[2] == 0x80 && p[3] >= 0xA0 && p[3] <= 0xBF) return (char)(p[3] - 0x80);
+    if (p[2] == 0x81 && p[3] >= 0x80 && p[3] <= 0xBF) return (char)(p[3] - 0x40);
+    return 0;
+}
+
+// Byte length a UTF-8 lead byte announces (0 for a stray continuation byte).
+static int _utf8Len(unsigned char c)
+{
+    if (c < 0x80)           return 1;
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 0;
+}
 
 void sanitizeText(char* s)
 {
@@ -30,7 +60,60 @@ void sanitizeText(char* s)
             if (sub == 0x9C || sub == 0x9D) { *w++ = '"';  p += 3; continue; }
             if (sub == 0x93 || sub == 0x94) { *w++ = '-';  p += 3; continue; }
         }
-        *w++ = *p++;
+
+        // Country flags are a pair of regional indicators (🇬🇧 = G+B). The
+        // emoji table keys a flag on its first indicator, so only pairs we
+        // actually have an image for keep it (see emoji_data.h); everything
+        // else becomes its ISO letters, e.g. "GB", rather than two boxes.
+        if (char a = _riLetter(p)) {
+            char b = _riLetter(p + 4);
+            bool known = (a == 'I' && b == 'E') || (a == 'U' && b == 'S');
+            if (known) {
+                memmove(w, p, 4); w += 4;
+            } else {
+                *w++ = a;
+                if (b) *w++ = b;
+            }
+            p += b ? 8 : 4;
+            continue;
+        }
+
+        // Subdivision flags: black flag U+1F3F4 (F0 9F 8F B4) + tag letters
+        // + cancel tag, e.g. 🏴 g b e n g ␡ for England. The tag letters have
+        // no glyph and render as boxes. Wales keeps the flag (the emoji table
+        // maps U+1F3F4 to it); others become the subdivision code, e.g. "ENG".
+        if (p[0] == 0xF0 && p[1] == 0x9F && p[2] == 0x8F && p[3] == 0xB4 && _tagChar(p + 4)) {
+            char tags[8] = {};
+            int  n = 0;
+            unsigned char* q = p + 4;
+            while (char t = _tagChar(q)) {
+                if (t != 0x7F && n < (int)sizeof(tags) - 1) tags[n++] = t;
+                q += 4;
+                if (t == 0x7F) break;
+            }
+            if (strcmp(tags, "gbwls") == 0) {
+                memmove(w, p, 4); w += 4;
+            } else {
+                // Skip the 2-letter country prefix ("gb") when there is one.
+                for (int i = (n > 2 ? 2 : 0); i < n; i++)
+                    *w++ = (char)toupper((unsigned char)tags[i]);
+            }
+            p = q;
+            continue;
+        }
+
+        // Stray tag characters outside a flag sequence — invisible, drop.
+        if (_tagChar(p)) { p += 4; continue; }
+
+        // Multi-byte sequence cut short (e.g. a 32-byte name truncated mid-
+        // emoji) or a stray continuation byte — drop instead of drawing a box.
+        int len = _utf8Len(p[0]);
+        bool complete = len > 0;
+        for (int i = 1; complete && i < len; i++)
+            if ((p[i] & 0xC0) != 0x80) complete = false;
+        if (!complete) { p++; continue; }
+
+        while (len--) *w++ = *p++;
     }
     *w = '\0';
 }

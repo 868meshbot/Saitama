@@ -123,6 +123,7 @@ private:
     static void _openDMPicker();
     static void _openBubbleActionMenu();
     static void _openAddContactPopup();
+    static void _openPathView();
     static void _openIconPicker(int chIdx);   // avatar tapped → emoji/initials picker
 
     // ── Event callbacks ───────────────────────────────────────────────
@@ -154,6 +155,9 @@ private:
     static void _onBubbleClick      (lv_event_t* e);
     static void _onBubbleReply      (lv_event_t* e);
     static void _onBubbleAddContact (lv_event_t* e);
+    static void _onBubbleShowPath   (lv_event_t* e);
+    static void _onPathClose        (lv_event_t* e);
+    static void _onPathKey          (lv_event_t* e);
     static void _onAddContactSave   (lv_event_t* e);
     static void _onAddContactCancel (lv_event_t* e);
     static void _onEmojiToggle     (lv_event_t* e);
