@@ -4,6 +4,7 @@
 #pragma once
 #include <Arduino.h>
 #include <cstdint>
+#include "Crypto.h"
 
 namespace ops {
 
@@ -20,6 +21,12 @@ struct Repeater {
     bool     favourite;      // pinned to top of list; occupies former _pathPad[0]
     uint8_t  _pathPad[1];
     uint8_t  outPath[64];    // MeshCore out_path bytes (MAX_PATH_SIZE = 64)
+    bool     hasAdminPw;     // true = adminPwEnc holds a sealed admin password
+    uint8_t  _pwPad[3];
+    // Admin password sealed with AES-256-GCM under the storage key, with
+    // pubKeyPrefix as additional authenticated data. Written to SD in this
+    // form and never in the clear. See utils/Crypto.h for the threat model.
+    uint8_t  adminPwEnc[crypto::BLOB_LEN];
 };
 
 namespace repeaters {
@@ -49,6 +56,20 @@ namespace repeaters {
     // Update name, lastSeen, and lastRssi from a live advert/packet without
     // triggering a full NVS save. Persisted on the next natural save() call.
     void setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi);
+
+    // ── Remembered admin password ─────────────────────────────────────
+    bool hasAdminPassword(int idx);
+    // Seals and persists `plain`. nullptr or "" forgets the stored password.
+    // Returns false if the secret is too long or crypto is unavailable.
+    bool setAdminPassword(int idx, const char* plain);
+    // Unseals into `out`. False (and out[0] = 0) when nothing is stored or the
+    // blob will not authenticate — a wrong storage key, or an edited SD file.
+    bool getAdminPassword(int idx, char* out, size_t outMax);
+    // Re-encrypts every stored password under a new storage key. Call only
+    // between crypto::beginRekey() and crypto::endRekey(). Entries that fail
+    // to unseal are forgotten rather than left unreadable; `outLost` receives
+    // that count. Returns the number successfully re-encrypted.
+    int  rekeyAdminPasswords(int* outLost = nullptr);
 }
 
 }  // namespace ops

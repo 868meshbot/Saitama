@@ -7,6 +7,7 @@
 #include "Theme.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Repeaters.h"
+#include "../utils/Crypto.h"
 #include "../utils/Log.h"
 #include <cstdio>
 #include <cstring>
@@ -38,6 +39,7 @@ static int s_pendingRepeater = -1;
 
 // Dialog input widget pointers (valid only while a dialog is open)
 static lv_obj_t* s_adminPassInput = nullptr;
+static lv_obj_t* s_adminRememberCb = nullptr;
 static lv_obj_t* s_pathInput      = nullptr;
 static lv_obj_t* s_hashSz1Btn    = nullptr;
 static lv_obj_t* s_hashSz2Btn    = nullptr;
@@ -504,6 +506,7 @@ void ScreenRepeaters::_showAdminDialog()
     lv_obj_set_size(s_adminPassInput, 200, 30);
     lv_textarea_set_one_line(s_adminPassInput, true);
     lv_textarea_set_password_mode(s_adminPassInput, true);
+    lv_textarea_set_max_length(s_adminPassInput, (uint32_t)crypto::SECRET_MAX - 1);
     lv_textarea_set_placeholder_text(s_adminPassInput, "enter password");
     lv_obj_set_style_bg_color(s_adminPassInput, theme::BG, 0);
     lv_obj_set_style_text_color(s_adminPassInput, theme::TEXT, 0);
@@ -511,6 +514,37 @@ void ScreenRepeaters::_showAdminDialog()
     lv_obj_set_style_border_width(s_adminPassInput, 1, 0);
     lv_obj_set_style_radius(s_adminPassInput, 4, 0);
     lv_obj_set_style_pad_all(s_adminPassInput, 4, 0);
+
+    // Pre-fill from the sealed store so a remembered login is just Enter.
+    bool remembered = false;
+    {
+        char stored[crypto::SECRET_MAX] = {};
+        if (repeaters::getAdminPassword(s_pendingRepeater, stored, sizeof(stored))) {
+            lv_textarea_set_text(s_adminPassInput, stored);
+            remembered = true;
+        } else if (repeaters::hasAdminPassword(s_pendingRepeater)) {
+            // A blob is stored but will not unseal — the storage password was
+            // changed without this record being re-keyed, or the SD file was
+            // edited. Say so instead of silently offering an empty box.
+            lv_label_set_text(hintLbl, "Password: (stored one unreadable)");
+        }
+        memset(stored, 0, sizeof(stored));
+    }
+
+    // Remember tickbox
+    s_adminRememberCb = lv_checkbox_create(box);
+    lv_checkbox_set_text(s_adminRememberCb, "Remember password");
+    lv_obj_set_style_text_color(s_adminRememberCb, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_adminRememberCb, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_bg_color(s_adminRememberCb, theme::ACCENT,
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(s_adminRememberCb, theme::BORDER, LV_PART_INDICATOR);
+    if (remembered) lv_obj_add_state(s_adminRememberCb, LV_STATE_CHECKED);
+    if (!crypto::ready()) {
+        // Nothing to store into — do not offer a tickbox that cannot work.
+        lv_obj_add_state(s_adminRememberCb, LV_STATE_DISABLED);
+        lv_checkbox_set_text(s_adminRememberCb, "Remember (unavailable)");
+    }
 
     // Button row
     lv_obj_t* btnRow = lv_obj_create(box);
@@ -544,6 +578,12 @@ void ScreenRepeaters::_showAdminDialog()
 
     makeRowBtn("Cancel", theme::TEXT_MUTED, theme::BORDER, _onAdminCancel);
     makeRowBtn("Login",  theme::ACCENT,     theme::ACCENT, _onAdminOk);
+
+    // Enter in the password box submits — with a remembered password that is
+    // the whole interaction.
+    lv_obj_add_event_cb(s_adminPassInput, _onAdminOk, LV_EVENT_READY, overlay);
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(s_adminPassInput);
 }
 
 // ── _onAdminOk() ─────────────────────────────────────────────────────
@@ -551,20 +591,31 @@ void ScreenRepeaters::_onAdminOk(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
 
-    if (s_pendingRepeater < 0 || !s_adminPassInput) {
-        lv_obj_del(overlay);
-        s_pendingRepeater = -1;
-        s_adminPassInput  = nullptr;
-        return;
-    }
+    // The dialog is torn down on every path below. It is deleted async
+    // because Login/Cancel are children of the overlay they dismiss, and
+    // deleting an ancestor of the object LVGL is dispatching on corrupts
+    // its group state.
+    // Enter (LV_EVENT_READY on the textarea) and the Login button both land
+    // here. The async delete leaves the widgets alive for one more frame, so
+    // bail out if the dialog has already been dismissed rather than queueing
+    // a second delete of the same object.
+    if (!s_adminPassInput) return;
+
+    auto closeDialog = [&]() {
+        if (overlay) lv_obj_del_async(overlay);
+        s_pendingRepeater  = -1;
+        s_adminPassInput   = nullptr;
+        s_adminRememberCb  = nullptr;
+    };
+
+    int  idx = s_pendingRepeater;
+    bool remember = s_adminRememberCb &&
+                    lv_obj_has_state(s_adminRememberCb, LV_STATE_CHECKED);
+
+    if (idx < 0) { closeDialog(); return; }
 
     Repeater r;
-    if (!repeaters::get(s_pendingRepeater, r)) {
-        lv_obj_del(overlay);
-        s_pendingRepeater = -1;
-        s_adminPassInput  = nullptr;
-        return;
-    }
+    if (!repeaters::get(idx, r)) { closeDialog(); return; }
 
     const char* pass = lv_textarea_get_text(s_adminPassInput);
     bool sent = ops::MeshService::instance().sendRepeaterLogin(r.pubKeyPrefix, pass ? pass : "");
@@ -577,9 +628,16 @@ void ScreenRepeaters::_onAdminOk(lv_event_t* e)
     strncpy(s_adminPass, pass ? pass : "", sizeof(s_adminPass) - 1);
     s_adminPass[sizeof(s_adminPass) - 1] = '\0';
 
-    lv_obj_del(overlay);
-    s_pendingRepeater = -1;
-    s_adminPassInput  = nullptr;
+    // Store or forget before the send result is known: the tickbox records
+    // what the user asked for, not whether this particular login worked.
+    if (remember && pass && pass[0]) {
+        if (!repeaters::setAdminPassword(idx, pass))
+            ScreenTerminal::appendLine("[repeaters] Could not store password (crypto unavailable)");
+    } else {
+        repeaters::setAdminPassword(idx, nullptr);
+    }
+
+    closeDialog();
 
     if (sent) {
         s_awaitingLoginResult = true;
@@ -596,10 +654,12 @@ void ScreenRepeaters::_onAdminOk(lv_event_t* e)
 // ── _onAdminCancel() ─────────────────────────────────────────────────
 void ScreenRepeaters::_onAdminCancel(lv_event_t* e)
 {
+    if (!s_adminPassInput) return;            // already dismissed this frame
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    if (overlay) lv_obj_del_async(overlay);   // see the note in _onAdminOk
     s_pendingRepeater = -1;
     s_adminPassInput  = nullptr;
+    s_adminRememberCb = nullptr;
 }
 
 // ─────────────────────────────────────────────────────────────────────

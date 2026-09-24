@@ -75,6 +75,7 @@ src/
   ui/Theme.h/cpp            — Colour palette
   utils/Config.h/cpp        — Persistent config via NVS; SD backup /ops/settings.json
   utils/Contacts.h/cpp      — 50-slot NVS contact list; SD archive /ops/contacts.json
+  utils/Crypto.h/cpp        — AES-256-GCM seal/unseal for secrets written to SD; storage password in NVS namespace opscrypt (never mirrored to SD)
   utils/Repeaters.h/cpp     — Repeater list (NVS-backed)
   utils/SDCard.h/cpp        — SD mount (CS=39, FSPI), /ops/ dir, binary file helpers
   utils/Sound.h/cpp         — I2S audio (MAX98357A); playPing()
@@ -130,13 +131,13 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **Repeater routing table preload:** The `Repeater` struct stores a full `pubKey[32]` (populated when a repeater advert is heard). `preloadNvsRepeaters()` runs at `OPSMesh::init()` right after `preloadNvsContacts()` and inserts every saved repeater with a non-zero key into MeshCore's contact routing table. This ensures `sendRepeaterLogin()` and `sendAdminCommand()` can find the contact immediately on boot without waiting for another advert. SD JSON stores the full key as `"pubKey64"` (64 hex chars); the field is optional so old JSON files load gracefully with the key zeroed until the repeater is heard again.
 
-**ScreenRepeaters popup:** Tapping a row shows a 5-button action popup (auto-height via `LV_SIZE_CONTENT`): Admin Login, Set Path, Reset Path (orange), Delete Repeater (red), Close. Admin Login opens a password-textarea dialog — on confirm calls `sendRepeaterLogin()` and `ScreenTerminal::setAdminTarget()` so `/repadmin` picks up the target immediately. Set Path opens a hex-input dialog with a 1-byte/2-byte hash-size toggle — on Save calls `setContactPath()` and echoes the result to Terminal. Reset Path calls `resetContactPath()` directly and echoes a confirmation.
+**ScreenRepeaters popup:** Tapping a row shows a 5-button action popup (auto-height via `LV_SIZE_CONTENT`): Admin Login, Set Path, Reset Path (orange), Delete Repeater (red), Close. Admin Login opens a password-textarea dialog with a **Remember password** tickbox — on confirm calls `sendRepeaterLogin()` and `ScreenTerminal::setAdminTarget()` so `/repadmin` picks up the target immediately, and seals or forgets the password via `repeaters::setAdminPassword()`. A remembered password is pre-filled and the box pre-ticked, so login is one keypress; untick and log in to forget it. Set Path opens a hex-input dialog with a 1-byte/2-byte hash-size toggle — on Save calls `setContactPath()` and echoes the result to Terminal. Reset Path calls `resetContactPath()` directly and echoes a confirmation.
 
 **ScreenContacts popup:** Same Set Path dialog and working Reset Path as ScreenRepeaters. Popup also uses `LV_SIZE_CONTENT` for auto-height.
 
 **SD card storage** — `/ops/` directory on the SD card acts as a reflash-proof backup:
 - `/ops/contacts.json` — full contact archive (ArduinoJson 7, written on every `contacts::save()`)
-- `/ops/repeaters.json` — repeater archive; includes `"pubKey64"` (64 hex chars) for full 32-byte key; field is optional for backward compatibility
+- `/ops/repeaters.json` — repeater archive; includes `"pubKey64"` (64 hex chars) for full 32-byte key; field is optional for backward compatibility. `"pwEnc"` (184 hex chars, optional) is a remembered admin password sealed with AES-256-GCM — see `docs/STORED_SECRETS.md`
 - `/ops/settings.json` — config backup (written on every `config::save()`)
 - `/ops/identity.bin`  — raw copy of LittleFS `/mesh/self.id` (128 bytes: pub_key[32] + prv_key[64] + name[32]); restored to LittleFS on boot if missing
 - `/ops/msgs/<tag>.log` — per-channel/DM message history; one compact JSON line per message; written when `cfg.saveMsgs` is true; tag is channel name or `DM_<contactName>` for direct messages
@@ -208,5 +209,6 @@ The merged binary is required for first-time flash or full recovery. The app-onl
 ## Security
 
 - Report vulnerabilities privately to maintainers, not in public issues
+- Secrets that get written to the SD card go through `ops::crypto` — never in the clear. Read `docs/STORED_SECRETS.md` before adding one; in particular, never put key material in `ops::Config`, which is mirrored to `/ops/settings.json` on the card.
 - The CI security audit workflow scans incoming PRs for suspicious patterns (binary files, workflow modifications, credential leaks, new dependencies)
 - **Never commit secrets, tokens, or API keys** — even in test code

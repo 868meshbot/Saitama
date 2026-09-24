@@ -47,6 +47,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Backup & Restore",     // TR_BACKUP
         "Return to Launcher",   // TR_RETURN
         "Language",             // TR_LANGUAGE
+        "Storage Password",     // TR_STORAGE_PW
         "On",                   // TR_ON
         "Off",                  // TR_OFF
     },
@@ -84,6 +85,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Backup & Ripristino",
         "Torna al Launcher",
         "Lingua",
+        "Password Archivio",
         "Attivo",
         "Inattivo",
     },
@@ -121,6 +123,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Sauvegarde & Restaur.",
         "Retour Launcher",
         "Langue",
+        "Mot de Passe Stockage",
         "Actif",
         "Inactif",
     },
@@ -158,6 +161,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Sicherung & Wiederherst.",
         "Zurueck Launcher",
         "Sprache",
+        "Speicher-Passwort",
         "Ein",
         "Aus",
     },
@@ -195,6 +199,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Copia & Restauracion",
         "Volver Launcher",
         "Idioma",
+        "Contrasena Almacen",
         "Activo",
         "Inactivo",
     },

@@ -12,6 +12,7 @@
 #include "utils/Log.h"
 #include "utils/Config.h"
 #include "utils/Contacts.h"
+#include "utils/Crypto.h"
 #include "utils/Repeaters.h"
 #include "utils/SDCard.h"
 #include "utils/Sound.h"
@@ -41,6 +42,8 @@ void setup() {
     // 3) Load persistent config and contacts from NVS (falls back to SD if NVS empty)
     ops::config::init();
     ops::contacts::init();
+    // Storage key must exist before repeaters::init() loads sealed secrets.
+    ops::crypto::init();
     ops::repeaters::init();
 
     // Apply saved keyboard backlight state on boot

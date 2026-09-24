@@ -39,6 +39,8 @@
 #include <SD.h>
 #include "../mesh/MeshService.h"
 #include "../mesh/Fhss.h"
+#include "../utils/Crypto.h"
+#include "../utils/Repeaters.h"
 #include "../hardware/Board.h"
 #include "../utils/GpsMgr.h"
 #include "../version.h"
@@ -365,6 +367,12 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_LOCATION),
             cfg.locationSharing ? on : off, 17, cfg.locationSharing ? ROW_ON : ROW_OFF);
     _addRow(_list, LV_SYMBOL_DRIVE, lang::tr(lang::TR_BACKUP),      "", 30);
+    // Flag the shipped default in the list itself — a stored secret is only
+    // as private as this password, and the default is published.
+    bool pwDefault = ops::crypto::storagePasswordIsDefault();
+    _addRow(_list, LV_SYMBOL_KEYBOARD, lang::tr(lang::TR_STORAGE_PW),
+            pwDefault ? "Default" : "Set", 37,
+            pwDefault ? ROW_OFF : ROW_ON);
     {
         uint8_t li = cfg.uiLanguage < lang::LANG_COUNT ? cfg.uiLanguage : 0;
         _addRow(_list, LV_SYMBOL_FILE, lang::tr(lang::TR_LANGUAGE), lang::kLangNames[li], 36);
@@ -3552,6 +3560,229 @@ static void _openRadioModeDialog() {
     _rmRefreshChecks();
 }
 
+// ── Storage Password dialog ───────────────────────────────────────────
+// Changes the password that protects secrets written to the SD card (today:
+// remembered repeater admin passwords). Changing it re-encrypts every stored
+// secret in one pass — see ops::crypto for why the new password is persisted
+// before that pass rather than after.
+
+struct StoragePwCtx {
+    lv_obj_t* modal;
+    lv_obj_t* curTa;
+    lv_obj_t* newTa;
+    lv_obj_t* cfmTa;
+    lv_obj_t* status;
+};
+static StoragePwCtx s_spCtx;
+
+static void _spClose()
+{
+    if (s_spCtx.modal) lv_obj_del_async(s_spCtx.modal);   // child handler deletes an ancestor
+    s_spCtx.modal = nullptr;
+    s_spCtx.curTa = s_spCtx.newTa = s_spCtx.cfmTa = s_spCtx.status = nullptr;
+    ScreenSettings::show();   // redraw the list: the row shows Default vs Set
+}
+
+static void _spSetStatus(const char* msg, lv_color_t colour)
+{
+    if (!s_spCtx.status) return;
+    lv_label_set_text(s_spCtx.status, msg);
+    lv_obj_set_style_text_color(s_spCtx.status, colour, 0);
+}
+
+static void _onSPExit(lv_event_t* /*e*/) { _spClose(); }
+
+static void _onSPKey(lv_event_t* e)
+{
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC) _spClose();
+}
+
+static void _onSPSave(lv_event_t* /*e*/)
+{
+    if (!s_spCtx.curTa || !s_spCtx.newTa || !s_spCtx.cfmTa) return;
+
+    const char* cur = lv_textarea_get_text(s_spCtx.curTa);
+    const char* nw  = lv_textarea_get_text(s_spCtx.newTa);
+    const char* cfm = lv_textarea_get_text(s_spCtx.cfmTa);
+    if (!cur) cur = "";
+    if (!nw)  nw  = "";
+    if (!cfm) cfm = "";
+
+    if (!ops::crypto::ready()) {
+        _spSetStatus("Storage key unavailable.", theme::RED);
+        return;
+    }
+    if (!ops::crypto::matchesStoragePassword(cur)) {
+        _spSetStatus("Current password is wrong.", theme::RED);
+        return;
+    }
+    size_t nlen = strlen(nw);
+    if (nlen < ops::crypto::PASSWORD_MIN) {
+        _spSetStatus("New password: 4 characters minimum.", theme::RED);
+        return;
+    }
+    if (nlen > ops::crypto::PASSWORD_MAX) {
+        _spSetStatus("New password is too long.", theme::RED);
+        return;
+    }
+    if (strcmp(nw, cfm) != 0) {
+        _spSetStatus("New passwords do not match.", theme::RED);
+        return;
+    }
+    if (strcmp(nw, cur) == 0) {
+        _spSetStatus("That is already the password.", theme::TEXT_MUTED);
+        return;
+    }
+
+    if (!ops::crypto::beginRekey(cur, nw)) {
+        _spSetStatus("Could not save new password.", theme::RED);
+        return;
+    }
+    // beginRekey() has already persisted the new password, so this pass must
+    // run and endRekey() must be reached on every path from here.
+    int lost = 0;
+    int done = ops::repeaters::rekeyAdminPasswords(&lost);
+    ops::crypto::endRekey();
+
+    OPS_LOG("Settings", "Storage password changed: %d re-encrypted, %d lost", done, lost);
+
+    // Stay open and report. A count of forgotten secrets is not something to
+    // flash past on the way back to the settings list.
+    char msg[96];
+    if (lost > 0)
+        snprintf(msg, sizeof(msg),
+                 "Changed. %d re-encrypted, %d could not be read and were forgotten.",
+                 done, lost);
+    else
+        snprintf(msg, sizeof(msg), "Changed. %d stored password(s) re-encrypted.", done);
+    _spSetStatus(msg, lost > 0 ? theme::ORANGE : theme::GREEN);
+
+    lv_textarea_set_text(s_spCtx.curTa, "");
+    lv_textarea_set_text(s_spCtx.newTa, "");
+    lv_textarea_set_text(s_spCtx.cfmTa, "");
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(s_spCtx.curTa);
+}
+
+static void _openStoragePwDialog()
+{
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_spCtx = StoragePwCtx{};
+    s_spCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onSPKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 300, 218);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 6, 0);
+    lv_obj_set_style_pad_row(panel, 4, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, lang::tr(lang::TR_STORAGE_PW));
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 286);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note,
+        "Encrypts passwords saved to the SD card. Protects a lost card, "
+        "not a lost device.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    auto makeTa = [&](const char* placeholder) {
+        lv_obj_t* ta = lv_textarea_create(panel);
+        lv_obj_set_size(ta, 286, 26);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_password_mode(ta, true);
+        lv_textarea_set_max_length(ta, (uint32_t)ops::crypto::PASSWORD_MAX);
+        lv_textarea_set_placeholder_text(ta, placeholder);
+        lv_obj_set_style_bg_color(ta, theme::BG, 0);
+        lv_obj_set_style_text_color(ta, theme::TEXT, 0);
+        lv_obj_set_style_border_color(ta, theme::BORDER, 0);
+        lv_obj_set_style_border_width(ta, 1, 0);
+        lv_obj_set_style_radius(ta, 4, 0);
+        lv_obj_set_style_pad_all(ta, 3, 0);
+        lv_obj_set_style_text_font(ta, &lv_font_montserrat_10, 0);
+        lv_obj_add_event_cb(ta, _onSPKey, LV_EVENT_KEY, nullptr);
+        return ta;
+    };
+    s_spCtx.curTa = makeTa("current password");
+    s_spCtx.newTa = makeTa("new password");
+    s_spCtx.cfmTa = makeTa("confirm new password");
+    // Enter on the last field submits, so the whole dialog is keyboard-only.
+    lv_obj_add_event_cb(s_spCtx.cfmTa, _onSPSave, LV_EVENT_READY, nullptr);
+
+    s_spCtx.status = lv_label_create(panel);
+    lv_obj_set_width(s_spCtx.status, 286);
+    lv_label_set_long_mode(s_spCtx.status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_spCtx.status, &lv_font_montserrat_10, 0);
+    if (ops::crypto::storagePasswordIsDefault())
+        _spSetStatus("Currently the shipped default.", theme::TEXT_MUTED);
+    else
+        _spSetStatus("", theme::TEXT_MUTED);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 286, 28);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 100, 24);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onSPSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onSPKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Change");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 100, 24);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onSPExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onSPKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Cancel");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(s_spCtx.curTa);
+}
+
 // ── CPU Governor dropdown dialog ──────────────────────────────────────
 
 struct CpuGovCtx { lv_obj_t* modal; lv_obj_t* dd; };
@@ -3823,6 +4054,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 29:  // CPU Governor → dropdown dialog
             _openCpuGovDialog();
+            return;
+
+        case 37:  // Storage Password → change dialog
+            _openStoragePwDialog();
             return;
 
         case 30:  // Backup & Restore

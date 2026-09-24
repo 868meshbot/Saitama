@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Repeaters.h"
+#include "Crypto.h"
 #include "SDCard.h"
 #include "Log.h"
 #include <Preferences.h>
@@ -41,6 +42,13 @@ static void _saveToSD() {
         for (int b = 0; b < 32; b++)
             snprintf(fullHex + b * 2, 3, "%02X", s_reps[i].pubKey[b]);
         obj["pubKey64"] = fullHex;
+
+        // Sealed admin password. Ciphertext only — see utils/Crypto.h.
+        if (s_reps[i].hasAdminPw) {
+            char pwHex[crypto::BLOB_HEX_LEN] = {};
+            crypto::toHex(s_reps[i].adminPwEnc, crypto::BLOB_LEN, pwHex, sizeof(pwHex));
+            obj["pwEnc"] = pwHex;
+        }
 
         if (s_reps[i].outPathValid && s_reps[i].outPathLen != 0xFF) {
             obj["pathLen"] = s_reps[i].outPathLen;
@@ -94,6 +102,12 @@ static bool _loadFromSD() {
                 r.pubKey[b] = (uint8_t)strtol(hb, nullptr, 16);
             }
         }
+        r.hasAdminPw = false;
+        memset(r.adminPwEnc, 0, sizeof(r.adminPwEnc));
+        const char* pwHex = obj["pwEnc"] | "";
+        if (pwHex[0])
+            r.hasAdminPw = crypto::fromHex(pwHex, r.adminPwEnc, crypto::BLOB_LEN);
+
         r.outPathValid = false;
         r.outPathLen   = 0xFF;
         memset(r.outPath, 0, sizeof(r.outPath));
@@ -254,9 +268,17 @@ void repeaters::add(const Repeater& r)
     int idx = -1;
     findByKey(r.pubKeyPrefix, &idx);
     if (idx >= 0) {
-        bool fav = s_reps[idx].favourite;
+        // A live advert arrives as a freshly built struct, so anything the
+        // user set locally has to be carried across by hand or the next
+        // advert silently wipes it.
+        bool    fav   = s_reps[idx].favourite;
+        bool    hasPw = s_reps[idx].hasAdminPw;
+        uint8_t pwEnc[crypto::BLOB_LEN];
+        memcpy(pwEnc, s_reps[idx].adminPwEnc, sizeof(pwEnc));
         s_reps[idx] = r;
-        s_reps[idx].favourite = fav;
+        s_reps[idx].favourite  = fav;
+        s_reps[idx].hasAdminPw = hasPw;
+        memcpy(s_reps[idx].adminPwEnc, pwEnc, sizeof(pwEnc));
         OPS_LOG("Repeaters", "Updated: %s", r.name);
     } else if (s_count < CAPACITY) {
         s_reps[s_count++] = r;
@@ -322,6 +344,73 @@ void repeaters::setPath(int idx, uint8_t pathLen, const uint8_t* path)
         memset(s_reps[idx].outPath, 0, 64);
     save();
     OPS_LOG("Repeaters", "Path saved: %s len=%d", s_reps[idx].name, pathLen);
+}
+
+// ── Remembered admin passwords ─────────────────────────────────────
+
+bool repeaters::hasAdminPassword(int idx)
+{
+    if (idx < 0 || idx >= s_count) return false;
+    return s_reps[idx].hasAdminPw;
+}
+
+bool repeaters::setAdminPassword(int idx, const char* plain)
+{
+    if (idx < 0 || idx >= s_count) return false;
+
+    if (!plain || !plain[0]) {
+        if (!s_reps[idx].hasAdminPw) return true;   // already forgotten
+        s_reps[idx].hasAdminPw = false;
+        memset(s_reps[idx].adminPwEnc, 0, sizeof(s_reps[idx].adminPwEnc));
+        save();
+        OPS_LOG("Repeaters", "Admin password forgotten: %s", s_reps[idx].name);
+        return true;
+    }
+
+    uint8_t blob[crypto::BLOB_LEN];
+    if (!crypto::seal(plain, s_reps[idx].pubKeyPrefix, 4, blob)) {
+        OPS_LOG("Repeaters", "Seal failed for %s", s_reps[idx].name);
+        return false;
+    }
+    memcpy(s_reps[idx].adminPwEnc, blob, sizeof(blob));
+    s_reps[idx].hasAdminPw = true;
+    save();
+    OPS_LOG("Repeaters", "Admin password stored: %s", s_reps[idx].name);
+    return true;
+}
+
+bool repeaters::getAdminPassword(int idx, char* out, size_t outMax)
+{
+    if (!out || outMax == 0) return false;
+    out[0] = '\0';
+    if (idx < 0 || idx >= s_count || !s_reps[idx].hasAdminPw) return false;
+    return crypto::unseal(s_reps[idx].adminPwEnc, s_reps[idx].pubKeyPrefix, 4,
+                          out, outMax);
+}
+
+int repeaters::rekeyAdminPasswords(int* outLost)
+{
+    int done = 0, lost = 0;
+    for (int i = 0; i < s_count; i++) {
+        if (!s_reps[i].hasAdminPw) continue;
+        char plain[crypto::SECRET_MAX] = {};
+        // unseal() still uses the old key here; seal() already uses the new
+        // one (see crypto::beginRekey), so one pass re-encrypts the record.
+        if (!crypto::unseal(s_reps[i].adminPwEnc, s_reps[i].pubKeyPrefix, 4,
+                            plain, sizeof(plain)) ||
+            !crypto::seal(plain, s_reps[i].pubKeyPrefix, 4, s_reps[i].adminPwEnc)) {
+            s_reps[i].hasAdminPw = false;
+            memset(s_reps[i].adminPwEnc, 0, sizeof(s_reps[i].adminPwEnc));
+            lost++;
+            OPS_LOG("Repeaters", "Re-key lost password for %s", s_reps[i].name);
+        } else {
+            done++;
+        }
+        memset(plain, 0, sizeof(plain));
+    }
+    if (done || lost) save();
+    if (outLost) *outLost = lost;
+    return done;
 }
 
 }  // namespace ops
