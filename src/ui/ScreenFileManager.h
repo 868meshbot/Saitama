@@ -9,6 +9,12 @@ namespace ops { namespace ui {
 class ScreenFileManager {
 public:
     static void show();
+    // Image-picker mode for the Pic Viewer: lists only folders and
+    // .jpg/.jpeg/.png, tapping an image opens it, back returns to the viewer.
+    // Remembers the last folder browsed.
+    static void showPicker();
+    // Re-shows the current folder and mode (used when returning from a viewer).
+    static void resume();
 
 private:
     // LVGL objects (rebuilt on each directory change)
@@ -20,6 +26,7 @@ private:
     static lv_obj_t* _deleteBtn;
     static lv_obj_t* _renameBtn;
     static lv_obj_t* _openBtn;
+    static lv_obj_t* _openLbl;
     static lv_obj_t* _viewScreen;
     static lv_obj_t* s_renameOverlay;   // modal rename dialog (child of _screen)
     static lv_obj_t* s_renameInput;     // textarea inside the dialog
@@ -28,6 +35,8 @@ private:
     static constexpr int MAX_ENTRIES = 64;
     static char    s_curPath[128];
     static char    s_clipboard[128];     // empty = nothing copied
+    static bool    s_pickMode;           // true = image picker for Pic Viewer
+    static char    s_pickPath[128];      // last folder browsed in picker mode
     static char    s_entries[MAX_ENTRIES][64];
     static bool    s_isDir[MAX_ENTRIES];
     static size_t  s_sizes[MAX_ENTRIES];

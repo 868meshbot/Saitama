@@ -16,6 +16,7 @@
 
 #include "ScreenFileManager.h"
 #include "ScreenLauncher.h"
+#include "ScreenPicViewer.h"
 #include "Theme.h"
 #include "../utils/SDCard.h"
 #include "../utils/Log.h"
@@ -44,12 +45,15 @@ lv_obj_t* ScreenFileManager::_pasteBtn     = nullptr;
 lv_obj_t* ScreenFileManager::_deleteBtn    = nullptr;
 lv_obj_t* ScreenFileManager::_renameBtn    = nullptr;
 lv_obj_t* ScreenFileManager::_openBtn      = nullptr;
+lv_obj_t* ScreenFileManager::_openLbl      = nullptr;
 lv_obj_t* ScreenFileManager::_viewScreen   = nullptr;
 lv_obj_t* ScreenFileManager::s_renameOverlay = nullptr;
 lv_obj_t* ScreenFileManager::s_renameInput  = nullptr;
 
 char    ScreenFileManager::s_curPath[128]                    = "/";
 char    ScreenFileManager::s_clipboard[128]                  = {};
+bool    ScreenFileManager::s_pickMode                        = false;
+char    ScreenFileManager::s_pickPath[128]                   = "/";
 char    ScreenFileManager::s_entries[MAX_ENTRIES][64]        = {};
 bool    ScreenFileManager::s_isDir[MAX_ENTRIES]              = {};
 size_t  ScreenFileManager::s_sizes[MAX_ENTRIES]              = {};
@@ -85,6 +89,7 @@ static void fmtSize(size_t bytes, char* buf, size_t bufSz)
 void ScreenFileManager::show()
 {
     // Reset to root on fresh entry
+    s_pickMode = false;
     strncpy(s_curPath, "/", sizeof(s_curPath));
     s_clipboard[0]   = '\0';
     s_selectedIdx    = -1;
@@ -94,6 +99,22 @@ void ScreenFileManager::show()
     _screen = nullptr;
     _buildScreen();
     if (old) lv_obj_del(old);
+}
+
+// ── showPicker() ─────────────────────────────────────────────────────────────
+void ScreenFileManager::showPicker()
+{
+    s_pickMode = true;
+    strncpy(s_curPath, s_pickPath, sizeof(s_curPath) - 1);
+    s_curPath[sizeof(s_curPath) - 1] = '\0';
+    s_selectedIdx = -1;
+    _rebuild();
+}
+
+// ── resume() ─────────────────────────────────────────────────────────────────
+void ScreenFileManager::resume()
+{
+    _rebuild();
 }
 
 // ── _scanDir() ────────────────────────────────────────────────────────────────
@@ -122,6 +143,10 @@ void ScreenFileManager::_scanDir()
         base = base ? base + 1 : full;
 
         if (!base[0] || base[0] == '.') { entry.close(); continue; }
+        if (s_pickMode && !entry.isDirectory() && !ScreenPicViewer::isImageFile(base)) {
+            entry.close();
+            continue;
+        }
 
         strncpy(s_entries[s_entryCount], base, sizeof(s_entries[0]) - 1);
         s_entries[s_entryCount][sizeof(s_entries[0]) - 1] = '\0';
@@ -172,7 +197,9 @@ void ScreenFileManager::_updateActionBtns()
     bool hasSel  = (s_selectedIdx >= 0 && s_selectedIdx < s_entryCount
                     && !s_isDir[s_selectedIdx]);
     bool hasClip = (s_clipboard[0] != '\0' && sdcard::isMounted());
-    bool canOpen = hasSel && _isViewable(s_entries[s_selectedIdx]);
+    bool isImage = hasSel && ScreenPicViewer::isImageFile(s_entries[s_selectedIdx]);
+    bool canOpen = hasSel && (_isViewable(s_entries[s_selectedIdx]) || isImage);
+    if (_openLbl) lv_label_set_text(_openLbl, isImage ? "View" : "Open");
 
     auto setEn = [](lv_obj_t* btn, bool en) {
         if (!btn) return;
@@ -251,6 +278,10 @@ void ScreenFileManager::_buildPasteName(const char* src, const char* dstDir,
 void ScreenFileManager::_buildScreen()
 {
     _scanDir();
+    if (s_pickMode) {
+        strncpy(s_pickPath, s_curPath, sizeof(s_pickPath) - 1);
+        s_pickPath[sizeof(s_pickPath) - 1] = '\0';
+    }
 
     _screen = lv_obj_create(nullptr);
     lv_obj_set_size(_screen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -282,7 +313,8 @@ void ScreenFileManager::_buildScreen()
     lv_obj_add_event_cb(homeBtn, _onHomeClick, LV_EVENT_CLICKED, nullptr);
     lv_group_remove_obj(homeBtn);
     lv_obj_t* homeLbl = lv_label_create(homeBtn);
-    lv_label_set_text(homeLbl, LV_SYMBOL_HOME);
+    // In picker mode this goes back to the Pic Viewer rather than home.
+    lv_label_set_text(homeLbl, s_pickMode ? LV_SYMBOL_LEFT : LV_SYMBOL_HOME);
     lv_obj_set_style_text_color(homeLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(homeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(homeLbl);
@@ -353,7 +385,7 @@ void ScreenFileManager::_buildScreen()
         lv_group_focus_obj(_listBox);
     }
     lv_obj_add_event_cb(_listBox, [](lv_event_t* e) {
-        if (lv_event_get_key(e) == LV_KEY_ESC) ScreenLauncher::show();
+        if (lv_event_get_key(e) == LV_KEY_ESC) _onHomeClick(e);
     }, LV_EVENT_KEY, nullptr);
 
     // ".." row — shown when not at root
@@ -424,7 +456,9 @@ void ScreenFileManager::_buildScreen()
             s_isDir[i] ? theme::ACCENT : theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(iconLbl, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_align(iconLbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_text(iconLbl, s_isDir[i] ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE);
+        lv_label_set_text(iconLbl, s_isDir[i] ? LV_SYMBOL_DIRECTORY
+                                 : ScreenPicViewer::isImageFile(s_entries[i]) ? LV_SYMBOL_IMAGE
+                                 : LV_SYMBOL_FILE);
 
         // Name label: remaining width between the icon column and size column.
         lv_obj_t* nameLbl = lv_label_create(row);
@@ -486,13 +520,24 @@ void ScreenFileManager::_buildScreen()
         return btn;
     };
 
-    // 5 buttons × 60 px + 4 gaps × 3 px + 8 px side pad = 320 ✓
-    // x positions: Copy=4, Paste=67, Delete=130, Rename=193, Open=256
-    _copyBtn   = makeActBtn("Copy",   4,   60, _onCopyClick,   theme::PRIMARY);
-    _pasteBtn  = makeActBtn("Paste",  67,  60, _onPasteClick,  theme::PRIMARY);
-    _deleteBtn = makeActBtn("Delete", 130, 60, _onDeleteClick, theme::RED);
-    _renameBtn = makeActBtn("Rename", 193, 60, _onRenameClick, theme::ORANGE);
-    _openBtn   = makeActBtn("Open",   256, 60, _onOpenClick,   theme::PRIMARY);
+    if (s_pickMode) {
+        // Picker: no file operations — tapping an image opens it.
+        _copyBtn = _pasteBtn = _deleteBtn = _renameBtn = _openBtn = _openLbl = nullptr;
+        lv_obj_t* hint = lv_label_create(actBar);
+        lv_label_set_text(hint, LV_SYMBOL_IMAGE "  Tap a JPG or PNG to view it");
+        lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
+        lv_obj_center(hint);
+    } else {
+        // 5 buttons × 60 px + 4 gaps × 3 px + 8 px side pad = 320 ✓
+        // x positions: Copy=4, Paste=67, Delete=130, Rename=193, Open=256
+        _copyBtn   = makeActBtn("Copy",   4,   60, _onCopyClick,   theme::PRIMARY);
+        _pasteBtn  = makeActBtn("Paste",  67,  60, _onPasteClick,  theme::PRIMARY);
+        _deleteBtn = makeActBtn("Delete", 130, 60, _onDeleteClick, theme::RED);
+        _renameBtn = makeActBtn("Rename", 193, 60, _onRenameClick, theme::ORANGE);
+        _openBtn   = makeActBtn("Open",   256, 60, _onOpenClick,   theme::PRIMARY);
+        _openLbl   = lv_obj_get_child(_openBtn, 0);   // "Open" / "View"
+    }
 
     _updateActionBtns();
 
@@ -620,7 +665,8 @@ void ScreenFileManager::_openViewer(const char* path)
 
 void ScreenFileManager::_onHomeClick(lv_event_t*)
 {
-    ScreenLauncher::show();
+    if (s_pickMode) ScreenPicViewer::show();
+    else            ScreenLauncher::show();
 }
 
 void ScreenFileManager::_onMountClick(lv_event_t*)
@@ -668,6 +714,10 @@ void ScreenFileManager::_onRowClick(lv_event_t* e)
         strncpy(s_curPath, newPath, sizeof(s_curPath) - 1);
         s_curPath[sizeof(s_curPath) - 1] = '\0';
         _rebuild();
+    } else if (s_pickMode) {
+        char path[192];
+        _getFullPath((int)idx, path, sizeof(path));
+        ScreenPicViewer::openFile(path, false);
     } else {
         // Toggle file selection
         _selectRow((s_selectedIdx == (int)idx) ? -1 : (int)idx);
@@ -733,10 +783,14 @@ void ScreenFileManager::_onOpenClick(lv_event_t*)
 {
     if (s_selectedIdx < 0 || s_selectedIdx >= s_entryCount) return;
     if (s_isDir[s_selectedIdx]) return;
-    if (!_isViewable(s_entries[s_selectedIdx])) return;
 
     char path[192];
     _getFullPath(s_selectedIdx, path, sizeof(path));
+    if (ScreenPicViewer::isImageFile(s_entries[s_selectedIdx])) {
+        ScreenPicViewer::openFile(path, true);
+        return;
+    }
+    if (!_isViewable(s_entries[s_selectedIdx])) return;
     _openViewer(path);
 }
 

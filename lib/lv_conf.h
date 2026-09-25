@@ -89,6 +89,9 @@
 
 /* Image decoders */
 #define LV_USE_PNG 1
+/* Compiles the bundled TJpgDec, which the Pic Viewer calls directly for
+ * scale-on-decode JPEG rendering (also registers LVGL's .sjpg/.jpg decoder). */
+#define LV_USE_SJPG 1
 
 /* Disable platform-specific draw backends (not available on ESP32-S3) */
 #define LV_USE_DRAW_ARM2D 0
