@@ -31,6 +31,7 @@
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
+#include "../utils/LoopStats.h"
 #include "../utils/Sound.h"
 #include "../utils/Keymap.h"
 #include "../utils/SDCard.h"
@@ -658,11 +659,11 @@ void init() {
 
     s_lastActivityMs = millis();
 
-    // Configure GPIO wakeup sources for light sleep (set once; persist across cycles).
-    // Only GPIO0 (trackball click, active-LOW) and GPIO45 (LoRa DIO1, active-HIGH) wake.
-    // Touch INT and KB_INT are intentionally excluded — only GPIO0 wakes the user.
+    // Light-sleep wake source for the user: GPIO0 (trackball click, active-LOW).
+    // Touch INT and KB_INT are intentionally excluded. LoRa DIO1 is armed per
+    // sleep by MeshService::lightSleep() — MeshCore's edge-triggered ISR on
+    // that pin would otherwise override a level wake set here once at boot.
     gpio_wakeup_enable(GPIO_NUM_0,  GPIO_INTR_LOW_LEVEL);   // trackball click
-    gpio_wakeup_enable(GPIO_NUM_45, GPIO_INTR_HIGH_LEVEL);  // LoRa DIO1
     esp_sleep_enable_gpio_wakeup();
 
     OPS_LOG("UI", "Display ready (%dx%d)", OPS_SCREEN_W, OPS_SCREEN_H);
@@ -1094,7 +1095,9 @@ void tick() {
     static uint32_t lastLvgl = 0;
     if (now - lastLvgl >= 33UL) {
         lastLvgl = now;
+        ops::loopstats::begin(ops::loopstats::UI_DRAW);
         lv_timer_handler();
+        ops::loopstats::end(ops::loopstats::UI_DRAW);
     }
 
     // Light sleep only when the backlight is fully off (s_screenOff).
@@ -1102,9 +1105,9 @@ void tick() {
     // LEDC PWM peripheral uses APB clock which is gated in light sleep —
     // the backlight output would drop LOW, making the screensaver invisible.
     // When s_screenOff is true, backlight is already 0 so the gate is harmless.
-    if (s_screenOff && !ops::MeshService::instance().isTxBusy()) {
-        esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);  // 60s heartbeat
-        esp_light_sleep_start();
+    if (s_screenOff) {
+        if (ops::MeshService::instance().lightSleep(60000))  // 60 s heartbeat
+            ops::loopstats::skipGap();
     }
 }
 

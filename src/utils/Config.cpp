@@ -65,7 +65,8 @@ static void setDefaults(Config& c) {
     c.scopeTag[0]      = '\0';
     c.loraDutyCycle    = false;
     c.radioPowerMode   = RADIO_POWER_CONTINUOUS;
-    c.rxBoost          = false;
+    c.rxBoostRev       = 1;
+    c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
     c.uiLanguage       = 0;      // default English
@@ -122,6 +123,7 @@ static void _saveToSD() {
     doc["loraDC"]       = s_cfg.loraDutyCycle;
     doc["radioPwrMode"] = s_cfg.radioPowerMode;
     doc["rxBoost"]      = s_cfg.rxBoost;
+    doc["rxBoostRev"]   = s_cfg.rxBoostRev;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
@@ -202,7 +204,10 @@ static bool _loadFromSD() {
     // loraDutyCycle bool so a restored backup keeps its power behaviour.
     s_cfg.radioPowerMode = (uint8_t)(doc["radioPwrMode"] |
         (s_cfg.loraDutyCycle ? (int)RADIO_POWER_DUTY_CYCLE : (int)RADIO_POWER_CONTINUOUS));
-    s_cfg.rxBoost       = doc["rxBoost"]  | false;
+    s_cfg.rxBoost       = doc["rxBoost"]  | true;
+    // A settings.json written before boost defaulted on stored false by default.
+    if ((doc["rxBoostRev"] | 0) < 1) s_cfg.rxBoost = true;
+    s_cfg.rxBoostRev    = 1;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);
@@ -275,6 +280,15 @@ void config::init() {
                 if (loaded < offsetof(Config, radioPowerMode) + sizeof(s_cfg.radioPowerMode)) {
                     s_cfg.radioPowerMode = s_cfg.loraDutyCycle
                         ? RADIO_POWER_DUTY_CYCLE : RADIO_POWER_CONTINUOUS;
+                    migrated = true;
+                }
+                // rxBoost used to default off while the build flag turned the
+                // hardware on at boot, so a stored false was never a real
+                // choice. Switch it on once for blobs that predate rxBoostRev.
+                if (loaded < offsetof(Config, rxBoostRev) + sizeof(s_cfg.rxBoostRev)
+                    || s_cfg.rxBoostRev < 1) {
+                    s_cfg.rxBoost    = true;
+                    s_cfg.rxBoostRev = 1;
                     migrated = true;
                 }
                 for (int i = 1; i < 10; i++) {

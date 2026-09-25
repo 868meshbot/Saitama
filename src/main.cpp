@@ -10,6 +10,7 @@
 #include "mesh/MeshService.h"
 #include "ui/UIScreen.h"
 #include "utils/Log.h"
+#include "utils/LoopStats.h"
 #include "utils/Config.h"
 #include "utils/Contacts.h"
 #include "utils/Crypto.h"
@@ -22,6 +23,11 @@
 // ── Setup ───────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    // Never block on USB CDC. Once a host has been seen, HWCDC defaults to a
+    // 100 ms write timeout, so every log line stalls the loop (and delays
+    // reading the radio) whenever the port is plugged in but nobody is
+    // reading it. With 0, output is dropped instead when the buffer is full.
+    Serial.setTxTimeoutMs(0);
     delay(500);   // Short settle; ARDUINO_USB_CDC_ON_BOOT=1 means CDC is up at boot
 
     OPS_LOG("main", "Saitama v" OPS_VERSION_STRING " starting");
@@ -90,8 +96,10 @@ void setup() {
 
 // ── Loop ────────────────────────────────────────────────────────────
 void loop() {
-    ops::Board::instance().tick();
-    ops::MeshService::instance().tick();
-    ops::ui::tick();
-    ops::ui::ScreenTerminal::tickSerial();
+    using namespace ops::loopstats;
+    mark();
+    begin(BOARD);     ops::Board::instance().tick();             end(BOARD);
+    begin(MESH);      ops::MeshService::instance().tick();       end(MESH);
+    begin(UI);        ops::ui::tick();                           end(UI);
+    begin(SERIAL_IO); ops::ui::ScreenTerminal::tickSerial();     end(SERIAL_IO);
 }

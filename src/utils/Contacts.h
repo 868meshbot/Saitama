@@ -22,7 +22,21 @@ struct Contact {
     uint8_t  outPathLen;         // 0 = direct neighbour; 0xFF = unknown
     uint8_t  _pathPad[2];
     uint8_t  outPath[64];        // MeshCore out_path bytes (MAX_PATH_SIZE = 64)
+    // When outPath was confirmed (unix time): 0 = unknown age, PATH_AT_PINNED =
+    // set by hand. Appended last so older NVS blobs still load as a prefix.
+    uint32_t pathAt;
 };
+
+// Contact/Repeater::pathAt value for a path the user set by hand — never expires.
+static constexpr uint32_t PATH_AT_PINNED = 0xFFFFFFFFu;
+
+// MeshCore encodes out_path_len as (hashSize-1) << 6 | hopCount. Returns the
+// number of path bytes that encoding covers, or -1 if it would exceed 64.
+inline int outPathByteCount(uint8_t encLen)
+{
+    int bytes = (encLen & 63) * ((encLen >> 6) + 1);
+    return bytes <= 64 ? bytes : -1;
+}
 
 namespace contacts {
     static constexpr int CAPACITY = 250;
@@ -40,8 +54,10 @@ namespace contacts {
     void setUnread(int idx, bool unread);
     void setFavourite(int idx, bool fav);
     void remove(int idx);
-    // Persist learned MeshCore path for a contact. Only saves when path changes.
-    void setPath(int idx, uint8_t pathLen, const uint8_t* path);
+    // Persist a MeshCore path for a contact. pathLen is MeshCore's encoded
+    // out_path_len; learnedAt is when it was confirmed (or PATH_AT_PINNED).
+    // Only saves when the path changes.
+    void setPath(int idx, uint8_t pathLen, const uint8_t* path, uint32_t learnedAt);
     // Clear a contact's path (sets outPathValid=false, outPathLen=0xFF) and persists.
     // Called on direct-send timeout so a reboot does not reload the stale path.
     void clearPath(int idx);

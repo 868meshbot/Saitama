@@ -8,6 +8,7 @@
 #include <SD.h>
 #include <ArduinoJson.h>
 #include <cstring>
+#include <cstddef>
 
 namespace ops {
 
@@ -50,13 +51,15 @@ static void _saveToSD() {
             obj["fk"] = fk;
         }
         if (s_contacts[i].outPathValid && s_contacts[i].outPathLen != 0xFF) {
-            obj["pathLen"] = s_contacts[i].outPathLen;
-            if (s_contacts[i].outPathLen > 0) {
+            obj["pathLen"] = s_contacts[i].outPathLen;   // MeshCore encoding, not a byte count
+            int nb = outPathByteCount(s_contacts[i].outPathLen);
+            if (nb > 0) {
                 char pathHex[129] = {};
-                for (int b = 0; b < s_contacts[i].outPathLen && b < 64; b++)
+                for (int b = 0; b < nb; b++)
                     snprintf(pathHex + b * 2, 3, "%02X", s_contacts[i].outPath[b]);
                 obj["path"] = pathHex;
             }
+            if (s_contacts[i].pathAt) obj["pathAt"] = s_contacts[i].pathAt;
         }
     }
     File f = SD.open("/ops/contacts.json", FILE_WRITE);
@@ -107,22 +110,23 @@ static bool _loadFromSD() {
         c.lon       = obj["lon"]       | (int32_t)0;
         c.outPathValid = false;
         c.outPathLen   = 0xFF;
+        c.pathAt       = 0;
         memset(c.outPath, 0, sizeof(c.outPath));
         if (obj["pathLen"].is<int>()) {
+            // pathLen is MeshCore's encoding ((hashSz-1)<<6 | hops). Files from
+            // before this fix treated it as a byte count and saved 2-byte-hash
+            // paths zeroed — the hex length check below rejects those.
             uint8_t pl = (uint8_t)(int)obj["pathLen"];
-            if (pl <= 64) {
+            int nb = outPathByteCount(pl);
+            const char* ph = obj["path"] | "";
+            if (pl != 0xFF && nb >= 0 && strlen(ph) == (size_t)nb * 2) {
                 c.outPathLen = pl;
-                if (pl > 0) {
-                    const char* ph = obj["path"] | "";
-                    size_t phLen = strlen(ph);
-                    if (phLen == (size_t)pl * 2) {
-                        for (int b = 0; b < pl; b++) {
-                            char hb[3] = { ph[b * 2], ph[b * 2 + 1], '\0' };
-                            c.outPath[b] = (uint8_t)strtol(hb, nullptr, 16);
-                        }
-                    }
+                for (int b = 0; b < nb; b++) {
+                    char hb[3] = { ph[b * 2], ph[b * 2 + 1], '\0' };
+                    c.outPath[b] = (uint8_t)strtol(hb, nullptr, 16);
                 }
                 c.outPathValid = true;
+                c.pathAt = obj["pathAt"] | (uint32_t)0;
             }
         }
         s_count++;
@@ -285,7 +289,10 @@ void contacts::init()
         int32_t  lon;
     };
     static_assert(sizeof(PrePathContact) == 88, "v2 contact size wrong — check migration");
-    static_assert(sizeof(Contact) == 156, "Contact size changed — add a new migration case");
+    // v4 = Contact before pathAt was appended; identical prefix layout.
+    static constexpr size_t PRE_PATH_AT_SIZE = 156;
+    static_assert(offsetof(Contact, pathAt) == PRE_PATH_AT_SIZE, "pathAt must stay appended last");
+    static_assert(sizeof(Contact) == 160, "Contact size changed — add a new migration case");
 
     Preferences prefs;
     if (prefs.begin("opsct", true)) {
@@ -298,6 +305,9 @@ void contacts::init()
                 size_t blobSz = prefs.getBytesLength(key);
                 if (blobSz == sizeof(Contact)) {
                     prefs.getBytes(key, &s_contacts[i], sizeof(Contact));
+                } else if (blobSz == PRE_PATH_AT_SIZE) {
+                    memset(&s_contacts[i], 0, sizeof(Contact));
+                    prefs.getBytes(key, &s_contacts[i], PRE_PATH_AT_SIZE);
                 } else if (blobSz == sizeof(PrePathContact)) {
                     PrePathContact old{};
                     prefs.getBytes(key, &old, sizeof(PrePathContact));
@@ -401,19 +411,26 @@ void contacts::setFullKey(int idx, const uint8_t* pubKey32)
     OPS_LOG("Contacts", "Full key set: %s", s_contacts[idx].name);
 }
 
-void contacts::setPath(int idx, uint8_t pathLen, const uint8_t* path)
+void contacts::setPath(int idx, uint8_t pathLen, const uint8_t* path, uint32_t learnedAt)
 {
     if (idx < 0 || idx >= s_count) return;
     if (pathLen == 0xFF) return;  // OUT_PATH_UNKNOWN — don't persist
-    // Skip save if nothing changed
-    if (s_contacts[idx].outPathValid && s_contacts[idx].outPathLen == pathLen &&
-        (pathLen == 0 || memcmp(s_contacts[idx].outPath, path, pathLen) == 0)) return;
+    int nb = outPathByteCount(pathLen);   // pathLen is encoded, not a byte count
+    if (nb < 0 || (nb > 0 && !path)) return;
+    bool same = s_contacts[idx].outPathValid && s_contacts[idx].outPathLen == pathLen &&
+                (nb == 0 || memcmp(s_contacts[idx].outPath, path, nb) == 0);
+    // Re-confirming the same path only refreshes its age in RAM; the file is
+    // rewritten on the next real change. A hand-set path is never downgraded.
+    if (same) {
+        if (s_contacts[idx].pathAt != PATH_AT_PINNED || learnedAt == PATH_AT_PINNED)
+            s_contacts[idx].pathAt = learnedAt;
+        return;
+    }
     s_contacts[idx].outPathValid = true;
     s_contacts[idx].outPathLen   = pathLen;
-    if (path && pathLen > 0 && pathLen <= 64)
-        memcpy(s_contacts[idx].outPath, path, pathLen);
-    else
-        memset(s_contacts[idx].outPath, 0, 64);
+    s_contacts[idx].pathAt       = learnedAt;
+    memset(s_contacts[idx].outPath, 0, 64);
+    if (nb > 0) memcpy(s_contacts[idx].outPath, path, nb);
     save();
     OPS_LOG("Contacts", "Path saved: %s len=%d", s_contacts[idx].name, pathLen);
 }
@@ -424,6 +441,7 @@ void contacts::clearPath(int idx)
     if (!s_contacts[idx].outPathValid) return;  // already clear — skip NVS write
     s_contacts[idx].outPathValid = false;
     s_contacts[idx].outPathLen   = 0xFF;
+    s_contacts[idx].pathAt       = 0;
     memset(s_contacts[idx].outPath, 0, sizeof(s_contacts[idx].outPath));
     save();
     OPS_LOG("Contacts", "Path cleared: %s", s_contacts[idx].name);

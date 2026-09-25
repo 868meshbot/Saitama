@@ -227,6 +227,17 @@ public:
     // Live FHSS state for the UI. Safe to call regardless of the active mode.
     FhssStatus fhssStatus() const;
     RadioStats radioStats() const;
+
+    // What the SX1262 is actually set to, read back for the Signal screen.
+    // rxGainReg is register 0x08AC: 0x96 = boosted gain, 0x94 = power saving,
+    // -1 if the read failed.
+    struct RadioDiag {
+        int     rxGainReg;
+        uint8_t sf;
+        float   bwKhz;
+        uint8_t cr;        // 5..8 → 4/5..4/8
+    };
+    RadioDiag radioDiag() const;
     void  setActive(bool active);
     bool  isActive() const;
     float getFreqMHz() const;   // returns actual current value (respects custom override)
@@ -284,6 +295,24 @@ public:
     // True when the SX1262 BUSY pin (GPIO13) is HIGH — TX or command in progress.
     // Checked by UIScreen before entering light sleep to avoid racing the radio.
     bool isTxBusy() const;
+
+    // Light-sleeps for up to maxMs, waking early on a received LoRa packet
+    // (DIO1) or the trackball. Returns false without sleeping while the radio
+    // is transmitting or MeshCore has packets queued to send or process.
+    // The sleep is further capped to half the shortest packet's airtime so a
+    // packet can never be overwritten in the radio while the CPU sleeps.
+    bool lightSleep(uint32_t maxMs);
+
+    // Light-sleep counters for the Signal screen. wakeRadio counts wakes by
+    // LoRa DIO1; rxAfterSleep counts packets that were waiting on wake.
+    struct SleepStats {
+        uint32_t sleeps;
+        uint32_t wakeRadio;
+        uint32_t wakeTimer;
+        uint32_t wakeOther;
+        uint32_t rxAfterSleep;
+    };
+    SleepStats sleepStats() const;
 
 private:
     bool _initialized = false;

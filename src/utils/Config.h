@@ -91,6 +91,9 @@ struct Config {
     //   1 = LoRa duty cycle (hardware RX duty cycle, fixed frequency)
     //   2 = FHSS (frequency hopping; see src/mesh/Fhss.h and docs/FHSS.md)
     uint8_t    radioPowerMode;
+    // Bumped when rxBoost's default changes, so older blobs (where rxBoost was
+    // stored false by default) are switched on once. 1 = boost defaults on.
+    uint8_t    rxBoostRev;
 };
 
 // Values for Config::radioPowerMode.

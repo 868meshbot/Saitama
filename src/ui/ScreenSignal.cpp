@@ -41,6 +41,7 @@
 #include "../hardware/Board.h"
 #include "../version.h"
 #include "../utils/Log.h"
+#include "../utils/LoopStats.h"
 
 #include <lvgl.h>
 #include <cstdio>
@@ -79,6 +80,12 @@ lv_obj_t* ScreenSignal::s_profileLbl  = nullptr;
 lv_obj_t* ScreenSignal::s_heapLbl      = nullptr;
 lv_obj_t* ScreenSignal::s_psramLbl    = nullptr;
 lv_obj_t* ScreenSignal::s_battLbl     = nullptr;
+lv_obj_t* ScreenSignal::s_rxGainLbl   = nullptr;
+lv_obj_t* ScreenSignal::s_modemLbl    = nullptr;
+lv_obj_t* ScreenSignal::s_loopLbl     = nullptr;
+lv_obj_t* ScreenSignal::s_stallLbl    = nullptr;
+lv_obj_t* ScreenSignal::s_whereLbl    = nullptr;
+lv_obj_t* ScreenSignal::s_sleepLbl    = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -256,6 +263,15 @@ void ScreenSignal::_build()
     _addSection(_body, "RADIO CONFIG");
     _addRow(_body, "Freq:",    "--", &s_freqLbl);
     _addRow(_body, "Profile:", "--", &s_profileLbl);
+    _addRow(_body, "Modem:",   "--", &s_modemLbl);
+
+    // ── DIAGNOSTICS — is the radio deaf or starved? ──────────────────
+    _addSection(_body, "DIAGNOSTICS");
+    _addRow(_body, "RX gain:", "--", &s_rxGainLbl);
+    _addRow(_body, "Loop max:", "--", &s_loopLbl);
+    _addRow(_body, "Stalls:",  "--", &s_stallLbl);
+    _addRow(_body, "Where:",   "--", &s_whereLbl);
+    _addRow(_body, "Sleep:",   "--", &s_sleepLbl);
 
     // ── HARDWARE (partly live: heap/PSRAM) ───────────────────────────
     _addSection(_body, "HARDWARE");
@@ -283,7 +299,7 @@ void ScreenSignal::_refresh()
     if (!_screen || lv_scr_act() != _screen) return;
 
     RadioStats st = MeshService::instance().radioStats();
-    char buf[32];
+    char buf[48];
 
     // RSSI
     if (st.lastRssi != 0.0f)
@@ -353,6 +369,55 @@ void ScreenSignal::_refresh()
         else
             snprintf(buf, sizeof(buf), "%s", kProfileNames[p]);
         lv_label_set_text(s_profileLbl, buf);
+    }
+
+    // Diagnostics: RX gain and modem as read back from the SX1262 / RadioLib
+    {
+        MeshService::RadioDiag d = MeshService::instance().radioDiag();
+        const char* gain = (d.rxGainReg == 0x96) ? "Boosted"
+                         : (d.rxGainReg == 0x94) ? "Normal"
+                         : (d.rxGainReg < 0)     ? "read failed"
+                         :                         "unknown";
+        if (d.rxGainReg >= 0) snprintf(buf, sizeof(buf), "%s (0x%02X)", gain, d.rxGainReg);
+        else                  snprintf(buf, sizeof(buf), "%s", gain);
+        lv_label_set_text(s_rxGainLbl, buf);
+        lv_obj_set_style_text_color(s_rxGainLbl,
+            d.rxGainReg == 0x96 ? theme::GREEN : theme::ORANGE, 0);
+
+        snprintf(buf, sizeof(buf), "SF%u BW%g CR4/%u",
+                 (unsigned)d.sf, (double)d.bwKhz, (unsigned)d.cr);
+        lv_label_set_text(s_modemLbl, buf);
+    }
+
+    // Loop gaps: while one exceeds a packet's airtime, a second packet can
+    // overwrite the first in the SX1262 before MeshCore reads it.
+    {
+        uint32_t recent = loopstats::recentMaxMs();
+        snprintf(buf, sizeof(buf), "%lu ms (peak %lu)",
+                 (unsigned long)recent, (unsigned long)loopstats::peakMs());
+        lv_label_set_text(s_loopLbl, buf);
+        lv_obj_set_style_text_color(s_loopLbl, recent > 50 ? theme::ORANGE : theme::TEXT, 0);
+
+        snprintf(buf, sizeof(buf), ">50ms: %lu  >250ms: %lu",
+                 (unsigned long)loopstats::stallsOver50(),
+                 (unsigned long)loopstats::stallsOver250());
+        lv_label_set_text(s_stallLbl, buf);
+
+        // Worst single pass per loop section, last ~10 s. Draw is part of UI.
+        using namespace loopstats;
+        snprintf(buf, sizeof(buf), "Mesh %lu UI %lu (draw %lu) Brd %lu",
+                 (unsigned long)sectionRecentMaxMs(MESH),
+                 (unsigned long)sectionRecentMaxMs(UI),
+                 (unsigned long)sectionRecentMaxMs(UI_DRAW),
+                 (unsigned long)sectionRecentMaxMs(BOARD));
+        lv_label_set_text(s_whereLbl, buf);
+
+        // Screen-off light sleep: what woke us, and packets caught on waking.
+        MeshService::SleepStats ss = MeshService::instance().sleepStats();
+        snprintf(buf, sizeof(buf), "%lu  radio %lu tmr %lu rx %lu",
+                 (unsigned long)ss.sleeps, (unsigned long)ss.wakeRadio,
+                 (unsigned long)ss.wakeTimer, (unsigned long)ss.rxAfterSleep);
+        lv_label_set_text(s_sleepLbl, buf);
     }
 
     // Heap / PSRAM

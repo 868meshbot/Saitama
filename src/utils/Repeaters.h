@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #pragma once
+#include "Contacts.h"   // PATH_AT_PINNED, outPathByteCount()
 #include <Arduino.h>
 #include <cstdint>
 #include "Crypto.h"
@@ -27,6 +28,9 @@ struct Repeater {
     // pubKeyPrefix as additional authenticated data. Written to SD in this
     // form and never in the clear. See utils/Crypto.h for the threat model.
     uint8_t  adminPwEnc[crypto::BLOB_LEN];
+    // When outPath was confirmed (unix time): 0 = unknown age, PATH_AT_PINNED
+    // (Contacts.h) = set by hand. Appended last: NVS blobs are read as a prefix.
+    uint32_t pathAt;
 };
 
 namespace repeaters {
@@ -42,8 +46,10 @@ namespace repeaters {
     void add(const Repeater& r);   // insert or update by pubKeyPrefix
     void setFavourite(int idx, bool fav);
     void remove(int idx);
-    // Persist learned MeshCore path for a repeater. Only saves when path changes.
-    void setPath(int idx, uint8_t pathLen, const uint8_t* path);
+    // Persist a MeshCore path for a repeater. pathLen is MeshCore's encoded
+    // out_path_len; learnedAt is when it was confirmed (or PATH_AT_PINNED).
+    // Only saves when the path changes.
+    void setPath(int idx, uint8_t pathLen, const uint8_t* path, uint32_t learnedAt);
     // Clear a repeater's path (sets outPathValid=false, outPathLen=0xFF) and persists.
     // Called on direct-send timeout so a reboot does not reload the stale path.
     void clearPath(int idx);

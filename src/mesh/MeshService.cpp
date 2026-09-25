@@ -16,6 +16,7 @@
 #include "../utils/Log.h"
 
 #include <Arduino.h>
+#include <algorithm>
 #include <SPI.h>
 #include <LittleFS.h>
 #include <esp_random.h>
@@ -32,6 +33,9 @@
 #include <helpers/ESP32Board.h>
 #include <helpers/radiolib/CustomSX1262.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
+#include <driver/gpio.h>
+#include <esp_sleep.h>
+#include <soc/gpio_reg.h>
 
 // Not in BaseChatMesh.h — defined only in simple_repeater example
 #define REQ_TYPE_GET_NEIGHBOURS 0x06
@@ -147,12 +151,54 @@ static int _b64decode(const char* in, uint8_t* out, int outMax) {
 static OMSBoard                  oms_board;
 static SPIClass                  lora_spi(FSPI);
 static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, lora_spi));
-static CustomSX1262Wrapper       radio_driver(sx1262, oms_board);
+
+// Light sleep vs. MeshCore's DIO1 interrupt
+// ─────────────────────────────────────────
+// The ESP32 can only wake from light sleep on a GPIO *level*, but RadioLib
+// attaches MeshCore's "packet ready" ISR to DIO1 as a *rising edge*, and that
+// edge happens while the CPU is asleep, so the ISR never runs. MeshCore's flag
+// lives in a file-static in RadioLibWrappers.cpp, so it can't be set from
+// here. Instead MeshService::lightSleep() flags s_rxMissedInSleep when it wakes
+// to DIO1 already high in RX mode, and this wrapper reads that packet exactly
+// as RadioLibWrapper::recvRaw() would.
+static volatile bool s_rxMissedInSleep = false;
+static MeshService::SleepStats s_sleepStats = {};
+
+class OpsSX1262Wrapper : public CustomSX1262Wrapper {
+public:
+    OpsSX1262Wrapper(CustomSX1262& radio, mesh::MainBoard& board)
+        : CustomSX1262Wrapper(radio, board) {}
+
+    int recvRaw(uint8_t* bytes, int sz) override {
+        if (s_rxMissedInSleep) {
+            s_rxMissedInSleep = false;
+            if (isInRecvMode() && digitalRead(P_LORA_DIO_1) == HIGH) {
+                s_sleepStats.rxAfterSleep++;
+                int len = _radio->getPacketLength();
+                if (len > 0) {
+                    if (len > sz) len = sz;
+                    if (_radio->readData(bytes, len) == RADIOLIB_ERR_NONE) {
+                        n_recv++;
+                    } else {
+                        len = 0;
+                        n_recv_errors++;
+                    }
+                }
+                _radio->startReceive();
+                return len;
+            }
+        }
+        return CustomSX1262Wrapper::recvRaw(bytes, sz);
+    }
+};
+
+static OpsSX1262Wrapper          radio_driver(sx1262, oms_board);
 static bool                      s_sigGenActive = false;
 static ArduinoMillis             ms_clock;
 static StdRNG                    std_rng;
 static ESP32RTCClock             rtc_clock;
-static StaticPoolPacketManager   pkt_mgr(32);
+static constexpr int             PKT_POOL_SIZE = 32;
+static StaticPoolPacketManager   pkt_mgr(PKT_POOL_SIZE);
 static SimpleMeshTables          mesh_tables;
 
 // ── LoRa duty cycle state ─────────────────────────────────────────
@@ -897,13 +943,14 @@ class OMSMesh : public BaseChatMesh {
         _upsertPeer(contact);
         // Record reverse of the inbound advert path so trace (and sendDirect) can
         // route to this node without needing a prior bidirectional DM exchange.
+        // RAM only: links aren't always symmetric, so a path guessed from an
+        // advert is never saved — only ones confirmed by a path return or ACK.
         if (contact.out_path_len == OUT_PATH_UNKNOWN) {
             if (path_len == 0) {
                 contact.out_path_len = 0;   // direct neighbour, empty path
             } else {
                 _applyReverseOutPath(contact, path, path_len);
             }
-            _persistContactPath(contact);
         }
         if (_btSerial && _btSerial->isConnected()) {
             if (is_new) {
@@ -924,6 +971,12 @@ class OMSMesh : public BaseChatMesh {
         if (crc != 0 && crc == _lastExpectedAck) {
             _lastAckedCrc = crc;
             _hasNewAck    = true;
+            // An ACK for a direct send confirms the route: refresh its age.
+            if (_pendingDirectKey[0] || _pendingDirectKey[1] ||
+                _pendingDirectKey[2] || _pendingDirectKey[3]) {
+                ContactInfo* ci = lookupContactByPubKey(_pendingDirectKey, 4);
+                if (ci) _persistContactPath(*ci, getRTCClock()->getCurrentTime());
+            }
             memset(_pendingDirectKey, 0, 4);  // direct send succeeded — stop tracking
             OPS_LOG("Mesh", "ACK crc=%08X", crc);
         }
@@ -932,7 +985,8 @@ class OMSMesh : public BaseChatMesh {
 
     void onContactPathUpdated(const ContactInfo& contact) override {
         _upsertPeer(contact);
-        _persistContactPath(contact);
+        // A path return from the node itself — the path is confirmed working.
+        _persistContactPath(contact, getRTCClock()->getCurrentTime());
         if (_btSerial && _btSerial->isConnected()) {
             int i = 0;
             _outFrame[i++] = COMP_PUSH_PATH_UPDATED;
@@ -977,13 +1031,13 @@ class OMSMesh : public BaseChatMesh {
 
     void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {
         _upsertPeer(from);
-        // Opportunistically record the return path from a flood DM.
+        // Opportunistically record the return path from a flood DM. RAM only,
+        // like the advert case: it's a guess until a path return confirms it.
         if (from.out_path_len == OUT_PATH_UNKNOWN && pkt->isRouteFlood()) {
             ContactInfo* ci = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
             if (ci) {
                 if (pkt->path_len == 0) ci->out_path_len = 0;
                 else _applyReverseOutPath(*ci, pkt->path, pkt->path_len);
-                _persistContactPath(*ci);
             }
         }
         RxMessage msg{};
@@ -1745,67 +1799,178 @@ public:
             OPS_LOG("Mesh", "Channel %d '%s' psk=%s %s", i, chName, psk64,
                     _channels[i] ? "registered" : "FAILED");
         }
-        preloadNvsContacts();
-        preloadNvsRepeaters();
+        preloadStoredContacts();
         OPS_LOG("Mesh", "Ready as '%s'", _callsign);
     }
 
-    void preloadNvsContacts() {
-        int n = ops::contacts::count();
-        for (int i = 0; i < n; i++) {
+    // ── Loading saved contacts/repeaters into MeshCore ────────────────
+    // MeshCore's table holds MAX_CONTACTS entries (plus MAX_ANON_CONTACTS
+    // transient slots), far fewer than we store, so it is filled by priority:
+    // favourites, then chat contacts, then repeaters, each most recently heard
+    // first. PRELOAD_HEADROOM slots stay free for newly heard nodes; beyond
+    // that, shouldOverwriteWhenFull() evicts the least recently heard.
+    //
+    // Saved paths are loaded only when still trustworthy: set by hand, or
+    // confirmed within PATH_MAX_AGE_S. Anything else starts unknown, so the
+    // first message floods and MeshCore learns a fresh route from the reply —
+    // rather than going direct down a days-old path and timing out.
+    static constexpr int      PRELOAD_HEADROOM = 16;
+    static constexpr uint32_t PATH_MAX_AGE_S   = 24UL * 3600UL;
+
+    struct PreloadCand {
+        uint32_t lastSeen;
+        uint16_t idx;
+        uint8_t  rank;      // 0 = favourite, 1 = contact, 2 = repeater
+        bool     isRepeater;
+    };
+
+    // True until the clock is valid, when stored paths could not be age-checked
+    // at boot; restoreDeferredPaths() applies them once GPS sets the time.
+    bool _pathsDeferred = false;
+
+    static bool _clockValid(uint32_t now) { return now >= 1700000000UL; }
+
+    static bool _pathTrusted(uint32_t pathAt, uint32_t now) {
+        if (pathAt == ops::PATH_AT_PINNED) return true;
+        if (pathAt == 0 || now < 1700000000UL) return false;  // unknown age / clock unset
+        return now >= pathAt && now - pathAt < PATH_MAX_AGE_S;
+    }
+
+    static bool _hasKey(const uint8_t* k) {
+        for (int b = 0; b < 32; b++) if (k[b]) return true;
+        return false;
+    }
+
+    void preloadStoredContacts() {
+        const int nc = ops::contacts::count();
+        const int nr = ops::repeaters::count();
+        PreloadCand* cand = (PreloadCand*)ps_malloc((size_t)(nc + nr + 1) * sizeof(PreloadCand));
+        if (!cand) { OPS_LOG("Mesh", "Preload: out of memory"); return; }
+
+        int n = 0;
+        for (int i = 0; i < nc; i++) {
             ops::Contact c;
-            if (!ops::contacts::get(i, c)) continue;
-            bool hasKey = false;
-            for (int b = 0; b < 32; b++) if (c.pubKey[b]) { hasKey = true; break; }
-            if (!hasKey) { OPS_LOG("Mesh", "Contact '%s' has no key — skipped", c.name); continue; }
-            if (lookupContactByPubKey(c.pubKey, 4)) continue;
-            ContactInfo ci{};
-            ci.id = mesh::Identity(c.pubKey);
-            strncpy(ci.name, c.name, 31);
-            if (c.outPathValid && c.outPathLen != 0xFF) {
-                ci.out_path_len = c.outPathLen;
-                memcpy(ci.out_path, c.outPath, MAX_PATH_SIZE);
-                OPS_LOG("Mesh", "Preloaded contact: %s (path len=%d)", c.name, c.outPathLen);
-            } else {
-                ci.out_path_len = OUT_PATH_UNKNOWN;
-                OPS_LOG("Mesh", "Preloaded contact: %s (path unknown)", c.name);
-            }
-            addContact(ci);
+            if (!ops::contacts::get(i, c) || !_hasKey(c.pubKey)) continue;
+            cand[n++] = { c.lastSeen, (uint16_t)i, (uint8_t)(c.favourite ? 0 : 1), false };
         }
-    }
-
-    void preloadNvsRepeaters() {
-        int n = ops::repeaters::count();
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < nr; i++) {
             ops::Repeater r;
-            if (!ops::repeaters::get(i, r)) continue;
-            bool hasKey = false;
-            for (int b = 0; b < 32; b++) if (r.pubKey[b]) { hasKey = true; break; }
-            if (!hasKey) { OPS_LOG("Mesh", "Repeater '%s' has no key — skipped", r.name); continue; }
-            if (lookupContactByPubKey(r.pubKey, 4)) continue;
+            if (!ops::repeaters::get(i, r) || !_hasKey(r.pubKey)) continue;
+            cand[n++] = { r.lastSeen, (uint16_t)i, (uint8_t)(r.favourite ? 0 : 2), true };
+        }
+        std::sort(cand, cand + n, [](const PreloadCand& a, const PreloadCand& b) {
+            if (a.rank != b.rank) return a.rank < b.rank;
+            return a.lastSeen > b.lastSeen;
+        });
+
+        const uint32_t now = getRTCClock()->getCurrentTime();
+        const int limit = MAX_CONTACTS - PRELOAD_HEADROOM;
+        int loaded = 0, withPath = 0;
+        for (int k = 0; k < n && loaded < limit; k++) {
             ContactInfo ci{};
-            ci.id = mesh::Identity(r.pubKey);
-            strncpy(ci.name, r.name, 31);
-            ci.type = ADV_TYPE_REPEATER;
-            if (r.outPathValid && r.outPathLen != 0xFF) {
-                ci.out_path_len = r.outPathLen;
+            uint32_t pathAt;
+            if (cand[k].isRepeater) {
+                ops::Repeater r;
+                if (!ops::repeaters::get(cand[k].idx, r)) continue;
+                if (lookupContactByPubKey(r.pubKey, 4)) continue;
+                ci.id   = mesh::Identity(r.pubKey);
+                strncpy(ci.name, r.name, 31);
+                ci.type = ADV_TYPE_REPEATER;
+                ci.out_path_len = r.outPathValid ? r.outPathLen : OUT_PATH_UNKNOWN;
                 memcpy(ci.out_path, r.outPath, MAX_PATH_SIZE);
-                OPS_LOG("Mesh", "Preloaded repeater: %s (path len=%d)", r.name, r.outPathLen);
+                pathAt = r.pathAt;
+                if (r.favourite) ci.flags |= 0x01;
             } else {
-                ci.out_path_len = OUT_PATH_UNKNOWN;
-                OPS_LOG("Mesh", "Preloaded repeater: %s (path unknown)", r.name);
+                ops::Contact c;
+                if (!ops::contacts::get(cand[k].idx, c)) continue;
+                if (lookupContactByPubKey(c.pubKey, 4)) continue;
+                ci.id   = mesh::Identity(c.pubKey);
+                strncpy(ci.name, c.name, 31);
+                // Must not be ADV_TYPE_NONE (0): addContact() puts type-0
+                // entries in the 8 transient anon slots, each overwriting the
+                // last — which previously left at most 8 contacts loaded.
+                ci.type = ADV_TYPE_CHAT;
+                ci.out_path_len = c.outPathValid ? c.outPathLen : OUT_PATH_UNKNOWN;
+                memcpy(ci.out_path, c.outPath, MAX_PATH_SIZE);
+                pathAt = c.pathAt;
+                if (c.favourite) ci.flags |= 0x01;
             }
-            addContact(ci);
+            ci.lastmod = cand[k].lastSeen;   // eviction order when the table fills
+            if (ci.out_path_len != OUT_PATH_UNKNOWN && !_pathTrusted(pathAt, now)) {
+                ci.out_path_len = OUT_PATH_UNKNOWN;
+                memset(ci.out_path, 0, MAX_PATH_SIZE);
+            }
+            if (ci.out_path_len != OUT_PATH_UNKNOWN) withPath++;
+            if (addContact(ci)) loaded++;
+        }
+        OPS_LOG("Mesh", "Preloaded %d of %d saved contacts/repeaters (%d with a trusted path)",
+                loaded, n, withPath);
+        free(cand);
+        if (!_clockValid(now)) {
+            _pathsDeferred = true;
+            OPS_LOG("Mesh", "Clock not set — saved paths deferred until it is");
         }
     }
 
-    void _persistContactPath(const ContactInfo& ci) {
+    // Applies saved paths that preload couldn't age-check (clock unset at boot)
+    // to contacts whose path is still unknown. Called once the clock is valid.
+    void restoreDeferredPaths() {
+        if (!_pathsDeferred) return;
+        const uint32_t now = getRTCClock()->getCurrentTime();
+        if (!_clockValid(now)) return;
+        _pathsDeferred = false;
+
+        int restored = 0;
+        auto apply = [&](const uint8_t* key, bool valid, uint8_t len,
+                         const uint8_t* path, uint32_t pathAt) {
+            if (!valid || len == OUT_PATH_UNKNOWN || !_pathTrusted(pathAt, now)) return;
+            ContactInfo* ci = lookupContactByPubKey(key, PUB_KEY_SIZE);
+            if (!ci || ci->out_path_len != OUT_PATH_UNKNOWN) return;  // learned since boot
+            ci->out_path_len = len;
+            memcpy(ci->out_path, path, MAX_PATH_SIZE);
+            restored++;
+        };
+        for (int i = 0; i < ops::contacts::count(); i++) {
+            ops::Contact c;
+            if (ops::contacts::get(i, c)) apply(c.pubKey, c.outPathValid, c.outPathLen, c.outPath, c.pathAt);
+        }
+        for (int i = 0; i < ops::repeaters::count(); i++) {
+            ops::Repeater r;
+            if (ops::repeaters::get(i, r)) apply(r.pubKey, r.outPathValid, r.outPathLen, r.outPath, r.pathAt);
+        }
+        OPS_LOG("Mesh", "Clock set — restored %d saved paths", restored);
+    }
+
+    // MeshCore's table is full: evict the least recently heard non-favourite
+    // instead of silently refusing new contacts (who then can't DM us).
+    bool shouldOverwriteWhenFull() const override { return true; }
+
+    void onContactOverwrite(const uint8_t* pub_key) override {
+        OPS_LOG("Mesh", "Contact table full — evicted %02X%02X%02X%02X",
+                pub_key[0], pub_key[1], pub_key[2], pub_key[3]);
+    }
+
+    void onContactsFull() override {
+        OPS_LOG("Mesh", "Contact table full — new contact not added");
+    }
+
+    // Saves ci's current path with its confirmation time (PATH_AT_PINNED for a
+    // hand-set path). Only confirmed paths are saved — see preloadStoredContacts().
+    void _persistContactPath(const ContactInfo& ci, uint32_t learnedAt) {
         if (ci.out_path_len == OUT_PATH_UNKNOWN) return;
+        // Without a real clock the time is meaningless — save as unknown age.
+        if (learnedAt != ops::PATH_AT_PINNED && !_clockValid(learnedAt)) learnedAt = 0;
         int idx;
         if (ops::repeaters::findByKey(ci.id.pub_key, &idx))
-            ops::repeaters::setPath(idx, ci.out_path_len, ci.out_path);
+            ops::repeaters::setPath(idx, ci.out_path_len, ci.out_path, learnedAt);
         if (ops::contacts::findByKey(ci.id.pub_key, &idx))
-            ops::contacts::setPath(idx, ci.out_path_len, ci.out_path);
+            ops::contacts::setPath(idx, ci.out_path_len, ci.out_path, learnedAt);
+    }
+
+    void _forgetStoredPath(const uint8_t* prefix4) {
+        int idx;
+        if (ops::contacts::findByKey(prefix4, &idx))  ops::contacts::clearPath(idx);
+        if (ops::repeaters::findByKey(prefix4, &idx)) ops::repeaters::clearPath(idx);
     }
 
     void updateCallsign(const char* cs) {
@@ -1976,6 +2141,7 @@ public:
         if (byteCount > MAX_PATH_SIZE) return false;
         memcpy(ci->out_path, pathBytes, byteCount);
         ci->out_path_len = (uint8_t)(((hashSz - 1) << 6) | (numHops & 63));
+        _persistContactPath(*ci, ops::PATH_AT_PINNED);   // hand-set: survives reboots
         OPS_LOG("Mesh", "setContactPath: %02X%02X hops=%d hashSz=%d",
                 prefix4[0], prefix4[1], numHops, hashSz);
         return true;
@@ -2068,15 +2234,18 @@ public:
         return true;
     }
 
+    // Also forget the saved copy — otherwise the old path came back on reboot.
     void resetContactPath(const uint8_t* prefix4) {
         ContactInfo* ci = lookupContactByPubKey(prefix4, 4);
         if (ci) ci->out_path_len = OUT_PATH_UNKNOWN;
+        _forgetStoredPath(prefix4);
     }
 
     void resetAllContactPaths() {
         for (int i = 0; i < _peerCount; i++) {
             ContactInfo* ci = lookupContactByPubKey(_peers[i].pubKeyPrefix, 4);
             if (ci) ci->out_path_len = OUT_PATH_UNKNOWN;
+            _forgetStoredPath(_peers[i].pubKeyPrefix);
         }
     }
 
@@ -2449,7 +2618,9 @@ void MeshService::init() {
 
     applyLoraProfile(cfg.radioProfile);
     applyRadioOverrides();
-    if (cfg.rxBoost) sx1262.setRxBoostedGainMode(true);
+    // Config is the source of truth: std_init() switched boost on from the
+    // build flag, so apply the saved choice explicitly in both directions.
+    sx1262.setRxBoostedGainMode(cfg.rxBoost);
     the_mesh.sendSelfAdvert(random(500, 2500), false);  // zero-hop on boot
 
     _initialized = true;
@@ -2461,6 +2632,7 @@ void MeshService::tick() {
     if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
     the_mesh.checkSerialInterface();
+    the_mesh.restoreDeferredPaths();   // no-op unless deferred at boot
     _tickFhss();
     _tickDutyCycle();
 }
@@ -2586,6 +2758,19 @@ FhssStatus MeshService::fhssStatus() const {
     return s;
 }
 
+MeshService::RadioDiag MeshService::radioDiag() const {
+    RadioDiag d{ -1, 0, 0.0f, 0 };
+    if (!_initialized) return d;
+    uint8_t reg = 0;
+    if (sx1262.readRegister(RADIOLIB_SX126X_REG_RX_GAIN, &reg, 1) == RADIOLIB_ERR_NONE)
+        d.rxGainReg = reg;
+    // RadioLib's cached modem settings (public under RADIOLIB_GODMODE).
+    d.sf    = sx1262.spreadingFactor;
+    d.bwKhz = sx1262.bandwidthKhz;
+    d.cr    = sx1262.codingRate + 4;   // stored as cr - 4 (short interleave)
+    return d;
+}
+
 RadioStats MeshService::radioStats() const {
     if (!_initialized) return RadioStats{};
     return the_mesh.getStats();
@@ -2625,6 +2810,67 @@ void MeshService::resetContactPath(const uint8_t* prefix4) {
 
 void MeshService::resetAllContactPaths() {
     if (_initialized) the_mesh.resetAllContactPaths();
+}
+
+bool MeshService::lightSleep(uint32_t maxMs) {
+    if (_initialized) {
+        // Only sleep while quietly listening. Mid-TX, MeshCore waits for the
+        // TX-done edge on DIO1 (which sleep would swallow); queued packets —
+        // ACKs, relays, delayed RX processing — must not wait on the timer.
+        if (!radio_driver.isInRecvMode() || isTxBusy()) return false;
+        int outTotal = pkt_mgr.getOutboundTotal();
+        int inbound  = PKT_POOL_SIZE - pkt_mgr.getFreeCount() - outTotal;
+        if (outTotal > 0 || inbound > 0) return false;
+    }
+
+    // Cap each sleep at half the airtime of the shortest packet on the current
+    // profile: two packets can't both complete within one slice, so the
+    // SX1262's single RX buffer is always read before it can be overwritten —
+    // even if the DIO1 wake below doesn't fire on this hardware.
+    if (_initialized) {
+        uint32_t slice = radio_driver.getEstAirtimeFor(16) / 2;
+        if (slice < 20)  slice = 20;
+        if (slice > 250) slice = 250;
+        if (maxMs > slice) maxMs = slice;
+    }
+
+    const gpio_num_t dio1 = (gpio_num_t)P_LORA_DIO_1;
+    if (_initialized) {
+        // Level wake with the CPU interrupt masked: wakes on a received packet
+        // without a level-triggered ISR storm.
+        gpio_intr_disable(dio1);
+        gpio_wakeup_enable(dio1, GPIO_INTR_HIGH_LEVEL);
+    }
+    esp_sleep_enable_gpio_wakeup();
+    esp_sleep_enable_timer_wakeup((uint64_t)maxMs * 1000ULL);
+    esp_light_sleep_start();
+
+    s_sleepStats.sleeps++;
+    switch (esp_sleep_get_wakeup_cause()) {
+        case ESP_SLEEP_WAKEUP_GPIO:
+            if (_initialized && digitalRead(P_LORA_DIO_1) == HIGH) s_sleepStats.wakeRadio++;
+            else                                                 s_sleepStats.wakeOther++;
+            break;
+        case ESP_SLEEP_WAKEUP_TIMER: s_sleepStats.wakeTimer++; break;
+        default:                     s_sleepStats.wakeOther++; break;
+    }
+
+    if (_initialized) {
+        gpio_wakeup_disable(dio1);
+        gpio_set_intr_type(dio1, GPIO_INTR_POSEDGE);
+        // Drop any status latched by the level type so the ISR doesn't fire for
+        // this event too — recvRaw() picks it up via s_rxMissedInSleep instead.
+        REG_WRITE(GPIO_STATUS1_W1TC_REG, 1UL << (P_LORA_DIO_1 - 32));
+        // While DIO1 stays high no new rising edge can occur, so there is no
+        // race with the ISR: the next edge only follows our read clearing it.
+        if (digitalRead(P_LORA_DIO_1) == HIGH) s_rxMissedInSleep = true;
+        gpio_intr_enable(dio1);
+    }
+    return true;
+}
+
+MeshService::SleepStats MeshService::sleepStats() const {
+    return s_sleepStats;
 }
 
 bool MeshService::isTxBusy() const {

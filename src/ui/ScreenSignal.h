@@ -38,6 +38,12 @@ private:
     static lv_obj_t* s_heapLbl;
     static lv_obj_t* s_psramLbl;
     static lv_obj_t* s_battLbl;
+    static lv_obj_t* s_rxGainLbl;
+    static lv_obj_t* s_modemLbl;
+    static lv_obj_t* s_loopLbl;
+    static lv_obj_t* s_stallLbl;
+    static lv_obj_t* s_whereLbl;
+    static lv_obj_t* s_sleepLbl;
 
     static void _build();
     static void _refresh();

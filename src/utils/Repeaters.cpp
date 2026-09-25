@@ -51,13 +51,15 @@ static void _saveToSD() {
         }
 
         if (s_reps[i].outPathValid && s_reps[i].outPathLen != 0xFF) {
-            obj["pathLen"] = s_reps[i].outPathLen;
-            if (s_reps[i].outPathLen > 0) {
+            obj["pathLen"] = s_reps[i].outPathLen;   // MeshCore encoding, not a byte count
+            int nb = outPathByteCount(s_reps[i].outPathLen);
+            if (nb > 0) {
                 char pathHex[129] = {};
-                for (int b = 0; b < s_reps[i].outPathLen && b < 64; b++)
+                for (int b = 0; b < nb; b++)
                     snprintf(pathHex + b * 2, 3, "%02X", s_reps[i].outPath[b]);
                 obj["path"] = pathHex;
             }
+            if (s_reps[i].pathAt) obj["pathAt"] = s_reps[i].pathAt;
         }
     }
     File f = SD.open("/ops/repeaters.json", FILE_WRITE);
@@ -110,22 +112,23 @@ static bool _loadFromSD() {
 
         r.outPathValid = false;
         r.outPathLen   = 0xFF;
+        r.pathAt       = 0;
         memset(r.outPath, 0, sizeof(r.outPath));
         if (obj["pathLen"].is<int>()) {
+            // pathLen is MeshCore's encoding ((hashSz-1)<<6 | hops). Files from
+            // before this fix treated it as a byte count and saved 2-byte-hash
+            // paths zeroed — the hex length check below rejects those.
             uint8_t pl = (uint8_t)(int)obj["pathLen"];
-            if (pl <= 64) {
+            int nb = outPathByteCount(pl);
+            const char* ph = obj["path"] | "";
+            if (pl != 0xFF && nb >= 0 && strlen(ph) == (size_t)nb * 2) {
                 r.outPathLen = pl;
-                if (pl > 0) {
-                    const char* ph = obj["path"] | "";
-                    size_t phLen = strlen(ph);
-                    if (phLen == (size_t)pl * 2) {
-                        for (int b = 0; b < pl; b++) {
-                            char hb[3] = { ph[b * 2], ph[b * 2 + 1], '\0' };
-                            r.outPath[b] = (uint8_t)strtol(hb, nullptr, 16);
-                        }
-                    }
+                for (int b = 0; b < nb; b++) {
+                    char hb[3] = { ph[b * 2], ph[b * 2 + 1], '\0' };
+                    r.outPath[b] = (uint8_t)strtol(hb, nullptr, 16);
                 }
                 r.outPathValid = true;
+                r.pathAt = obj["pathAt"] | (uint32_t)0;
             }
         }
         s_count++;
@@ -246,6 +249,7 @@ void repeaters::clearPath(int idx)
     if (!s_reps[idx].outPathValid) return;  // already clear — skip NVS write
     s_reps[idx].outPathValid = false;
     s_reps[idx].outPathLen   = 0xFF;
+    s_reps[idx].pathAt       = 0;
     memset(s_reps[idx].outPath, 0, sizeof(s_reps[idx].outPath));
     save();
     OPS_LOG("Repeaters", "Path cleared: %s", s_reps[idx].name);
@@ -329,19 +333,26 @@ void repeaters::setFullKey(int idx, const uint8_t* pubKey32)
     OPS_LOG("Repeaters", "Full key set: %s", s_reps[idx].name);
 }
 
-void repeaters::setPath(int idx, uint8_t pathLen, const uint8_t* path)
+void repeaters::setPath(int idx, uint8_t pathLen, const uint8_t* path, uint32_t learnedAt)
 {
     if (idx < 0 || idx >= s_count) return;
     if (pathLen == 0xFF) return;  // OUT_PATH_UNKNOWN — don't persist
-    // Skip save if nothing changed
-    if (s_reps[idx].outPathValid && s_reps[idx].outPathLen == pathLen &&
-        (pathLen == 0 || memcmp(s_reps[idx].outPath, path, pathLen) == 0)) return;
+    int nb = outPathByteCount(pathLen);   // pathLen is encoded, not a byte count
+    if (nb < 0 || (nb > 0 && !path)) return;
+    bool same = s_reps[idx].outPathValid && s_reps[idx].outPathLen == pathLen &&
+                (nb == 0 || memcmp(s_reps[idx].outPath, path, nb) == 0);
+    // Re-confirming the same path only refreshes its age in RAM; the file is
+    // rewritten on the next real change. A hand-set path is never downgraded.
+    if (same) {
+        if (s_reps[idx].pathAt != PATH_AT_PINNED || learnedAt == PATH_AT_PINNED)
+            s_reps[idx].pathAt = learnedAt;
+        return;
+    }
     s_reps[idx].outPathValid = true;
     s_reps[idx].outPathLen   = pathLen;
-    if (path && pathLen > 0 && pathLen <= 64)
-        memcpy(s_reps[idx].outPath, path, pathLen);
-    else
-        memset(s_reps[idx].outPath, 0, 64);
+    s_reps[idx].pathAt       = learnedAt;
+    memset(s_reps[idx].outPath, 0, 64);
+    if (nb > 0) memcpy(s_reps[idx].outPath, path, nb);
     save();
     OPS_LOG("Repeaters", "Path saved: %s len=%d", s_reps[idx].name, pathLen);
 }
