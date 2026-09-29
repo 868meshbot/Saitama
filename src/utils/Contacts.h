@@ -30,6 +30,10 @@ struct Contact {
 // Contact/Repeater::pathAt value for a path the user set by hand — never expires.
 static constexpr uint32_t PATH_AT_PINNED = 0xFFFFFFFFu;
 
+// pathAt for a path confirmed at unix time `now` — 0 (unknown age, not loaded
+// at boot) when the clock isn't set yet, since the time would be meaningless.
+inline uint32_t pathAtFor(uint32_t now) { return now >= 1700000000UL ? now : 0; }
+
 // MeshCore encodes out_path_len as (hashSize-1) << 6 | hopCount. Returns the
 // number of path bytes that encoding covers, or -1 if it would exceed 64.
 inline int outPathByteCount(uint8_t encLen)

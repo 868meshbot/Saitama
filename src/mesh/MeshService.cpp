@@ -1155,6 +1155,8 @@ class OMSMesh : public BaseChatMesh {
                     r.lastRssi     = e.rssi;
                     r.outPathLen   = 0;
                     r.outPathValid = true;
+                    // A discover reply proves the link both ways — a confirmed path.
+                    r.pathAt       = ops::pathAtFor(r.lastSeen);
                     ops::repeaters::add(r);
                     OPS_LOG("Finder", "Auto-added repeater: %s", useName);
                 }
@@ -1168,6 +1170,7 @@ class OMSMesh : public BaseChatMesh {
                     c.lastRssi     = e.rssi;
                     c.outPathLen   = 0;
                     c.outPathValid = true;
+                    c.pathAt       = ops::pathAtFor(c.lastSeen);
                     ops::contacts::add(c);
                     OPS_LOG("Finder", "Auto-added contact: %s", useName);
                 }

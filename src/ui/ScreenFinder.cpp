@@ -15,6 +15,7 @@
 #include <helpers/AdvertDataHelpers.h>  // ADV_TYPE_CHAT, ADV_TYPE_REPEATER
 #include <cstring>
 #include <cstdio>
+#include <ctime>
 
 namespace ops { namespace ui {
 
@@ -101,6 +102,9 @@ void ScreenFinder::_onPopupAdd(lv_event_t* e)
              en.pubKeyPrefix[2], en.pubKeyPrefix[3]);
     const char* useName = en.name[0] ? en.name : fallbackName;
     bool isRpt = (en.nodeType == ADV_TYPE_REPEATER);
+    // A discover reply proves the link both ways, so the zero-hop path is
+    // confirmed — stamp it so it survives a reboot (see pathAtFor()).
+    uint32_t pathAt = ops::pathAtFor((uint32_t)time(nullptr));
 
     if (isRpt) {
         ops::Repeater r{};
@@ -110,6 +114,7 @@ void ScreenFinder::_onPopupAdd(lv_event_t* e)
         r.lastRssi     = en.rssi;
         r.outPathLen   = 0;    // direct zero-hop neighbor
         r.outPathValid = true;
+        r.pathAt       = pathAt;
         ops::repeaters::add(r);
         OPS_LOG("Finder", "Manually added repeater: %s", useName);
     } else {
@@ -120,6 +125,7 @@ void ScreenFinder::_onPopupAdd(lv_event_t* e)
         c.lastRssi     = en.rssi;
         c.outPathLen   = 0;
         c.outPathValid = true;
+        c.pathAt       = pathAt;
         ops::contacts::add(c);
         OPS_LOG("Finder", "Manually added contact: %s", useName);
     }
