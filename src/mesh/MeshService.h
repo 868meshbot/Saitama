@@ -150,6 +150,9 @@ public:
     // Returns true (once) when an ACK matching a previously sent DM arrives.
     // Fills acked_crc with the CRC of the acked message.
     bool pollAck(uint32_t& acked_crc);
+    // Returns true (once) when a DM's retries ran out with no ACK. Fills id
+    // with the same value lastExpectedAck() gave for that send.
+    bool pollDmFailed(uint32_t& id);
     // CRC the last sendDirect expects to be ACKed (0 if send failed).
     uint32_t lastExpectedAck() const;
 

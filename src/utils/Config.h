@@ -94,6 +94,10 @@ struct Config {
     // Bumped when rxBoost's default changes, so older blobs (where rxBoost was
     // stored false by default) are switched on once. 1 = boost defaults on.
     uint8_t    rxBoostRev;
+    // Unacknowledged DM retries: resend direct up to dmDirectRetries times
+    // (0-10), then drop the path and flood up to dmFloodRetries times (0-5).
+    uint8_t    dmDirectRetries;
+    uint8_t    dmFloodRetries;
 };
 
 // Values for Config::radioPowerMode.

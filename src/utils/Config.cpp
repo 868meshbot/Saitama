@@ -66,6 +66,8 @@ static void setDefaults(Config& c) {
     c.loraDutyCycle    = false;
     c.radioPowerMode   = RADIO_POWER_CONTINUOUS;
     c.rxBoostRev       = 1;
+    c.dmDirectRetries  = 5;
+    c.dmFloodRetries   = 3;
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -124,6 +126,8 @@ static void _saveToSD() {
     doc["radioPwrMode"] = s_cfg.radioPowerMode;
     doc["rxBoost"]      = s_cfg.rxBoost;
     doc["rxBoostRev"]   = s_cfg.rxBoostRev;
+    doc["dmRetryDir"]   = s_cfg.dmDirectRetries;
+    doc["dmRetryFlood"] = s_cfg.dmFloodRetries;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
@@ -208,6 +212,8 @@ static bool _loadFromSD() {
     // A settings.json written before boost defaulted on stored false by default.
     if ((doc["rxBoostRev"] | 0) < 1) s_cfg.rxBoost = true;
     s_cfg.rxBoostRev    = 1;
+    s_cfg.dmDirectRetries = (uint8_t)(doc["dmRetryDir"]   | 5);
+    s_cfg.dmFloodRetries  = (uint8_t)(doc["dmRetryFlood"] | 3);
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);

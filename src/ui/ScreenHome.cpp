@@ -277,6 +277,7 @@ bool ScreenHome::_historyAdd(bool           sent,
     e.rssi        = rssi;
     e.expectedAck = expectedAck;
     e.isAcked     = false;
+    e.isFailed    = false;
     s_metaLabels[s_histCount] = nullptr;
     s_histCount++;
 
@@ -354,6 +355,12 @@ void ScreenHome::_fmtTime(char* buf, size_t len, uint32_t ts)
     struct tm lt;
     localtime_r(&t, &lt);
     snprintf(buf, len, "%02d:%02d", lt.tm_hour, lt.tm_min);
+}
+
+// Meta line for a DM whose retries ran out: "12:34 ✕ Not delivered".
+static void _fmtFailedMeta(char* buf, size_t len, const char* timeBuf)
+{
+    snprintf(buf, len, "%s " LV_SYMBOL_CLOSE " Not delivered", timeBuf);
 }
 
 // ── Bubble helper ──────────────────────────────────────────────────────
@@ -456,7 +463,10 @@ void ScreenHome::_addBubble(int         histIdx,
     if (sent) {
         uint32_t expAck = (histIdx >= 0 && histIdx < HISTORY_MAX)
                           ? s_history[histIdx].expectedAck : 1;
-        if (isAcked || expAck == 0) {
+        bool failed = (histIdx >= 0 && histIdx < HISTORY_MAX) && s_history[histIdx].isFailed;
+        if (failed && !isAcked) {
+            _fmtFailedMeta(meta, sizeof(meta), timeBuf);
+        } else if (isAcked || expAck == 0) {
             // green tick for DM ACK; grey tick for channel (no ACK possible)
             snprintf(meta, sizeof(meta), "%s " LV_SYMBOL_OK, timeBuf);
         } else {
@@ -471,7 +481,10 @@ void ScreenHome::_addBubble(int         histIdx,
 
     lv_obj_t* metaLbl = lv_label_create(bubble);
     lv_obj_set_width(metaLbl, LV_PCT(100));
-    lv_obj_set_style_text_color(metaLbl, (sent && isAcked) ? theme::GREEN : theme::TEXT_MUTED, 0);
+    bool metaFailed = sent && !isAcked && histIdx >= 0 && histIdx < HISTORY_MAX
+                      && s_history[histIdx].isFailed;
+    lv_obj_set_style_text_color(metaLbl,
+        (sent && isAcked) ? theme::GREEN : metaFailed ? theme::RED : theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);  // needs LVGL symbol glyphs; don't use bodyFont here
     lv_label_set_text(metaLbl, meta);
     if (sent) lv_obj_set_style_text_align(metaLbl, LV_TEXT_ALIGN_RIGHT, 0);
@@ -749,6 +762,24 @@ void ScreenHome::appendSent(const char* text, uint32_t ts, uint32_t expectedAck)
 
 void ScreenHome::checkPendingAck()
 {
+    uint32_t failedId;
+    if (ops::MeshService::instance().pollDmFailed(failedId)) {
+        for (int i = 0; i < s_histCount; i++) {
+            MsgEntry& e = s_history[i];
+            if (!e.sent || e.isAcked || e.expectedAck == 0 || e.expectedAck != failedId) continue;
+            e.isFailed = true;
+            if (s_metaLabels[i]) {
+                char timeBuf[8];
+                _fmtTime(timeBuf, sizeof(timeBuf), e.ts);
+                char meta[48];
+                _fmtFailedMeta(meta, sizeof(meta), timeBuf);
+                lv_label_set_text(s_metaLabels[i], meta);
+                lv_obj_set_style_text_color(s_metaLabels[i], theme::RED, 0);
+            }
+            OPS_LOG("Chat", "Not-delivered shown for msg %d", i);
+        }
+    }
+
     uint32_t acked_crc;
     if (!ops::MeshService::instance().pollAck(acked_crc)) return;
 

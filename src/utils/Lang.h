@@ -49,6 +49,7 @@ enum TrKey : uint8_t {
     TR_RETURN,
     TR_LANGUAGE,
     TR_STORAGE_PW,
+    TR_DM_RETRIES,
     TR_ON,
     TR_OFF,
     TR_COUNT

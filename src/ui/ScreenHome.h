@@ -44,6 +44,7 @@ private:
         float    rssi;
         uint32_t expectedAck;
         bool     isAcked;
+        bool     isFailed;        // DM retries ran out with no ACK
     };
 
     // 200 slots shared across all channels/DMs, ps_malloc'd in PSRAM on first

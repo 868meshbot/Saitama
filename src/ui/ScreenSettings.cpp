@@ -341,6 +341,14 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, LV_SYMBOL_LOOP, lang::tr(lang::TR_TIMEZONE), tzBuf, 20);
     _addRow(_list, LV_SYMBOL_DOWNLOAD, lang::tr(lang::TR_FW_UPDATE), "v" OPS_VERSION_STRING, 11);
     _addRow(_list, LV_SYMBOL_PLUS, lang::tr(lang::TR_AUTO_ADD),     "", 12);
+    {
+        char drStr[12];
+        snprintf(drStr, sizeof(drStr), "%u / %u",
+                 (unsigned)cfg.dmDirectRetries, (unsigned)cfg.dmFloodRetries);
+        bool drOn = cfg.dmDirectRetries || cfg.dmFloodRetries;
+        _addRow(_list, LV_SYMBOL_REFRESH, lang::tr(lang::TR_DM_RETRIES), drStr, 38,
+                drOn ? ROW_ON : ROW_OFF);
+    }
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
     _addRow(_list, LV_SYMBOL_EYE_CLOSE, lang::tr(lang::TR_SCR_TIMEOUT),  toStr, 13);
@@ -1985,6 +1993,154 @@ static void _openScreenOffDialog() {
     }
     lv_obj_add_event_cb(s_soCtx.slider, _onSoKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(saveBtn,        _onSoKey, LV_EVENT_KEY, nullptr);
+}
+
+// ── DM retries dialog ────────────────────────────────────────────────
+// Two sliders: direct retries (0-10) before dropping the path, then flood
+// retries (0-5). Used by MeshService's DM retry engine.
+
+struct DmRetryCtx { lv_obj_t* modal; lv_obj_t* dirSlider; lv_obj_t* dirLbl;
+                    lv_obj_t* floodSlider; lv_obj_t* floodLbl; };
+static DmRetryCtx s_drCtx;
+
+static void _drUpdateLabels() {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Direct retries: %d", (int)lv_slider_get_value(s_drCtx.dirSlider));
+    lv_label_set_text(s_drCtx.dirLbl, buf);
+    snprintf(buf, sizeof(buf), "Then flood retries: %d", (int)lv_slider_get_value(s_drCtx.floodSlider));
+    lv_label_set_text(s_drCtx.floodLbl, buf);
+}
+static void _onDrSlide(lv_event_t* /*e*/) { _drUpdateLabels(); }
+
+static void _onDrSave(lv_event_t* /*e*/) {
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.dmDirectRetries = (uint8_t)lv_slider_get_value(s_drCtx.dirSlider);
+    cfg.dmFloodRetries  = (uint8_t)lv_slider_get_value(s_drCtx.floodSlider);
+    ops::config::save();
+    lv_obj_del_async(s_drCtx.modal);
+    s_drCtx = DmRetryCtx{};
+    ScreenSettings::show();
+}
+static void _onDrExit(lv_event_t* /*e*/) {
+    lv_obj_del_async(s_drCtx.modal);
+    s_drCtx = DmRetryCtx{};
+}
+static void _onDrKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if ((key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) && s_drCtx.modal) _onDrExit(e);
+}
+
+static lv_obj_t* _drMakeSlider(lv_obj_t* panel, int maxVal, int cur) {
+    lv_obj_t* sl = lv_slider_create(panel);
+    lv_obj_set_width(sl, 200);
+    lv_slider_set_range(sl, 0, maxVal);
+    lv_slider_set_value(sl, cur > maxVal ? maxVal : cur, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(sl, theme::PRIMARY, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, theme::ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(sl, theme::BORDER, LV_PART_MAIN);
+    lv_obj_add_event_cb(sl, _onDrSlide, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(sl, _onDrKey,   LV_EVENT_KEY,           nullptr);
+    return sl;
+}
+
+static lv_obj_t* _drMakeLabel(lv_obj_t* panel) {
+    lv_obj_t* l = lv_label_create(panel);
+    lv_obj_set_style_text_color(l, theme::TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+    return l;
+}
+
+static void _openDmRetryDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_drCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onDrKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 240, 210);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, lang::tr(lang::TR_DM_RETRIES));
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* hint = lv_label_create(panel);
+    lv_label_set_text(hint, "Resend unacknowledged DMs");
+    lv_obj_set_style_text_color(hint, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+
+    s_drCtx.dirLbl      = _drMakeLabel(panel);
+    s_drCtx.dirSlider   = _drMakeSlider(panel, 10, cfg.dmDirectRetries);
+    s_drCtx.floodLbl    = _drMakeLabel(panel);
+    s_drCtx.floodSlider = _drMakeSlider(panel, 5, cfg.dmFloodRetries);
+    _drUpdateLabels();
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 220, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(row);
+    lv_obj_set_size(saveBtn, 90, 26);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onDrSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onDrKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(row);
+    lv_obj_set_size(exitBtn, 90, 26);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onDrExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onDrKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, s_drCtx.dirSlider);
+        lv_group_add_obj(g, s_drCtx.floodSlider);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, exitBtn);
+        lv_group_focus_obj(s_drCtx.dirSlider);
+    }
 }
 
 // ── Keyboard brightness slider dialog ────────────────────────────────
@@ -4006,6 +4162,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 27:  // Screen Off → slider dialog
             _openScreenOffDialog();
+            return;
+
+        case 38:  // DM Retries → two-slider dialog
+            _openDmRetryDialog();
             return;
 
         case 32:  // Volume → slider dialog

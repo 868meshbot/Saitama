@@ -48,6 +48,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Return to Launcher",   // TR_RETURN
         "Language",             // TR_LANGUAGE
         "Storage Password",     // TR_STORAGE_PW
+        "DM Retries",           // TR_DM_RETRIES
         "On",                   // TR_ON
         "Off",                  // TR_OFF
     },
@@ -86,6 +87,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Torna al Launcher",
         "Lingua",
         "Password Archivio",
+        "Tentativi DM",
         "Attivo",
         "Inattivo",
     },
@@ -124,6 +126,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Retour Launcher",
         "Langue",
         "Mot de Passe Stockage",
+        "Renvois DM",
         "Actif",
         "Inactif",
     },
@@ -162,6 +165,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Zurueck Launcher",
         "Sprache",
         "Speicher-Passwort",
+        "DM-Wiederholungen",
         "Ein",
         "Aus",
     },
@@ -200,6 +204,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Volver Launcher",
         "Idioma",
         "Contrasena Almacen",
+        "Reintentos DM",
         "Activo",
         "Inactivo",
     },

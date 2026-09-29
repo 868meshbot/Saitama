@@ -229,11 +229,46 @@ class OMSMesh : public BaseChatMesh {
     bool            _active = true;
     char            _callsign[32] = {};
 
-    uint32_t _lastExpectedAck = 0;
-    uint32_t _lastAckedCrc    = 0;
-    bool     _hasNewAck       = false;
-    // First 4 bytes of the contact whose direct send is in-flight; all-zero = none / flood pending.
-    uint8_t  _pendingDirectKey[4] = {};
+    // ── Outgoing DM retry engine ──────────────────────────────────────
+    // Each in-flight DM keeps one timestamp for all its attempts; the attempt
+    // number (folded into the payload by MeshCore) changes per retry, so every
+    // retry is a distinct packet repeaters will forward, while the receiver
+    // recognises it as the same message (see the duplicate guard below).
+    // Timeouts are tracked here per slot, not by BaseChatMesh's single timer.
+    static constexpr int DM_SLOTS = 4;
+    struct PendingDm {
+        bool          active;
+        bool          lastWasDirect;
+        uint8_t       key[4];
+        uint8_t       attempt;       // attempt number of the NEXT send
+        uint8_t       directLeft;    // direct retries remaining
+        uint8_t       floodLeft;     // flood retries remaining
+        uint8_t       ackSet;        // bit n = acks[n] valid
+        uint32_t      ts;
+        uint32_t      id;            // first attempt's ACK — what the UI tracks
+        uint32_t      acks[4];       // expected ACK per (attempt & 3)
+        unsigned long deadline;
+        char          text[MAX_TEXT_LEN + 1];
+    };
+    PendingDm _dms[DM_SLOTS] = {};
+    uint32_t  _txtLastTs       = 0;
+    uint32_t  _lastExpectedAck = 0;   // id of the most recent sendDirectMsg()
+
+    // Acked DM ids waiting for the UI (pollAck).
+    static constexpr int ACK_Q = 8;
+    uint32_t _ackQ[ACK_Q] = {};
+    int      _ackQHead = 0, _ackQCount = 0;
+    // DM ids whose retries ran out unacknowledged (pollDmFailed).
+    uint32_t _failQ[ACK_Q] = {};
+    int      _failQHead = 0, _failQCount = 0;
+
+    // ── Incoming DM duplicate guard ───────────────────────────────────
+    // Retries (ours or another client's) can deliver the same DM more than
+    // once. Same sender + sender timestamp + text = already shown.
+    static constexpr int DUP_SLOTS = 16;
+    struct SeenDm { uint8_t key[4]; uint32_t ts; uint32_t textHash; };
+    SeenDm _seenDms[DUP_SLOTS] = {};
+    int    _seenNext = 0;
 
     TraceResult _traceResult{};
     bool        _hasTraceResult = false;
@@ -711,7 +746,6 @@ class OMSMesh : public BaseChatMesh {
                 if (result == MSG_SEND_FAILED) {
                     _compWriteErr(COMP_ERR_TABLE_FULL);
                 } else {
-                    if (expected_ack) _lastExpectedAck = expected_ack;
                     int j = 0;
                     _outFrame[j++] = COMP_RESP_SENT;
                     _outFrame[j++] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
@@ -968,19 +1002,62 @@ class OMSMesh : public BaseChatMesh {
     ContactInfo* processAck(const uint8_t* data) override {
         uint32_t crc;
         memcpy(&crc, data, 4);
-        if (crc != 0 && crc == _lastExpectedAck) {
-            _lastAckedCrc = crc;
-            _hasNewAck    = true;
+        if (crc == 0) return nullptr;
+        for (int s = 0; s < DM_SLOTS; s++) {
+            PendingDm& d = _dms[s];
+            if (!d.active) continue;
+            bool match = false;
+            for (int k = 0; k < 4; k++)
+                if ((d.ackSet & (1 << k)) && d.acks[k] == crc) { match = true; break; }
+            if (!match) continue;
             // An ACK for a direct send confirms the route: refresh its age.
-            if (_pendingDirectKey[0] || _pendingDirectKey[1] ||
-                _pendingDirectKey[2] || _pendingDirectKey[3]) {
-                ContactInfo* ci = lookupContactByPubKey(_pendingDirectKey, 4);
+            if (d.lastWasDirect) {
+                ContactInfo* ci = lookupContactByPubKey(d.key, 4);
                 if (ci) _persistContactPath(*ci, getRTCClock()->getCurrentTime());
             }
-            memset(_pendingDirectKey, 0, 4);  // direct send succeeded — stop tracking
-            OPS_LOG("Mesh", "ACK crc=%08X", crc);
+            _pushAck(d.id);
+            OPS_LOG("Mesh", "ACK crc=%08X for DM id=%08X after %u attempt(s)",
+                    crc, d.id, (unsigned)d.attempt);
+            d.active = false;
+            break;
         }
         return nullptr;
+    }
+
+    // Ends a DM's retries without an ACK and tells the UI (pollDmFailed).
+    void _failDm(PendingDm& d) {
+        d.active = false;
+        if (d.id == 0) return;   // first send never went out — UI already says "not sent"
+        if (_failQCount == ACK_Q) { _failQHead = (_failQHead + 1) % ACK_Q; _failQCount--; }
+        _failQ[(_failQHead + _failQCount) % ACK_Q] = d.id;
+        _failQCount++;
+    }
+
+    void _pushAck(uint32_t id) {
+        if (_ackQCount == ACK_Q) { _ackQHead = (_ackQHead + 1) % ACK_Q; _ackQCount--; }
+        _ackQ[(_ackQHead + _ackQCount) % ACK_Q] = id;
+        _ackQCount++;
+    }
+
+    static uint32_t _fnv1a(const char* t) {
+        uint32_t h = 2166136261u;
+        for (; *t; t++) { h ^= (uint8_t)*t; h *= 16777619u; }
+        return h;
+    }
+
+    // True if this DM was already delivered to the UI; records it otherwise.
+    bool _isDuplicateDm(const uint8_t* key, uint32_t ts, const char* text) {
+        uint32_t h = _fnv1a(text);
+        for (int i = 0; i < DUP_SLOTS; i++) {
+            const SeenDm& e = _seenDms[i];
+            if (e.ts == ts && e.textHash == h && memcmp(e.key, key, 4) == 0) return true;
+        }
+        SeenDm& e = _seenDms[_seenNext];
+        memcpy(e.key, key, 4);
+        e.ts       = ts;
+        e.textHash = h;
+        _seenNext  = (_seenNext + 1) % DUP_SLOTS;
+        return false;
     }
 
     void onContactPathUpdated(const ContactInfo& contact) override {
@@ -1031,6 +1108,13 @@ class OMSMesh : public BaseChatMesh {
 
     void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {
         _upsertPeer(from);
+        // A retry of a DM we already showed: drop it here. BaseChatMesh still
+        // ACKs it after we return, which is what stops the sender retrying.
+        if (_isDuplicateDm(from.id.pub_key, sender_timestamp, text)) {
+            OPS_LOG("RX", "[DM] duplicate from %s dropped (ts=%lu)",
+                    from.name, (unsigned long)sender_timestamp);
+            return;
+        }
         // Opportunistically record the return path from a flood DM. RAM only,
         // like the advert case: it's a guess until a path return confirms it.
         if (from.out_path_len == OUT_PATH_UNKNOWN && pkt->isRouteFlood()) {
@@ -1193,28 +1277,82 @@ class OMSMesh : public BaseChatMesh {
                (uint32_t)((pkt_airtime_millis * DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) * (hops + 1));
     }
 
-    void onSendTimeout() override {
-        bool wasDirect = _pendingDirectKey[0] || _pendingDirectKey[1] ||
-                         _pendingDirectKey[2] || _pendingDirectKey[3];
-        if (wasDirect) {
-            ContactInfo* ci = lookupContactByPubKey(_pendingDirectKey, 4);
-            if (ci) {
-                OPS_LOG("Mesh", "Direct timeout for '%s' — resetting path, next send will flood",
-                        ci->name);
-                resetPathTo(*ci);
-                // Also clear the persisted path in the NVS/SD stores so a reboot does not
-                // reload the stale path and immediately time out again.
-                int idx;
-                if (ops::contacts::findByKey(_pendingDirectKey, &idx))
-                    ops::contacts::clearPath(idx);
-                if (ops::repeaters::findByKey(_pendingDirectKey, &idx))
-                    ops::repeaters::clearPath(idx);
-            } else {
-                OPS_LOG("Mesh", "Direct timeout — contact no longer in table");
+    // BaseChatMesh's single send timer. DM timeouts are handled per message by
+    // _serviceDmRetries(), so there is nothing to do here.
+    void onSendTimeout() override {}
+
+    // Direct path failed: forget it in RAM and in the NVS/SD stores, so the
+    // next send floods and a reboot doesn't reload the stale path.
+    void _dropFailedPath(ContactInfo& ci) {
+        OPS_LOG("Mesh", "Direct attempts to '%s' exhausted — resetting path", ci.name);
+        resetPathTo(ci);
+        int idx;
+        if (ops::contacts::findByKey(ci.id.pub_key, &idx))  ops::contacts::clearPath(idx);
+        if (ops::repeaters::findByKey(ci.id.pub_key, &idx)) ops::repeaters::clearPath(idx);
+    }
+
+    // Sends the slot's next attempt. Returns false (and frees the slot) if it
+    // could not be sent.
+    bool _sendDmAttempt(PendingDm& d) {
+        ContactInfo* ci = lookupContactByPubKey(d.key, 4);
+        if (!ci) {
+            OPS_LOG("Mesh", "DM id=%08X: contact no longer in table", d.id);
+            _failDm(d);
+            return false;
+        }
+        // MeshCore only fits attempt numbers above 3 when the text leaves two
+        // spare bytes; past that a retry would repeat attempt 0's packet.
+        if (d.attempt > 3 && strlen(d.text) > MAX_TEXT_LEN - 2) {
+            OPS_LOG("Mesh", "DM id=%08X: text too long for more than 4 attempts", d.id);
+            _failDm(d);
+            return false;
+        }
+        uint32_t ack = 0, est = 0;
+        int r = sendMessage(*ci, d.ts, d.attempt, d.text, ack, est);
+        if (r == MSG_SEND_FAILED) {
+            OPS_LOG("Mesh", "DM id=%08X: send failed (attempt %u)", d.id, (unsigned)d.attempt);
+            _failDm(d);
+            return false;
+        }
+        if (d.attempt == 0) d.id = ack;
+        d.acks[d.attempt & 3] = ack;
+        d.ackSet |= (uint8_t)(1 << (d.attempt & 3));
+        d.lastWasDirect = (r == MSG_SEND_SENT_DIRECT);
+        d.deadline = millis() + est;
+        OPS_LOG("Mesh", "DM id=%08X attempt %u sent %s (timeout %lu ms)", d.id,
+                (unsigned)d.attempt, d.lastWasDirect ? "direct" : "flood", (unsigned long)est);
+        d.attempt++;
+        return true;
+    }
+
+    // Called every tick: retries timed-out DMs — direct up to dmDirectRetries
+    // times, then drops the path and floods up to dmFloodRetries times.
+    void _serviceDmRetries() {
+        unsigned long now = millis();
+        for (int s = 0; s < DM_SLOTS; s++) {
+            PendingDm& d = _dms[s];
+            if (!d.active || (long)(now - d.deadline) < 0) continue;
+
+            ContactInfo* ci = lookupContactByPubKey(d.key, 4);
+            if (!ci) { _failDm(d); continue; }
+
+            // Pick the budget for the send that would go out next.
+            if (ci->out_path_len != OUT_PATH_UNKNOWN) {
+                if (d.directLeft > 0) {
+                    d.directLeft--;
+                    _sendDmAttempt(d);
+                    continue;
+                }
+                _dropFailedPath(*ci);   // falls through to flood
             }
-            memset(_pendingDirectKey, 0, 4);
-        } else {
-            OPS_LOG("Mesh", "Flood timeout — no ACK received");
+            if (d.floodLeft > 0) {
+                d.floodLeft--;
+                _sendDmAttempt(d);
+            } else {
+                OPS_LOG("Mesh", "DM id=%08X to '%s' not acknowledged after %u attempt(s) — giving up",
+                        d.id, ci->name, (unsigned)d.attempt);
+                _failDm(d);
+            }
         }
     }
 
@@ -1399,10 +1537,22 @@ public:
         return true;
     }
 
+    // Retries timed-out DMs; called from MeshService::tick().
+    void serviceDmRetries() { _serviceDmRetries(); }
+
+    bool pollDmFailed(uint32_t& id) {
+        if (_failQCount == 0) return false;
+        id = _failQ[_failQHead];
+        _failQHead = (_failQHead + 1) % ACK_Q;
+        _failQCount--;
+        return true;
+    }
+
     bool pollAck(uint32_t& crc) {
-        if (!_hasNewAck) return false;
-        crc = _lastAckedCrc;
-        _hasNewAck = false;
+        if (_ackQCount == 0) return false;
+        crc = _ackQ[_ackQHead];
+        _ackQHead = (_ackQHead + 1) % ACK_Q;
+        _ackQCount--;
         return true;
     }
 
@@ -2081,21 +2231,42 @@ public:
                     pubKeyPrefix4[0], pubKeyPrefix4[1], pubKeyPrefix4[2], pubKeyPrefix4[3]);
             return false;
         }
-        uint32_t expected_ack = 0, est_timeout = 0;
-        int r = sendMessage(*ci, getRTCClock()->getCurrentTime(), 0, text, expected_ack, est_timeout);
-        if (r == MSG_SEND_FAILED) {
-            OPS_LOG("Mesh", "sendDirect: MSG_SEND_FAILED for %s", ci->name);
-            memset(_pendingDirectKey, 0, 4);
-        } else if (r == MSG_SEND_SENT_DIRECT) {
-            // Track so onSendTimeout() can auto-reset if no ACK arrives.
-            memcpy(_pendingDirectKey, ci->id.pub_key, 4);
-            _lastExpectedAck = expected_ack;
-        } else {
-            // MSG_SEND_SENT_FLOOD — path was unknown, flooding; nothing to reset on timeout.
-            memset(_pendingDirectKey, 0, 4);
-            _lastExpectedAck = expected_ack;
+        if (strlen(text) > MAX_TEXT_LEN) {
+            OPS_LOG("Mesh", "sendDirect: text too long (%u)", (unsigned)strlen(text));
+            return false;
         }
-        return r != MSG_SEND_FAILED;
+
+        // Free slot, or reuse the one closest to giving up.
+        int slot = -1;
+        for (int s = 0; s < DM_SLOTS; s++) if (!_dms[s].active) { slot = s; break; }
+        if (slot < 0) {
+            slot = 0;
+            for (int s = 1; s < DM_SLOTS; s++)
+                if ((long)(_dms[s].deadline - _dms[slot].deadline) < 0) slot = s;
+            OPS_LOG("Mesh", "DM retry table full — abandoning retries of id=%08X", _dms[slot].id);
+            _failDm(_dms[slot]);
+        }
+
+        // One timestamp per message, unique even for identical texts sent in
+        // the same second (otherwise the packets are identical and the mesh
+        // drops the second as a repeat). All retries reuse it.
+        uint32_t ts = getRTCClock()->getCurrentTime();
+        if (ts <= _txtLastTs) ts = _txtLastTs + 1;
+        _txtLastTs = ts;
+
+        const auto& cfg = ops::config::get();
+        PendingDm& d = _dms[slot];
+        d = PendingDm{};
+        d.active     = true;
+        memcpy(d.key, ci->id.pub_key, 4);
+        d.ts         = ts;
+        d.directLeft = cfg.dmDirectRetries > 10 ? 10 : cfg.dmDirectRetries;
+        d.floodLeft  = cfg.dmFloodRetries  > 5  ? 5  : cfg.dmFloodRetries;
+        strncpy(d.text, text, sizeof(d.text) - 1);
+
+        if (!_sendDmAttempt(d)) return false;
+        _lastExpectedAck = d.id;
+        return true;
     }
 
     bool sendSelfAdvert(int delay_ms, bool flood = true) {
@@ -2634,6 +2805,7 @@ void MeshService::tick() {
     if (!_initialized) return;
     if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
+    the_mesh.serviceDmRetries();
     the_mesh.checkSerialInterface();
     the_mesh.restoreDeferredPaths();   // no-op unless deferred at boot
     _tickFhss();
@@ -2691,6 +2863,10 @@ bool MeshService::getPeer(int idx, PeerInfo& out) const {
 
 bool MeshService::pollAck(uint32_t& acked_crc) {
     return _initialized && the_mesh.pollAck(acked_crc);
+}
+
+bool MeshService::pollDmFailed(uint32_t& id) {
+    return _initialized && the_mesh.pollDmFailed(id);
 }
 
 bool MeshService::sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag) {
