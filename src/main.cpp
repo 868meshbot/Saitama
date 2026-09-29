@@ -22,6 +22,11 @@
 
 // ── Setup ───────────────────────────────────────────────────────────
 void setup() {
+    // Must precede begin(): HWCDC only creates its TX ring (default 256 B) if
+    // none exists. With the zero timeout below, any burst larger than the
+    // ring is silently truncated — multi-line terminal replies (help, card,
+    // identity show) lost their tail. 4 KB absorbs the largest reply.
+    Serial.setTxBufferSize(4096);
     Serial.begin(115200);
     // Never block on USB CDC. Once a host has been seen, HWCDC defaults to a
     // 100 ms write timeout, so every log line stalls the loop (and delays
