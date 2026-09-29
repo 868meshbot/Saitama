@@ -8,6 +8,7 @@
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 #include "ScreenBoot.h"
+#include "ScreenRegions.h"
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
 #include "ScreenHeard.h"
@@ -933,6 +934,7 @@ void tick() {
 
     ScreenMap::tick();
     ScreenTrace::tick();
+    ScreenRegions::tick();
     ScreenFinder::tick();
     ScreenPower::tick();
     ScreenPlaceholder::tick();

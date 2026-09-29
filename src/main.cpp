@@ -14,6 +14,7 @@
 #include "utils/Config.h"
 #include "utils/Contacts.h"
 #include "utils/Crypto.h"
+#include "utils/Regions.h"
 #include "utils/Repeaters.h"
 #include "utils/SDCard.h"
 #include "utils/Sound.h"
@@ -55,6 +56,7 @@ void setup() {
     ops::contacts::init();
     // Storage key must exist before repeaters::init() loads sealed secrets.
     ops::crypto::init();
+    ops::regions::init();
     ops::repeaters::init();
 
     // Apply saved keyboard backlight state on boot

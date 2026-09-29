@@ -25,6 +25,13 @@ struct TraceResult {
     int8_t   rxSnr;        // SNR*4 we received the final hop at
 };
 
+// One repeater's answer to a Discover Regions request.
+struct RegionReply {
+    char repeater[32];
+    char regions[100];   // comma list as the repeater sent it; "*" = accepts unscoped floods; "" = none
+    float snr;           // SNR we heard the reply at
+};
+
 struct RxMessage {
     uint32_t timestamp;
     char     senderName[32];
@@ -155,6 +162,14 @@ public:
     bool pollDmFailed(uint32_t& id);
     // CRC the last sendDirect expects to be ACKed (0 if send failed).
     uint32_t lastExpectedAck() const;
+
+    // ── Region discovery ──────────────────────────────────────────────
+    // Asks every repeater heard at zero hops which regions it floods for
+    // (MeshCore ANON_REQ_TYPE_REGIONS, sent direct). Returns how many were
+    // asked — 0 means no repeater is in direct range. Replies arrive over the
+    // next few seconds via pollRegionReply(); names also go into the catalog.
+    int  discoverRegions();
+    bool pollRegionReply(RegionReply& out);
 
     // ── Identity backup (encrypted, /ops/identity.enc) ────────────────
     // True when the SD backup exists but the storage password doesn't open

@@ -40,6 +40,7 @@
 #include "../mesh/MeshService.h"
 #include "../mesh/Fhss.h"
 #include "../utils/Crypto.h"
+#include "../utils/Regions.h"
 #include "../utils/Repeaters.h"
 #include "../hardware/Board.h"
 #include "../utils/GpsMgr.h"
@@ -4216,6 +4217,7 @@ static void _scSetStatus(const char* msg, lv_color_t col)
 
 static void _scStore(const char* region)
 {
+    ops::regions::add(region);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     strncpy(cfg.scopeTag, region, sizeof(cfg.scopeTag) - 1);
     cfg.scopeTag[sizeof(cfg.scopeTag) - 1] = '\0';

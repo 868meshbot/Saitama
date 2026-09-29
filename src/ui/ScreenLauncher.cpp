@@ -11,6 +11,7 @@
 #include "ScreenRepeaters.h"
 #include "ScreenSignal.h"
 #include "ScreenTrace.h"
+#include "ScreenRegions.h"
 #include "ScreenFinder.h"
 #include "ScreenMap.h"
 #include "ScreenMP3Player.h"
@@ -107,6 +108,7 @@ static const AppItem kApps2[] = {
     { "\xF0\x9F\x94\x8D",   "PCAP"     },  // row 2 - magnifier emoji
     { "\xF0\x9F\xA6\x8A",   "BT Foxhunt" },  // fox emoji
     { LV_SYMBOL_IMAGE,     "Pic Viewer" },
+    { LV_SYMBOL_GPS,       "Regions"  },
 };
 static constexpr int kApps2Count = (int)(sizeof(kApps2) / sizeof(kApps2[0]));
 
@@ -877,6 +879,7 @@ void ScreenLauncher::_onIconClick(lv_event_t* e) {
     else if (strcmp(name, "PCAP")      == 0) { ScreenPcap::show();       return; }
     else if (strcmp(name, "BT Foxhunt") == 0) { ScreenFoxhunt::show();   return; }
     else if (strcmp(name, "Pic Viewer") == 0) { ScreenPicViewer::show(); return; }
+    else if (strcmp(name, "Regions")   == 0) { ScreenRegions::show();   return; }
     ScreenPlaceholder::show(name);
 }
 
@@ -890,7 +893,7 @@ void ScreenLauncher::navigate(int dx, int dy) {
 
     if (s_activePage == 1) {
         // Page 2: row 0 = 4 tiles (cols 0-3), row 1 = 4 tiles (cols 0-3),
-        // row 2 = partial row (PCAP, BT Foxhunt, Pic Viewer)
+        // row 2 = PCAP, BT Foxhunt, Pic Viewer, Regions
         if (dy < 0 && s_selRow2 > 0) {
             s_selRow2--;
         } else if (dy > 0 && s_selRow2 < 2) {

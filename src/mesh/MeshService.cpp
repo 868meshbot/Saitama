@@ -29,6 +29,7 @@
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
 #include "../utils/IdentityBackup.h"
+#include "../utils/Regions.h"
 #include "../utils/Crypto.h"
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
@@ -236,6 +237,16 @@ class OMSMesh : public BaseChatMesh {
     // it. We run on a temporary identity that is never saved anywhere, so the
     // backup survives until it is unlocked or deliberately set aside.
     bool _identityLocked = false;
+
+    // ── Region discovery ──────────────────────────────────────────────
+    // Outstanding ANON_REQ_TYPE_REGIONS requests, matched on the timestamp
+    // the repeater echoes as the first 4 bytes of its reply.
+    static constexpr uint8_t ANON_REQ_REGIONS = 0x01;   // simple_repeater ANON_REQ_TYPE_REGIONS
+    static constexpr int     REG_MAX = 8;
+    uint32_t    _regTags[REG_MAX] = {};
+    int         _regTagCount = 0;
+    RegionReply _regQ[REG_MAX] = {};
+    int         _regQHead = 0, _regQCount = 0;
 
     // ── Outgoing DM retry engine ──────────────────────────────────────
     // Each in-flight DM keeps one timestamp for all its attempts; the attempt
@@ -1402,6 +1413,7 @@ class OMSMesh : public BaseChatMesh {
 
     void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override
     {
+        if (_takeRegionReply(contact, data, len)) return;
 
         // All repeater responses are prefixed with a 4-byte timestamp.
         // The actual response code/text starts at data[4].
@@ -2253,6 +2265,71 @@ public:
         }
     }
 
+    // Region discovery ────────────────────────────────────────────────
+    int discoverRegions() {
+        if (!_active) return 0;
+        _regTagCount = 0;
+        _regQHead = _regQCount = 0;
+        ContactsIterator it = startContactsIterator();
+        ContactInfo c;
+        int asked = 0;
+        while (it.hasNext(this, c) && _regTagCount < REG_MAX) {
+            // Zero hops = heard directly, which is what the request needs:
+            // repeaters only answer it when it arrives direct.
+            if (c.type != ADV_TYPE_REPEATER || c.out_path_len != 0) continue;
+            uint8_t req[6];
+            uint32_t tag = getRTCClock()->getCurrentTimeUnique();
+            memcpy(req, &tag, 4);
+            req[4] = ANON_REQ_REGIONS;
+            req[5] = 0;   // reply path length: 0 = answer straight back, zero hop
+            mesh::Packet* pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, c.id,
+                                                   c.getSharedSecret(self_id), req, sizeof(req));
+            if (!pkt) continue;
+            // Stagger so the replies don't all key up at once.
+            sendDirect(pkt, c.out_path, 0, (uint32_t)asked * 400);
+            _regTags[_regTagCount++] = tag;
+            asked++;
+            OPS_LOG("Regions", "Asked %s for its regions (tag %08X)", c.name, tag);
+        }
+        return asked;
+    }
+
+    bool pollRegionReply(RegionReply& out) {
+        if (_regQCount == 0) return false;
+        out = _regQ[_regQHead];
+        _regQHead = (_regQHead + 1) % REG_MAX;
+        _regQCount--;
+        return true;
+    }
+
+    // Reply layout: our tag(4) + their clock(4) + comma-separated region names.
+    bool _takeRegionReply(const ContactInfo& contact, const uint8_t* data, uint8_t len) {
+        if (len < 8 || _regTagCount == 0) return false;
+        uint32_t tag;
+        memcpy(&tag, data, 4);
+        int t = -1;
+        for (int i = 0; i < _regTagCount; i++) if (_regTags[i] == tag) { t = i; break; }
+        if (t < 0) return false;
+        _regTags[t] = _regTags[--_regTagCount];   // each tag answers once
+
+        RegionReply r{};
+        strncpy(r.repeater, contact.name, sizeof(r.repeater) - 1);
+        r.snr = radio_driver.getLastSNR();   // this reply is the packet just received
+        int n = len - 8;
+        if (n > (int)sizeof(r.regions) - 1) n = sizeof(r.regions) - 1;
+        memcpy(r.regions, data + 8, n);
+        r.regions[n] = '\0';
+        for (char* p = r.regions; *p; p++)   // keep only printable name characters
+            if ((unsigned char)*p < ' ' || (unsigned char)*p > '~') *p = '?';
+
+        ops::regions::addList(r.regions);
+        if (_regQCount == REG_MAX) { _regQHead = (_regQHead + 1) % REG_MAX; _regQCount--; }
+        _regQ[(_regQHead + _regQCount) % REG_MAX] = r;
+        _regQCount++;
+        OPS_LOG("Regions", "%s floods for: %s", r.repeater, r.regions[0] ? r.regions : "(none)");
+        return true;
+    }
+
     // Transport key for a region scope, as repeaters derive it
     // (RegionMap::getTransportKeysFor): a plain name like "AU" is an implicit
     // hashtag region, keyed SHA-256("#AU"). A legacy "#AU" is accepted too.
@@ -3018,6 +3095,14 @@ bool MeshService::pollAck(uint32_t& acked_crc) {
 
 bool MeshService::pollDmFailed(uint32_t& id) {
     return _initialized && the_mesh.pollDmFailed(id);
+}
+
+int MeshService::discoverRegions() {
+    return _initialized ? the_mesh.discoverRegions() : 0;
+}
+
+bool MeshService::pollRegionReply(RegionReply& out) {
+    return _initialized && the_mesh.pollRegionReply(out);
 }
 
 bool MeshService::identityLocked() const {

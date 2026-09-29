@@ -5,6 +5,7 @@
 // touching the LittleFS/spiffs partition that MeshCore owns.
 
 #include "Config.h"
+#include "Regions.h"
 #include "SDCard.h"
 #include "Log.h"
 #include <Preferences.h>
@@ -478,6 +479,7 @@ void config::setChannelIcon(int idx, const char* icon) {
 }
 
 void config::setChannel(int idx, const char* name, const char* psk, const char* shortname, const char* scope) {
+    if (scope && scope[0]) ops::regions::add(scope);   // offer it in region pickers
     if (idx < 0 || idx > 9) return;
     strncpy(s_cfg.channels[idx].name,      name,      sizeof(s_cfg.channels[idx].name)      - 1);
     strncpy(s_cfg.channels[idx].psk,       psk,       sizeof(s_cfg.channels[idx].psk)       - 1);
