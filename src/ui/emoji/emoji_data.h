@@ -110,6 +110,12 @@ extern const lv_img_dsc_t emoji_cat_heart;
 extern const lv_img_dsc_t emoji_cat_smirk;
 extern const lv_img_dsc_t emoji_cat_cry;
 extern const lv_img_dsc_t emoji_cat_pout;
+extern const lv_img_dsc_t emoji_cat_face;
+extern const lv_img_dsc_t emoji_cat_grin;
+extern const lv_img_dsc_t emoji_cat_kiss;
+extern const lv_img_dsc_t emoji_cat_weary;
+extern const lv_img_dsc_t emoji_cat;
+extern const lv_img_dsc_t emoji_dog_face;
 extern const lv_img_dsc_t emoji_thumbsup;
 extern const lv_img_dsc_t emoji_thumbsdown;
 extern const lv_img_dsc_t emoji_wave;
@@ -275,12 +281,17 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F47Du, &emoji_alien, "alien ufo extraterrestrial" },
     { 0x1F47Eu, &emoji_space_invader, "space invader game alien" },
     { 0x1F916u, &emoji_robot, "robot machine" },
-    { 0x1F638u, &emoji_cat_smile, "cat smile happy" },
+    { 0x1F638u, &emoji_cat_smile, "cat grinning smiling eyes smile happy" },
     { 0x1F639u, &emoji_cat_joy, "cat joy laugh tears" },
     { 0x1F63Bu, &emoji_cat_heart, "cat heart eyes love" },
     { 0x1F63Cu, &emoji_cat_smirk, "cat smirk wry" },
     { 0x1F63Fu, &emoji_cat_cry, "cat cry sad" },
     { 0x1F63Eu, &emoji_cat_pout, "cat pouting angry" },
+    { 0x1F431u, &emoji_cat_face, "cat face kitten pet" },
+    { 0x1F63Au, &emoji_cat_grin, "cat grinning happy" },
+    { 0x1F63Du, &emoji_cat_kiss, "cat kissing love" },
+    { 0x1F640u, &emoji_cat_weary, "cat weary shocked scream" },
+    { 0x1F408u, &emoji_cat, "cat kitty pet animal" },
     { 0x1F44Du, &emoji_thumbsup, "thumbs up good yes" },
     { 0x1F44Eu, &emoji_thumbsdown, "thumbs down no bad" },
     { 0x1F44Bu, &emoji_wave, "wave hand hello bye" },
@@ -309,6 +320,7 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F4A4u, &emoji_zzz, "zzz sleep tired" },
     { 0x1F438u, &emoji_frog, "frog green" },
     { 0x1F415u, &emoji_dog, "dog puppy" },
+    { 0x1F436u, &emoji_dog_face, "dog face puppy pet" },
     { 0x1F98Au, &emoji_fox, "fox foxhunt animal" },
     { 0x1F50Du, &emoji_magnifier, "magnifying glass search inspect" },
     { 0x02623u, &emoji_biohazard, "biohazard toxic hazard warning" },
@@ -344,4 +356,4 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F1EEu, &emoji_ireland, "ireland flag" },
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
 };
-static const int kOpsEmojiCount = 163;
+static const int kOpsEmojiCount = 169;

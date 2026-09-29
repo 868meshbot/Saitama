@@ -132,12 +132,17 @@ EMOJI = [
     ("space_invader", 0x1F47E, "1f47e", "space invader game alien"),
     ("robot",         0x1F916, "1f916", "robot machine"),
     # ── Cat Faces ────────────────────────────────────────────────────────────
-    ("cat_smile",     0x1F638, "1f638", "cat smile happy"),
+    ("cat_smile",     0x1F638, "1f638", "cat grinning smiling eyes smile happy"),
     ("cat_joy",       0x1F639, "1f639", "cat joy laugh tears"),
     ("cat_heart",     0x1F63B, "1f63b", "cat heart eyes love"),
     ("cat_smirk",     0x1F63C, "1f63c", "cat smirk wry"),
     ("cat_cry",       0x1F63F, "1f63f", "cat cry sad"),
     ("cat_pout",      0x1F63E, "1f63e", "cat pouting angry"),
+    ("cat_face",   0x1F431, "1f431", "cat face kitten pet"),
+    ("cat_grin",   0x1F63A, "1f63a", "cat grinning happy"),
+    ("cat_kiss",   0x1F63D, "1f63d", "cat kissing love"),
+    ("cat_weary",  0x1F640, "1f640", "cat weary shocked scream"),
+    ("cat",        0x1F408, "1f408", "cat kitty pet animal"),
     # ── People & Hands ───────────────────────────────────────────────────────
     ("thumbsup",      0x1F44D, "1f44d", "thumbs up good yes"),
     ("thumbsdown",    0x1F44E, "1f44e", "thumbs down no bad"),
@@ -169,6 +174,7 @@ EMOJI = [
     # ── Objects & Nature (commonly used in chat) ──────────────────────────────
     ("frog",          0x1F438, "1f438", "frog green"),
     ("dog",           0x1F415, "1f415", "dog puppy"),
+    ("dog_face",   0x1F436, "1f436", "dog face puppy pet"),
     ("fox",           0x1F98A, "1f98a", "fox foxhunt animal"),
     ("magnifier",     0x1F50D, "1f50d", "magnifying glass search inspect"),
     ("biohazard",     0x2623,  "2623",  "biohazard toxic hazard warning"),
