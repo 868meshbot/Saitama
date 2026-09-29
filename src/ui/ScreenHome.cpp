@@ -215,7 +215,7 @@ bool ScreenHome::_ensureHistoryAlloc()
     return true;
 }
 
-void ScreenHome::_historyAdd(bool           sent,
+bool ScreenHome::_historyAdd(bool           sent,
                               const char*    sender,
                               const char*    text,
                               uint8_t        hops,
@@ -226,27 +226,35 @@ void ScreenHome::_historyAdd(bool           sent,
                               const char*    pathStr,
                               const uint8_t* pubKeyPrefix)
 {
-    if (!_ensureHistoryAlloc()) return;
+    if (!_ensureHistoryAlloc()) return false;
 
     const char* tagForCompare = (channelTag && channelTag[0]) ? channelTag : "Public";
 
-    if (s_histCount == HISTORY_MAX) {
-        // Evict the oldest entry belonging to the SAME channel/DM as the
-        // incoming message, so a busy conversation can only push out its own
-        // history, never another channel's or DM's (previously this always
-        // evicted the single global-oldest entry, so e.g. traffic on other
-        // channels could silently wipe wlesandwest-chat's messages from view).
-        int victim = 0;
-        for (int i = 0; i < s_histCount; i++) {
-            const char* t = s_history[i].channelTag[0] ? s_history[i].channelTag : "Public";
-            if (strcmp(t, tagForCompare) == 0) { victim = i; break; }
+    // Oldest entry of this channel/DM, and how many it already holds.
+    int sameTagOldest = -1;
+    int sameTagCount  = 0;
+    for (int i = 0; i < s_histCount; i++) {
+        const char* t = s_history[i].channelTag[0] ? s_history[i].channelTag : "Public";
+        if (strcmp(t, tagForCompare) == 0) {
+            if (sameTagOldest < 0) sameTagOldest = i;
+            sameTagCount++;
         }
-        int moveCount = HISTORY_MAX - 1 - victim;
+    }
+
+    // Evict when this conversation is at its own cap, or when the shared pool
+    // is full. Either way the victim is this conversation's oldest message,
+    // so a busy channel/DM only ever pushes out its own history. (Falls back
+    // to the global oldest if the pool is full of other conversations.)
+    bool evicted = false;
+    if (sameTagCount >= CHANNEL_HISTORY_MAX || s_histCount == HISTORY_MAX) {
+        int victim = (sameTagOldest >= 0) ? sameTagOldest : 0;
+        int moveCount = s_histCount - 1 - victim;
         if (moveCount > 0) {
             memmove(&s_history[victim],    &s_history[victim + 1],    moveCount * sizeof(MsgEntry));
             memmove(&s_metaLabels[victim], &s_metaLabels[victim + 1], moveCount * sizeof(lv_obj_t*));
         }
         s_histCount--;
+        evicted = true;
     }
     MsgEntry& e = s_history[s_histCount];
     e.sent = sent;
@@ -285,6 +293,7 @@ void ScreenHome::_historyAdd(bool           sent,
         if (!ops::sdcard::appendMsgLine(e.channelTag, line))
             OPS_LOG("Chat", "appendMsgLine failed for '%s'", e.channelTag);
     }
+    return evicted;
 }
 
 // ── _getViewTag() ─────────────────────────────────────────────────────
@@ -518,7 +527,9 @@ void ScreenHome::_loadChannelHistory(const char* tag)
         s_loadedTagCnt++;
     }
 
-    constexpr size_t BUFSIZE = 8192;
+    // Tail of the log — enough for CHANNEL_HISTORY_MAX lines even at the
+    // ~480-byte worst case per line.
+    constexpr size_t BUFSIZE = 12288;
     char* buf = (char*)ps_malloc(BUFSIZE);
     if (!buf) { OPS_LOG("Chat", "ps_malloc failed for msg log"); return; }
 
@@ -533,11 +544,25 @@ void ScreenHome::_loadChannelHistory(const char* tag)
         if (nl) line = nl + 1;
     }
 
+    // Only replay the last CHANNEL_HISTORY_MAX messages; older ones stay on
+    // SD but would just be evicted again as they're added.
+    int total = 0;
+    for (const char* q = line; *q; )
+    {
+        if (*q == '{') total++;
+        const char* nl = strchr(q, '\n');
+        if (!nl) break;
+        q = nl + 1;
+    }
+    int skip = total - CHANNEL_HISTORY_MAX;
+
     int loaded = 0;
     while (*line) {
         char* end = strchr(line, '\n');
         if (end) { *end = '\0'; }
-        if (*line == '{') {
+        if (*line == '{' && skip > 0) {
+            skip--;
+        } else if (*line == '{') {
             bool sent      = (bool)_jsonGetLong(line, "s");
             uint8_t hops   = (uint8_t)_jsonGetLong(line, "h");
             uint32_t ts    = (uint32_t)_jsonGetLong(line, "ts");
@@ -672,8 +697,8 @@ void ScreenHome::appendMessage(const RxMessage& msg)
         tag = "Public";
     }
 
-    _historyAdd(false, msg.senderName, msg.text, msg.hops, msg.timestamp, msg.rssi, 0, tag,
-                msg.pathStr, msg.pubKeyPrefix);
+    bool evicted = _historyAdd(false, msg.senderName, msg.text, msg.hops, msg.timestamp,
+                               msg.rssi, 0, tag, msg.pathStr, msg.pubKeyPrefix);
 
     int slot = _tagToSlot(tag);
     if (slot >= 0) {
@@ -704,14 +729,20 @@ void ScreenHome::appendMessage(const RxMessage& msg)
                    msg.senderName, msg.text, msg.hops, msg.timestamp, msg.rssi, false,
                    msg.pathStr);
     }
+    // An eviction shifts history indices that on-screen bubbles hold (tap
+    // handler, ACK tick label), and leaves the evicted bubble showing —
+    // rebuild so the view matches the capped history.
+    if (evicted && s_mode == MODE_CHAT) _rebuildMsgArea();
 }
 
 // ── appendSent() ──────────────────────────────────────────────────────
 
 void ScreenHome::appendSent(const char* text, uint32_t ts, uint32_t expectedAck)
 {
-    _historyAdd(true, nullptr, text, 0, ts, 0.0f, expectedAck, _getViewTag());
-    _addBubble(s_histCount - 1, true, nullptr, text, 0, ts, 0.0f, false);
+    if (_historyAdd(true, nullptr, text, 0, ts, 0.0f, expectedAck, _getViewTag()))
+        _rebuildMsgArea();
+    else
+        _addBubble(s_histCount - 1, true, nullptr, text, 0, ts, 0.0f, false);
 }
 
 // ── checkPendingAck() ─────────────────────────────────────────────────

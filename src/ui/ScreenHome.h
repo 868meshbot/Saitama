@@ -48,8 +48,11 @@ private:
 
     // 200 slots shared across all channels/DMs, ps_malloc'd in PSRAM on first
     // use. Eviction is per-tag (see _historyAdd) so a busy channel/DM can only
-    // push out its own oldest messages, never another conversation's.
+    // push out its own oldest messages, never another conversation's. Each
+    // channel/DM keeps at most CHANNEL_HISTORY_MAX in RAM (and on screen);
+    // the SD log still records everything.
     static constexpr int HISTORY_MAX = 200;
+    static constexpr int CHANNEL_HISTORY_MAX = 20;
     static MsgEntry*  s_history;    // allocated by _ensureHistoryAlloc()
     static int        s_histCount;
     static lv_obj_t*  s_metaLabels[HISTORY_MAX];
@@ -89,7 +92,7 @@ private:
 
     // ── History helpers ───────────────────────────────────────────────
     static bool _ensureHistoryAlloc();
-    static void _historyAdd(bool sent, const char* sender, const char* text,
+    static bool _historyAdd(bool sent, const char* sender, const char* text,
                             uint8_t hops, uint32_t ts, float rssi,
                             uint32_t expectedAck = 0,
                             const char* channelTag = nullptr,

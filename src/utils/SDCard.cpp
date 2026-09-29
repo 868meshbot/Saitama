@@ -24,6 +24,7 @@ void sdcard::init() {
     }
     s_mounted = true;
     if (!SD.exists("/ops")) SD.mkdir("/ops");
+    if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Mounted, %llu MB free", (unsigned long long)free_mb);
     OPS_LOG("SD", "Backups: id=%d contacts=%d repeaters=%d",
@@ -48,6 +49,7 @@ bool sdcard::tryMount()
     }
     s_mounted = true;
     if (!SD.exists("/ops")) SD.mkdir("/ops");
+    if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Remounted, %llu MB free", (unsigned long long)free_mb);
     return true;
@@ -141,15 +143,16 @@ static void _buildMsgPath(const char* tag, char* path, size_t pathSize)
 bool sdcard::appendMsgLine(const char* tag, const char* json)
 {
     if (!s_mounted) return false;
-    if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
     char path[52];
     _buildMsgPath(tag, path, sizeof(path));
-    if (!SD.exists(path)) {
-        File fc = SD.open(path, FILE_WRITE);
-        if (!fc) { OPS_LOG("SD", "appendMsgLine create failed: %s", path); return false; }
-        fc.close();
-    }
+    // /ops/msgs is created at mount and FILE_APPEND creates a missing log, so
+    // the common path is a single open. If the directory was removed while
+    // mounted, recreate it and retry once.
     File f = SD.open(path, FILE_APPEND);
+    if (!f) {
+        SD.mkdir("/ops/msgs");
+        f = SD.open(path, FILE_APPEND);
+    }
     if (!f) { OPS_LOG("SD", "appendMsgLine open failed: %s", path); return false; }
     f.println(json);
     f.close();
