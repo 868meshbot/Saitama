@@ -19,10 +19,10 @@ struct TraceResult {
     uint32_t tag;
     uint8_t  numHops;      // total hashes in path_hashes (includes contact + repeaters)
     uint8_t  hashSz;       // bytes per hash (1 or 2)
-    int8_t   snrs[64];     // accumulated SNR*4 values (pkt->path at time of receipt)
-    uint8_t  hashes[128];  // raw path_hashes bytes
+    int8_t   snrs[64];     // SNR*4 each listed node received the trace at
+    uint8_t  hashes[128];  // raw path_hashes bytes (out-and-back route)
     uint8_t  numSnrs;      // count of valid SNR values (may be numHops or numHops-1)
-    uint8_t  targetPubKeyPrefix[4];
+    int8_t   rxSnr;        // SNR*4 we received the final hop at
 };
 
 struct RxMessage {
@@ -158,10 +158,12 @@ public:
 
     // ── Trace ─────────────────────────────────────────────────────────
     // Sends a TRACE (0x09) packet along the known path to a contact.
-    // Appends the contact's own hash so the final retransmission triggers
-    // onTraceRecv on any node in range — including the initiator.
-    // Returns true if the trace was queued; fills out_tag with the random tag.
-    bool sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag);
+    // The route goes out and back ([R1..Rn, target, Rn..R1]) so the last
+    // retransmission comes from R1, which we can hear. Contacts that don't
+    // forward (non-repeaters) turn it round at their last relay instead.
+    // Returns true if the trace was queued; fills out_tag with the random tag
+    // and out_hops with the number of nodes on the route.
+    bool sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag, int& out_hops);
 
     // Returns true (once) when a trace result is waiting.
     bool pollTraceResult(struct TraceResult& out);

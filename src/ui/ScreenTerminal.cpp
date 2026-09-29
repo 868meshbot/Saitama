@@ -1578,12 +1578,13 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 snprintf(buf, sizeof(buf), "Path: %d relay hop(s)  hash_sz=%d",
                          (int)pi.hopCount, (int)pi.hashSz);
                 appendLine(buf);
-                appendLine("Note: result only arrives if target is in direct RF range");
+                appendLine("Traced out and back along this route");
             }
         }
         uint32_t tag;
-        if (mesh.sendTrace(prefix, tag)) {
-            snprintf(buf, sizeof(buf), "Trace → %s  tag=%08X", targetName, tag);
+        int nodes = 0;
+        if (mesh.sendTrace(prefix, tag, nodes)) {
+            snprintf(buf, sizeof(buf), "Trace → %s  tag=%08X  nodes=%d", targetName, tag, nodes);
             appendLine(buf);
             appendLine("Open Trace app to see result (if any).");
         } else {

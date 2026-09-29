@@ -178,7 +178,62 @@ static const char *_lookupNodeName(const uint8_t *hashBytes, uint8_t hashSz,
 
 static float _snrFromRaw(int8_t raw) { return raw / 4.0f; }
 
-// ── _rebuildHopList() ─────────────────────────��───────────────────────
+// ── Hop row ───────────────────────────────────────────────────────────
+// One result row: "N.  AB  Name        +6.5 dB". snrRaw < -128 = unknown.
+static void _addHopRow(lv_obj_t *list, const char *num, const char *abbr,
+                       const char *name, bool highlight, int snrRaw) {
+  lv_obj_t *row = lv_obj_create(list);
+  lv_obj_set_width(row, lv_pct(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(row, theme::BG_CARD, 0);
+  lv_obj_set_style_border_width(row, highlight ? 1 : 0, 0);
+  lv_obj_set_style_border_color(row, theme::ACCENT, 0);
+  lv_obj_set_style_radius(row, 4, 0);
+  lv_obj_set_style_pad_hor(row, 6, 0);
+  lv_obj_set_style_pad_ver(row, 3, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *hopLbl = lv_label_create(row);
+  lv_label_set_text(hopLbl, num);
+  lv_obj_set_style_text_color(hopLbl, theme::TEXT_MUTED, 0);
+  lv_obj_set_style_text_font(hopLbl, &lv_font_montserrat_12, 0);
+  lv_obj_set_width(hopLbl, 22);
+
+  lv_obj_t *addrLbl = lv_label_create(row);
+  lv_label_set_text(addrLbl, abbr);
+  lv_obj_set_style_text_color(addrLbl, theme::ACCENT, 0);
+  lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_12, 0);
+  lv_obj_set_width(addrLbl, 26);
+
+  lv_obj_t *nameLbl = lv_label_create(row);
+  lv_label_set_text(nameLbl, name);
+  lv_obj_set_style_text_color(nameLbl, highlight ? theme::ACCENT : theme::TEXT, 0);
+  lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+  lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
+  lv_obj_set_flex_grow(nameLbl, 1);
+
+  char snrBuf[16] = "?";
+  lv_color_t snrCol = theme::TEXT_MUTED;
+  if (snrRaw >= -128) {
+    float snr = _snrFromRaw((int8_t)snrRaw);
+    snprintf(snrBuf, sizeof(snrBuf), "%+.1f dB", (double)snr);
+    snrCol = (snr >= 5.0f) ? theme::GREEN : (snr >= -2.5f) ? theme::ORANGE : theme::RED;
+  }
+  lv_obj_t *snrLbl = lv_label_create(row);
+  lv_label_set_text(snrLbl, snrBuf);
+  lv_obj_set_style_text_font(snrLbl, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_color(snrLbl, snrCol, 0);
+  lv_obj_set_width(snrLbl, 66);
+  lv_obj_set_style_text_align(snrLbl, LV_TEXT_ALIGN_RIGHT, 0);
+}
+
+// ── _rebuildHopList() ─────────────────────────────────────────────────
+// The route is out and back, so it's symmetric: the middle entry is the
+// turnaround (the target, or its last relay). Each row's SNR is what that
+// node received the trace at; the final "You" row is our own receive SNR.
 void ScreenTrace::_rebuildHopList() {
   if (!_hopList)
     return;
@@ -190,12 +245,12 @@ void ScreenTrace::_rebuildHopList() {
   const ops::TraceResult &r = s_result;
   uint8_t hashSz = r.hashSz ? r.hashSz : 1;
   uint8_t numHops = r.numHops;
+  int turn = numHops / 2;
 
-  // Header: tag + hop count
   {
     lv_obj_t *hdr = lv_label_create(_hopList);
     char buf[48];
-    snprintf(buf, sizeof(buf), "Tag %08X  %d hop%s", r.tag, numHops,
+    snprintf(buf, sizeof(buf), "Out and back: %d node%s", numHops,
              numHops == 1 ? "" : "s");
     lv_label_set_text(hdr, buf);
     lv_obj_set_style_text_color(hdr, theme::TEXT_MUTED, 0);
@@ -203,82 +258,41 @@ void ScreenTrace::_rebuildHopList() {
     lv_obj_set_width(hdr, lv_pct(100));
   }
 
-  // Hop rows: one row per path hash.
-  // path_hashes layout: [hash_0][hash_1]...[hash_N-1]
-  // path_snrs[i] = SNR accumulated by the i-th forwarding node.
-  // The final hash (index numHops-1) is typically the contact/target.
   for (int i = 0; i < numHops; i++) {
     const uint8_t *hashBytes = r.hashes + (i * hashSz);
     char unknown[12];
     const char *nodeName =
         _lookupNodeName(hashBytes, hashSz, unknown, sizeof(unknown));
-
-    // SNR for this hop: snrs[i] is the SNR the i-th node RECEIVED with.
-    // numSnrs may be numHops-1 (intermediate hops only) or numHops.
-    char snrBuf[16] = "?";
-    if (i < r.numSnrs) {
-      float snr = _snrFromRaw(r.snrs[i]);
-      snprintf(snrBuf, sizeof(snrBuf), "%+.1f dB", (double)snr);
-    }
-
-    // Hash abbreviation: first 2 hex chars (1st byte).
-    char hashAbbr[8];
-    snprintf(hashAbbr, sizeof(hashAbbr), "%02X", hashBytes[0]);
-
-    // Build row object.
-    lv_obj_t *row = lv_obj_create(_hopList);
-    lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(row, theme::BG_CARD, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_radius(row, 4, 0);
-    lv_obj_set_style_pad_hor(row, 6, 0);
-    lv_obj_set_style_pad_ver(row, 3, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-
-    // Hop number
-    lv_obj_t *hopLbl = lv_label_create(row);
-    char hopBuf[8];
-    snprintf(hopBuf, sizeof(hopBuf), "%d.", i + 1);
-    lv_label_set_text(hopLbl, hopBuf);
-    lv_obj_set_style_text_color(hopLbl, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(hopLbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_width(hopLbl, 22);
-
-    // Hash abbreviation (2 hex chars, accent colour)
-    lv_obj_t *addrLbl = lv_label_create(row);
-    lv_label_set_text(addrLbl, hashAbbr);
-    lv_obj_set_style_text_color(addrLbl, theme::ACCENT, 0);
-    lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_width(addrLbl, 26);
-
-    // Node name (truncated)
-    lv_obj_t *nameLbl = lv_label_create(row);
-    lv_label_set_text(nameLbl, nodeName);
-    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
-    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
-    lv_obj_set_flex_grow(nameLbl, 1);
-
-    // SNR value (right-aligned via grow spacer before it)
-    lv_obj_t *snrLbl = lv_label_create(row);
-    lv_label_set_text(snrLbl, snrBuf);
-    lv_obj_set_style_text_font(snrLbl, &lv_font_montserrat_12, 0);
-    // Colour by signal quality
-    lv_color_t snrCol = theme::TEXT_MUTED;
-    if (i < r.numSnrs) {
-      float snr = _snrFromRaw(r.snrs[i]);
-      snrCol = (snr >= 5.0f)    ? theme::GREEN
-               : (snr >= -2.5f) ? theme::ORANGE
-                                : theme::RED;
-    }
-    lv_obj_set_style_text_color(snrLbl, snrCol, 0);
-    lv_obj_set_width(snrLbl, 66);
-    lv_obj_set_style_text_align(snrLbl, LV_TEXT_ALIGN_RIGHT, 0);
+    char num[8];
+    snprintf(num, sizeof(num), "%d.", i + 1);
+    char abbr[8];
+    snprintf(abbr, sizeof(abbr), "%02X", hashBytes[0]);
+    _addHopRow(_hopList, num, abbr, nodeName, i == turn,
+               i < r.numSnrs ? (int)r.snrs[i] : -129);
   }
+  _addHopRow(_hopList, LV_SYMBOL_HOME, "", "You", false, (int)r.rxSnr);
+}
+
+// ── Route status text ─────────────────────────────────────────────────
+// Describes how a trace to t will run. Returns false if there is no path.
+static bool _routeStatus(const TraceTarget &t, char *buf, size_t len,
+                         lv_color_t &col) {
+  auto &mesh = ops::MeshService::instance();
+  if (!mesh.hasPathTo(t.pubKeyPrefix)) {
+    snprintf(buf, len, "No path known yet - wait for advert");
+    col = theme::ORANGE;
+    return false;
+  }
+  ops::PathInfo pi{};
+  mesh.getContactPath(t.pubKeyPrefix, pi);
+  if (pi.direct)
+    snprintf(buf, len, "Direct - target must forward to answer");
+  else if (t.isRepeater)
+    snprintf(buf, len, "Via %d relay(s), out and back", (int)pi.hopCount);
+  else
+    snprintf(buf, len, "Via %d relay(s), turns at last relay", (int)pi.hopCount);
+  col = theme::ACCENT;
+  return true;
 }
 
 // ── _setStatus() ──────────────────────────────────────────────────────
@@ -297,6 +311,11 @@ void ScreenTrace::tick() {
   // Check for arrived trace result.
   ops::TraceResult res;
   if (ops::MeshService::instance().pollTraceResult(res)) {
+    // A trace from someone else can end within earshot too — while ours is
+    // in flight, only ours counts. (Idle, accept any: the Terminal's
+    // "trace" command shows its result here.)
+    if (s_traceInFlight && res.tag != s_pendingTag)
+      return;
     s_result = res;
     s_hasResult = true;
     s_traceInFlight = false;
@@ -310,9 +329,10 @@ void ScreenTrace::tick() {
     if (millis() > s_pendingUntilMs) {
       s_traceInFlight = false;
       if (s_pendingIsDirect) {
-        _setStatus("No response - target forwarding disabled", theme::ORANGE);
+        _setStatus("No response - target has forwarding off", theme::ORANGE);
       } else {
-        _setStatus("No response - target not in direct RF range",
+        _setStatus("No response - a node on the route didn't forward "
+                   "(route may be stale)",
                    theme::ORANGE);
       }
     }
@@ -451,29 +471,9 @@ void ScreenTrace::_build() {
   // text.
   char initStatus[56] = "No contacts or repeaters saved";
   lv_color_t initCol = theme::TEXT_MUTED;
-  if (s_selIdx >= 0) {
-    auto &mesh0 = ops::MeshService::instance();
-    bool pathOk0 = mesh0.hasPathTo(s_targets[s_selIdx].pubKeyPrefix);
-    if (!pathOk0) {
-      lv_obj_add_state(_traceBtn, LV_STATE_DISABLED);
-      strncpy(initStatus, "No path known yet - wait for advert",
-              sizeof(initStatus) - 1);
-      initCol = theme::ORANGE;
-    } else {
-      ops::PathInfo pi0{};
-      mesh0.getContactPath(s_targets[s_selIdx].pubKeyPrefix, pi0);
-      if (pi0.direct) {
-        strncpy(initStatus, "Direct - trace needs target forwarding",
-                sizeof(initStatus) - 1);
-      } else {
-        snprintf(initStatus, sizeof(initStatus),
-                 "Via %d relay(s) - may not return to you", (int)pi0.hopCount);
-      }
-      initCol = theme::ACCENT;
-    }
-  } else {
+  if (s_selIdx < 0 ||
+      !_routeStatus(s_targets[s_selIdx], initStatus, sizeof(initStatus), initCol))
     lv_obj_add_state(_traceBtn, LV_STATE_DISABLED);
-  }
 
   // ── Status line ───────────────────────────────────────────────────
   _statusLbl = lv_label_create(body);
@@ -534,24 +534,13 @@ void ScreenTrace::_onDropChange(lv_event_t *e) {
     return;
   }
 
-  auto &mesh = ops::MeshService::instance();
-  bool pathOk = mesh.hasPathTo(s_targets[s_selIdx].pubKeyPrefix);
-  if (pathOk) {
+  char msg[56];
+  lv_color_t col;
+  if (_routeStatus(s_targets[s_selIdx], msg, sizeof(msg), col))
     lv_obj_clear_state(_traceBtn, LV_STATE_DISABLED);
-    ops::PathInfo pi{};
-    mesh.getContactPath(s_targets[s_selIdx].pubKeyPrefix, pi);
-    char msg[48];
-    if (pi.direct) {
-      snprintf(msg, sizeof(msg), "Direct - trace needs target forwarding");
-    } else {
-      snprintf(msg, sizeof(msg), "Via %d relay(s) — may not return to you",
-               (int)pi.hopCount);
-    }
-    _setStatus(msg, theme::ACCENT);
-  } else {
+  else
     lv_obj_add_state(_traceBtn, LV_STATE_DISABLED);
-    _setStatus("No path known yet - wait for advert", theme::ORANGE);
-  }
+  _setStatus(msg, col);
 }
 
 void ScreenTrace::_onTraceClick(lv_event_t * /*e*/) {
@@ -560,7 +549,8 @@ void ScreenTrace::_onTraceClick(lv_event_t * /*e*/) {
 
   const TraceTarget &tgt = s_targets[s_selIdx];
   uint32_t tag = 0;
-  bool ok = ops::MeshService::instance().sendTrace(tgt.pubKeyPrefix, tag);
+  int nodes = 1;
+  bool ok = ops::MeshService::instance().sendTrace(tgt.pubKeyPrefix, tag, nodes);
   if (!ok) {
     _setStatus("Send failed (no path?)", theme::RED);
     return;
@@ -570,7 +560,9 @@ void ScreenTrace::_onTraceClick(lv_event_t * /*e*/) {
   ops::MeshService::instance().getContactPath(tgt.pubKeyPrefix, pi);
   s_pendingTag = tag;
   s_traceInFlight = true;
-  s_pendingUntilMs = millis() + 15000;
+  // Each node waits a short random delay before retransmitting; allow
+  // generously per node on the out-and-back route.
+  s_pendingUntilMs = millis() + 8000 + 3000 * (uint32_t)nodes;
   s_pendingIsDirect = pi.direct;
   s_hasResult = false;
   if (_hopList)

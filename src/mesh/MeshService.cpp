@@ -1094,10 +1094,7 @@ class OMSMesh : public BaseChatMesh {
         res.numSnrs = num_snrs;
         memcpy(res.hashes, path_hashes, path_len);
         if (num_snrs > 0) memcpy(res.snrs, path_snrs, num_snrs);
-        // Fill target prefix from the last hash in the path
-        uint8_t last_hash_off = (num_hops - 1) * hash_sz;
-        for (int b = 0; b < 4 && b < hash_sz; b++)
-            res.targetPubKeyPrefix[b] = path_hashes[last_hash_off + b];
+        res.rxSnr   = (int8_t)(packet->getSNR() * 4);
 
         _traceResult    = res;
         _hasTraceResult = true;
@@ -1728,11 +1725,14 @@ public:
         return ci && ci->out_path_len != OUT_PATH_UNKNOWN;
     }
 
-    // Sends TRACE (0x09) along the known path to a contact.
-    // The path ends with the contact's own hash byte(s) so the retransmitted
-    // packet triggers onTraceRecv on any node that receives it after the final
-    // hop — including the initiator if it is in RF range.
-    bool sendTraceToContact(const uint8_t* prefix4, uint32_t& out_tag) {
+    // Sends TRACE (0x09) along the known path to a contact, out and back.
+    // A TRACE ends where its hash list runs out, so a one-way route
+    // [R1..Rn, target] only reports back if we can hear the target directly.
+    // Sending [R1..Rn, target, Rn..R1] makes R1 the last hop instead. The same
+    // node may appear twice: MeshCore folds path_len into a TRACE's hash.
+    // Non-repeaters usually don't forward, so for a contact behind relays the
+    // route turns at its last relay: [R1..Rn..R1].
+    bool sendTraceToContact(const uint8_t* prefix4, uint32_t& out_tag, int& out_hops) {
         if (!_active) return false;
         ContactInfo* ci = lookupContactByPubKey(prefix4, 4);
         if (!ci || ci->out_path_len == OUT_PATH_UNKNOWN) {
@@ -1750,33 +1750,44 @@ public:
             OPS_LOG("Trace", "sendTrace: 3-byte hash paths not supported");
             return false;
         }
-        uint8_t path_sz = hash_sz - 1;                   // 0 for 1-byte, 1 for 2-byte
-        uint8_t flags   = path_sz;
+        uint8_t flags = hash_sz - 1;                     // 0 for 1-byte, 1 for 2-byte
 
-        uint8_t byte_count = hash_sz * hop_count;
+        // Turn at the target when it forwards (repeater) or is a direct
+        // neighbour (nothing else to turn at); otherwise at the last relay.
+        bool viaTarget = (ci->type == ADV_TYPE_REPEATER) || hop_count == 0;
+        int  nodes     = viaTarget ? 2 * hop_count + 1 : 2 * hop_count - 1;
 
-        // Build combined path: intermediate hops + contact's own pub_key prefix
-        static uint8_t combined[MAX_PATH_SIZE + 3];
-        if (byte_count + hash_sz > sizeof(combined)) return false;
-        memcpy(combined, ci->out_path, byte_count);
-        memcpy(combined + byte_count, ci->id.pub_key, hash_sz);
-        uint8_t total_bytes = byte_count + hash_sz;
+        static uint8_t combined[MAX_PATH_SIZE];
+        if (nodes * hash_sz > (int)sizeof(combined)) {
+            OPS_LOG("Trace", "sendTrace: route too long to trace out and back (%d nodes)", nodes);
+            return false;
+        }
+        int n = 0;
+        for (int i = 0; i < hop_count; i++, n += hash_sz)            // out
+            memcpy(combined + n, ci->out_path + i * hash_sz, hash_sz);
+        if (viaTarget) {                                              // turn
+            memcpy(combined + n, ci->id.pub_key, hash_sz);
+            n += hash_sz;
+        }
+        for (int i = hop_count - 2 + (viaTarget ? 1 : 0); i >= 0; i--, n += hash_sz)  // back
+            memcpy(combined + n, ci->out_path + i * hash_sz, hash_sz);
 
         uint32_t tag  = (uint32_t)std_rng.nextInt(1, 0x7FFFFFFF);
         uint32_t auth = (uint32_t)std_rng.nextInt(1, 0x7FFFFFFF);
 
         mesh::Packet* pkt = createTrace(tag, auth, flags);
         if (!pkt) return false;
-        sendDirect(pkt, combined, total_bytes, 0);
+        sendDirect(pkt, combined, (uint8_t)n, 0);
 
-        out_tag = tag;
+        out_tag  = tag;
+        out_hops = nodes;
 
         // Log path bytes so the user can verify the path is correct
-        char pathHex[64] = {};
-        for (int b = 0; b < total_bytes && (b * 3 + 2) < (int)sizeof(pathHex); b++)
+        char pathHex[3 * MAX_PATH_SIZE + 1] = {};
+        for (int b = 0; b < n; b++)
             snprintf(pathHex + b * 3, 4, "%02X ", combined[b]);
-        OPS_LOG("Trace", "Sent trace to %02X%02X hops=%d flags=%02X path=[%s]tag=%08X",
-                prefix4[0], prefix4[1], hop_count + 1, flags, pathHex, tag);
+        OPS_LOG("Trace", "Sent trace to %02X%02X nodes=%d flags=%02X path=[%s]tag=%08X",
+                prefix4[0], prefix4[1], nodes, flags, pathHex, tag);
         return true;
     }
 
@@ -2869,8 +2880,8 @@ bool MeshService::pollDmFailed(uint32_t& id) {
     return _initialized && the_mesh.pollDmFailed(id);
 }
 
-bool MeshService::sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag) {
-    return _initialized && the_mesh.sendTraceToContact(pubKeyPrefix4, out_tag);
+bool MeshService::sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag, int& out_hops) {
+    return _initialized && the_mesh.sendTraceToContact(pubKeyPrefix4, out_tag, out_hops);
 }
 
 bool MeshService::pollTraceResult(TraceResult& out) {
