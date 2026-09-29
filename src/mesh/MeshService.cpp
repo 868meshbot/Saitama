@@ -28,6 +28,8 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
+#include "../utils/IdentityBackup.h"
+#include "../utils/Crypto.h"
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 #include <helpers/ESP32Board.h>
@@ -228,6 +230,11 @@ class OMSMesh : public BaseChatMesh {
     ChannelDetails* _channels[10] = {};  // indexed by config channel slot (0=Public)
     bool            _active = true;
     char            _callsign[32] = {};
+
+    // The SD identity backup exists but the storage password doesn't open
+    // it. We run on a temporary identity that is never saved anywhere, so the
+    // backup survives until it is unlocked or deliberately set aside.
+    bool _identityLocked = false;
 
     // ── Outgoing DM retry engine ──────────────────────────────────────
     // Each in-flight DM keeps one timestamp for all its attempts; the attempt
@@ -1909,17 +1916,49 @@ public:
             }
         }
 
-        if (!loaded && ops::sdcard::isMounted() && ops::sdcard::hasFile("/ops/identity.bin")) {
+        // Encrypted SD backup (see IdentityBackup.h).
+        if (!loaded && ops::sdcard::isMounted()) {
+            uint8_t buf[ops::idbackup::PLAIN_LEN];
+            uint8_t fileSalt[ops::crypto::SALT_LEN];
+            ops::idbackup::Status st = ops::idbackup::read(buf, fileSalt);
+            if (st == ops::idbackup::Status::Ok) {
+                // Flash was wiped but the password still opens it: take the
+                // backup's salt back, so repeater passwords sealed before the
+                // wipe (in repeaters.json) decrypt again.
+                if (memcmp(fileSalt, ops::crypto::salt(), sizeof(fileSalt)) != 0)
+                    ops::crypto::adopt(nullptr, fileSalt);
+                if (fsOk) {
+                    File idFile = LittleFS.open("/mesh/self.id", "w", true);
+                    if (idFile) { idFile.write(buf, sizeof(buf)); idFile.close(); }
+                    loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
+                }
+                if (!loaded) loaded = loadFromBytes(buf, sizeof(buf));
+                if (loaded) OPS_LOG("Mesh", "Identity restored from encrypted SD backup");
+            } else if (st == ops::idbackup::Status::Locked) {
+                _identityLocked = true;
+                OPS_LOG("Mesh", "SD identity backup is locked - storage password needed");
+            } else if (st == ops::idbackup::Status::Corrupt) {
+                // Keep the damaged file for inspection rather than letting a
+                // new identity overwrite it.
+                ops::idbackup::setAside();
+            }
+            memset(buf, 0, sizeof(buf));
+        }
+
+        // Plaintext backup written by older firmware: read once, then
+        // _saveIdentityBackups() replaces it with the encrypted file.
+        if (!loaded && !_identityLocked && ops::sdcard::isMounted()
+                && ops::sdcard::hasFile(ops::idbackup::LEGACY_PATH)) {
             uint8_t buf[256];
             size_t  len = 0;
-            if (ops::sdcard::readFile("/ops/identity.bin", buf, sizeof(buf), &len) && len > 0) {
+            if (ops::sdcard::readFile(ops::idbackup::LEGACY_PATH, buf, sizeof(buf), &len) && len > 0) {
                 if (fsOk) {
                     File idFile = LittleFS.open("/mesh/self.id", "w", true);
                     if (idFile) { idFile.write(buf, len); idFile.close(); }
                     loaded = store.load("self", self_id, stored_name, sizeof(stored_name));
                 }
                 if (!loaded) loaded = loadFromBytes(buf, len);
-                if (loaded) OPS_LOG("Mesh", "Identity restored from SD (%d bytes)", (int)len);
+                if (loaded) OPS_LOG("Mesh", "Identity restored from plaintext SD backup (%d bytes)", (int)len);
             }
         }
 
@@ -1928,7 +1967,10 @@ public:
             self_id = mesh::LocalIdentity(getRNG());
             for (int i = 0; i < 10 && (self_id.pub_key[0] == 0x00 || self_id.pub_key[0] == 0xFF); i++)
                 self_id = mesh::LocalIdentity(getRNG());
-            if (fsOk) store.save("self", self_id, _callsign);
+            if (_identityLocked)
+                OPS_LOG("Mesh", "Running on a temporary identity until the SD backup is unlocked");
+            else if (fsOk)
+                store.save("self", self_id, _callsign);
         } else if (stored_name[0] != '\0') {
             if (_callsign[0] != '\0' && strcmp(_callsign, stored_name) != 0) {
                 if (fsOk) store.save("self", self_id, _callsign);
@@ -2143,13 +2185,23 @@ public:
         if (LittleFS.begin(false)) {
             IdentityStore store(LittleFS, "/mesh");
             store.begin();
-            store.save("self", self_id, _callsign);
+            // A temporary identity (locked backup) is never persisted.
+            if (!_identityLocked) store.save("self", self_id, _callsign);
         }
         _saveIdentityBackups();
         OPS_LOG("Mesh", "Callsign updated to '%s'", _callsign);
     }
 
     void regenerateIdentity() {
+        // Choosing a new identity while the backup is locked gives up on it:
+        // move it aside, or the new one would overwrite it on the next save.
+        if (_identityLocked) {
+            if (!ops::idbackup::setAside()) {
+                OPS_LOG("Mesh", "regenerateIdentity: locked backup could not be moved aside");
+                return;
+            }
+            _identityLocked = false;
+        }
         self_id = mesh::LocalIdentity(getRNG());
         for (int i = 0; i < 10 && (self_id.pub_key[0] == 0x00 || self_id.pub_key[0] == 0xFF); i++)
             self_id = mesh::LocalIdentity(getRNG());
@@ -2442,6 +2494,9 @@ public:
         bool valid = false;
         for (int i = 0; i < PUB_KEY_SIZE; i++) if (self_id.pub_key[i]) { valid = true; break; }
         if (!valid) { OPS_LOG("Mesh", "_saveIdentityBackups: identity is zeroed, skip"); return; }
+        // A temporary identity must not overwrite anything, least of all the
+        // locked backup it stands in for.
+        if (_identityLocked) return;
 
         // writeTo(buf, 96) emits prv[64]+pub[32].  Extract prv from the front.
         uint8_t writeBuf[PRV_KEY_SIZE + PUB_KEY_SIZE];
@@ -2471,10 +2526,59 @@ public:
             idPrefs.end();
         }
         if (ops::sdcard::isMounted())
-            ops::sdcard::writeFile("/ops/identity.bin", buf, sizeof(buf));
+            ops::idbackup::write(buf);
+        memset(writeBuf, 0, sizeof(writeBuf));
         OPS_LOG("Mesh", "Identity backups updated (%02X%02X%02X%02X...)",
                 buf[0], buf[1], buf[2], buf[3]);
+        memset(buf, 0, sizeof(buf));
     }
+
+    bool identityLocked() const { return _identityLocked; }
+
+    // Opens the locked SD backup with `pw`. On success the backup's password
+    // and salt become this device's (so secrets sealed before the wipe open
+    // again) and the identity is written to LittleFS + NVS, where the next
+    // boot loads it — the caller restarts.
+    bool unlockIdentity(const char* pw) {
+        if (!_identityLocked) return false;
+        uint8_t buf[ops::idbackup::PLAIN_LEN];
+        uint8_t fileSalt[ops::crypto::SALT_LEN];
+        if (!ops::idbackup::unlock(pw, buf, fileSalt)) return false;
+        bool ok = ops::crypto::adopt(pw, fileSalt);
+        if (ok) {
+            if (LittleFS.begin(false)) {
+                if (!LittleFS.exists("/mesh")) LittleFS.mkdir("/mesh");
+                File f = LittleFS.open("/mesh/self.id", "w", true);
+                if (f) { f.write(buf, sizeof(buf)); f.close(); }
+            }
+            Preferences idPrefs;
+            if (idPrefs.begin("opsMesh", false)) {
+                ok = idPrefs.putBytes("selfId", buf, sizeof(buf)) == sizeof(buf);
+                idPrefs.end();
+            }
+        }
+        memset(buf, 0, sizeof(buf));
+        OPS_LOG("Mesh", "Identity unlock %s", ok ? "succeeded - restart to use it" : "FAILED to persist");
+        return ok;
+    }
+
+    // Gives up on the locked backup: moves it aside and keeps the temporary
+    // identity as this node's real one from now on.
+    bool discardLockedIdentity() {
+        if (!_identityLocked) return false;
+        if (!ops::idbackup::setAside()) return false;
+        _identityLocked = false;
+        if (LittleFS.begin(false)) {
+            IdentityStore store(LittleFS, "/mesh");
+            store.begin();
+            store.save("self", self_id, _callsign);
+        }
+        _saveIdentityBackups();
+        return true;
+    }
+
+    // Re-seals the SD backup, e.g. after the storage password changed.
+    void rewriteIdentityBackup() { _saveIdentityBackups(); }
 };
 
 static OMSMesh the_mesh;
@@ -2878,6 +2982,22 @@ bool MeshService::pollAck(uint32_t& acked_crc) {
 
 bool MeshService::pollDmFailed(uint32_t& id) {
     return _initialized && the_mesh.pollDmFailed(id);
+}
+
+bool MeshService::identityLocked() const {
+    return _initialized && the_mesh.identityLocked();
+}
+
+bool MeshService::unlockIdentity(const char* pw) {
+    return _initialized && the_mesh.unlockIdentity(pw);
+}
+
+bool MeshService::discardLockedIdentity() {
+    return _initialized && the_mesh.discardLockedIdentity();
+}
+
+void MeshService::rewriteIdentityBackup() {
+    if (_initialized) the_mesh.rewriteIdentityBackup();
 }
 
 bool MeshService::sendTrace(const uint8_t* pubKeyPrefix4, uint32_t& out_tag, int& out_hops) {

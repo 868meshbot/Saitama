@@ -21,7 +21,6 @@ const char* const DEFAULT_PASSWORD = "changeme1";
 // which would write the key material onto the very card this is meant to
 // protect.
 static constexpr const char* NVS_NS   = "opscrypt";
-static constexpr size_t      SALT_LEN = 16;
 
 // PBKDF2 rounds buy nothing against an attacker holding the flash (they have
 // the password too). They are here for the case the guard actually covers: a
@@ -37,7 +36,7 @@ static bool    s_rekeying                  = false;
 
 // ── Key derivation ───────────────────────────────────────────────────
 
-static bool _deriveKey(const char* pw, uint8_t out[32])
+static bool _deriveKeySalt(const char* pw, const uint8_t* salt, uint8_t out[32])
 {
     mbedtls_md_context_t ctx;
     mbedtls_md_init(&ctx);
@@ -46,11 +45,16 @@ static bool _deriveKey(const char* pw, uint8_t out[32])
     if (info && mbedtls_md_setup(&ctx, info, 1) == 0) {
         ok = mbedtls_pkcs5_pbkdf2_hmac(&ctx,
                                        (const unsigned char*)pw, strlen(pw),
-                                       s_salt, SALT_LEN,
+                                       salt, SALT_LEN,
                                        PBKDF2_ITERS, 32, out) == 0;
     }
     mbedtls_md_free(&ctx);
     return ok;
+}
+
+static bool _deriveKey(const char* pw, uint8_t out[32])
+{
+    return _deriveKeySalt(pw, s_salt, out);
 }
 
 // ── init() ───────────────────────────────────────────────────────────
@@ -145,6 +149,87 @@ bool unseal(const uint8_t blob[BLOB_LEN], const uint8_t* aad, size_t aadLen,
     strncpy(out, (const char*)pt, outMax - 1);
     out[outMax - 1] = '\0';
     memset(pt, 0, sizeof(pt));
+    return true;
+}
+
+// ── Binary seal / unseal ─────────────────────────────────────────────
+
+const uint8_t* salt() { return s_salt; }
+
+bool sealBytes(const uint8_t* plain, size_t len, const uint8_t* aad, size_t aadLen,
+               uint8_t iv[IV_LEN], uint8_t* ct, uint8_t tag[TAG_LEN])
+{
+    if (!s_ready || !plain || !iv || !ct || !tag) return false;
+    esp_fill_random(iv, IV_LEN);   // fresh IV per seal — never reuse under one key
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    const uint8_t* key = s_rekeying ? s_newKey : s_key;
+    bool ok = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256) == 0
+           && mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT, len,
+                                        iv, IV_LEN, aad, aadLen,
+                                        plain, ct, TAG_LEN, tag) == 0;
+    mbedtls_gcm_free(&gcm);
+    if (!ok) memset(ct, 0, len);
+    return ok;
+}
+
+bool unsealBytes(const char* pw, const uint8_t fileSalt[SALT_LEN],
+                 const uint8_t iv[IV_LEN], const uint8_t* ct, size_t len,
+                 const uint8_t tag[TAG_LEN], const uint8_t* aad, size_t aadLen,
+                 uint8_t* out)
+{
+    if (!s_ready || !fileSalt || !iv || !ct || !tag || !out) return false;
+
+    // Same salt and password as this device: the key is already derived.
+    uint8_t key[32];
+    bool sameSalt = memcmp(fileSalt, s_salt, SALT_LEN) == 0;
+    if (sameSalt && (!pw || strncmp(pw, s_pw, PASSWORD_MAX + 1) == 0)) {
+        memcpy(key, s_key, sizeof(key));
+    } else if (!_deriveKeySalt(pw ? pw : s_pw, fileSalt, key)) {
+        return false;
+    }
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    bool ok = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256) == 0
+           && mbedtls_gcm_auth_decrypt(&gcm, len, iv, IV_LEN, aad, aadLen,
+                                       tag, TAG_LEN, ct, out) == 0;
+    mbedtls_gcm_free(&gcm);
+    memset(key, 0, sizeof(key));
+    if (!ok) memset(out, 0, len);
+    return ok;
+}
+
+bool adopt(const char* pw, const uint8_t fileSalt[SALT_LEN])
+{
+    if (!fileSalt || s_rekeying) return false;
+    char cur[PASSWORD_MAX + 1];
+    if (!pw) {   // copy: s_pw is overwritten below
+        strncpy(cur, s_pw, PASSWORD_MAX);
+        cur[PASSWORD_MAX] = '\0';
+        pw = cur;
+    }
+    size_t n = strlen(pw);
+    if (n == 0 || n > PASSWORD_MAX) return false;
+
+    uint8_t key[32];
+    if (!_deriveKeySalt(pw, fileSalt, key)) return false;
+
+    Preferences p;
+    if (!p.begin(NVS_NS, false)) { memset(key, 0, sizeof(key)); return false; }
+    bool wrote = p.putBytes("salt", fileSalt, SALT_LEN) == SALT_LEN
+              && p.putString("pw", pw) > 0;
+    p.end();
+    if (!wrote) { memset(key, 0, sizeof(key)); return false; }
+
+    memcpy(s_salt, fileSalt, SALT_LEN);
+    strncpy(s_pw, pw, PASSWORD_MAX);
+    s_pw[PASSWORD_MAX] = '\0';
+    memcpy(s_key, key, sizeof(s_key));
+    memset(key, 0, sizeof(key));
+    s_ready = true;
+    OPS_LOG("Crypto", "Adopted storage password and salt from backup");
     return true;
 }
 

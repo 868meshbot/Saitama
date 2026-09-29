@@ -156,6 +156,18 @@ public:
     // CRC the last sendDirect expects to be ACKed (0 if send failed).
     uint32_t lastExpectedAck() const;
 
+    // ── Identity backup (encrypted, /ops/identity.enc) ────────────────
+    // True when the SD backup exists but the storage password doesn't open
+    // it; the node then runs on a temporary identity that is never saved.
+    bool identityLocked() const;
+    // Opens the locked backup with pw and saves it for the next boot (the
+    // caller restarts). Also adopts pw as the storage password.
+    bool unlockIdentity(const char* pw);
+    // Moves the locked backup aside and keeps the temporary identity.
+    bool discardLockedIdentity();
+    // Re-seals the backup under the current storage password.
+    void rewriteIdentityBackup();
+
     // ── Trace ─────────────────────────────────────────────────────────
     // Sends a TRACE (0x09) packet along the known path to a contact.
     // The route goes out and back ([R1..Rn, target, Rn..R1]) so the last

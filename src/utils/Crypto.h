@@ -50,6 +50,29 @@ bool seal(const char* plain, const uint8_t* aad, size_t aadLen,
 bool unseal(const uint8_t blob[BLOB_LEN], const uint8_t* aad, size_t aadLen,
             char* out, size_t outMax);
 
+// ── Binary secrets that must outlive internal flash ─────────────────
+// For a backup that has to be restorable after NVS is wiped (the node
+// identity), the file carries the salt, so the key can be re-derived from
+// the storage password alone. The salt is not secret. Sealing uses the
+// device key (the new one while rekeying); these take any length.
+static constexpr size_t SALT_LEN = 16;
+const uint8_t* salt();   // this device's salt (SALT_LEN bytes)
+
+bool sealBytes(const uint8_t* plain, size_t len, const uint8_t* aad, size_t aadLen,
+               uint8_t iv[IV_LEN], uint8_t* ct, uint8_t tag[TAG_LEN]);
+// Decrypts with the device key when fileSalt is this device's salt, else
+// with a key derived from `pw` (nullptr = the current storage password)
+// and fileSalt. False on a wrong password or a tampered file.
+bool unsealBytes(const char* pw, const uint8_t fileSalt[SALT_LEN],
+                 const uint8_t iv[IV_LEN], const uint8_t* ct, size_t len,
+                 const uint8_t tag[TAG_LEN], const uint8_t* aad, size_t aadLen,
+                 uint8_t* out);
+// After restoring from a backup sealed under (pw, fileSalt): make those
+// this device's storage password and salt, so secrets sealed before the
+// wipe (remembered repeater passwords) decrypt again. Persists to NVS.
+// pw nullptr = keep the current password, adopt only the salt.
+bool adopt(const char* pw, const uint8_t fileSalt[SALT_LEN]);
+
 // Hex helpers, for putting a blob in JSON.
 void toHex  (const uint8_t* in, size_t len, char* out, size_t outMax);
 bool fromHex(const char* hex, uint8_t* out, size_t len);

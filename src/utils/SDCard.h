@@ -20,7 +20,7 @@ namespace sdcard {
     // Flush and unmount the card safely (call before physical removal).
     void unmount();
 
-    // Binary file helpers (used for /ops/identity.bin).
+    // Binary file helpers (used for /ops/identity.enc).
     bool writeFile(const char* path, const uint8_t* data, size_t len);
     bool readFile(const char* path, uint8_t* buf, size_t maxLen, size_t* outLen);
 
@@ -47,7 +47,7 @@ namespace sdcard {
     uint64_t freeMB();
     // Returns SD.exists(path), or false if not mounted.
     bool     hasFile(const char* path);
-    // True when identity.bin + settings.json + contacts.json + repeaters.json all exist.
+    // True when the identity backup (identity.enc, or legacy identity.bin) + settings.json + contacts.json + repeaters.json all exist.
     // Use this as the gate for "SD is source of truth" boot restore.
     bool     hasCompleteBackup();
 }

@@ -28,7 +28,7 @@ void sdcard::init() {
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Mounted, %llu MB free", (unsigned long long)free_mb);
     OPS_LOG("SD", "Backups: id=%d contacts=%d repeaters=%d",
-            SD.exists("/ops/identity.bin")  ? 1 : 0,
+            (SD.exists("/ops/identity.enc") || SD.exists("/ops/identity.bin")) ? 1 : 0,
             SD.exists("/ops/contacts.json") ? 1 : 0,
             SD.exists("/ops/repeaters.json")? 1 : 0);
 }
@@ -243,7 +243,7 @@ bool sdcard::hasFile(const char* path) { return s_mounted && SD.exists(path); }
 bool sdcard::hasCompleteBackup()
 {
     if (!s_mounted) return false;
-    return SD.exists("/ops/identity.bin")
+    return (SD.exists("/ops/identity.enc") || SD.exists("/ops/identity.bin"))
         && SD.exists("/ops/settings.json")
         && SD.exists("/ops/contacts.json")
         && SD.exists("/ops/repeaters.json");

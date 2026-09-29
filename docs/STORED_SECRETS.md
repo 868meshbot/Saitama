@@ -1,14 +1,16 @@
 # Stored Secrets
 
-Saitama can remember repeater admin passwords so you do not retype them on
-every login. This document says exactly what that storage protects against,
-because "encrypted" on its own does not tell you.
+Saitama keeps two kinds of secret on the SD card: remembered repeater admin
+passwords, and a backup of the node's identity (its private key). This
+document says exactly what that storage protects against, because
+"encrypted" on its own does not tell you.
 
 ## What is stored, and where
 
 | Where | Contents |
 |---|---|
 | `/ops/repeaters.json` (SD card) | `"pwEnc"` — a 92-byte sealed blob, hex encoded. Ciphertext only. |
+| `/ops/identity.enc` (SD card) | The node identity (private key), sealed. 209 bytes; header in the clear. See [Node identity](#node-identity). |
 | NVS namespace `opscrypt` (internal flash) | 16-byte random salt, and the **storage password** (default `changeme1`). |
 
 The storage password deliberately does **not** live in `ops::Config`.
@@ -75,6 +77,59 @@ Changing it re-encrypts every stored secret in a single pass:
 If the device loses power mid-pass, the worst case is losing remembered
 passwords, which you can re-enter — not a device that cannot read its own
 storage password.
+
+## Node identity
+
+The node's private key signs its adverts and derives the key for every DM
+it sends or receives. Anyone holding it can impersonate the node and read
+its DMs, including ones recorded off the air earlier. Older firmware wrote
+it to the card in the clear as `/ops/identity.bin` (and `identity.bak`);
+the first boot of this version replaces those with `/ops/identity.enc` and
+deletes them.
+
+```
+off  len
+  0    4  magic "SIDE"
+  4    1  version (1)
+  5   16  salt          \  in the clear, authenticated as AAD:
+ 21   32  public key    /  edit either and decryption fails
+ 53   12  IV
+ 65  128  AES-256-GCM(key, IV, pub[32] + prv[64] + name[32], AAD = bytes 0-52)
+193   16  tag
+```
+
+- **Same key as the repeater passwords**, so the device's already-derived
+  key seals it — no extra key derivation at boot, when it is rewritten.
+- **The salt travels with the file.** This backup exists for when internal
+  flash is lost (full erase, reflash), and the NVS salt goes with it. With
+  the salt on the card, the storage password alone recovers the identity.
+- **The public key is in the clear** so "does this card match this node?"
+  (`sd restore`, `identity restore`) needs no password. It is public anyway.
+
+### Restoring after a wipe
+
+On boot, if internal flash has no identity, the backup is opened with the
+current storage password:
+
+- **It opens** (the password was still the default, or flash was not
+  wiped): the identity is restored silently, and the device takes the
+  file's salt back so repeater passwords sealed before the wipe open too.
+- **It doesn't open**: the boot screen asks for the storage password it was
+  saved with. Until then the node runs on a **temporary identity that is
+  never saved anywhere**, so nothing overwrites the backup.
+  - *Unlock*: the identity is restored, that password and salt become the
+    device's, and it restarts.
+  - *Later*: asks again next boot.
+  - *Start new*: keeps the temporary identity; the backup is moved to
+    `identity.enc.old`, not deleted. Settings > Generate Identity does the
+    same while the backup is locked.
+
+**Forget the storage password and the backup cannot be recovered.** That is
+the protection working. A backup sealed under the default `changeme1`
+protects nothing, since that password is published; change it.
+
+A damaged `identity.enc` is moved to `identity.enc.old` rather than
+overwritten by a new identity.
 
 ## Using it
 

@@ -30,6 +30,7 @@
 #include "../utils/Contacts.h"
 #include "../utils/Repeaters.h"
 #include "../utils/SDCard.h"
+#include "../utils/IdentityBackup.h"
 #include "../utils/GpsMgr.h"
 #include "../utils/Log.h"
 #include "../hardware/Board.h"
@@ -1678,9 +1679,11 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 snprintf(buf, sizeof(buf), "SD mounted: %llu MB free",
                          (unsigned long long)ops::sdcard::freeMB());
                 appendLine(buf);
-                appendLine(ops::sdcard::hasFile("/ops/identity.bin")
-                           ? "  identity.bin   FOUND"
-                           : "  identity.bin   not found");
+                appendLine(ops::sdcard::hasFile(ops::idbackup::ENC_PATH)
+                           ? "  identity.enc   FOUND (encrypted)"
+                           : ops::sdcard::hasFile(ops::idbackup::LEGACY_PATH)
+                             ? "  identity.bin   FOUND (plaintext - encrypted on next boot)"
+                             : "  identity       not found");
                 appendLine(ops::sdcard::hasFile("/ops/settings.json")
                            ? "  settings.json  FOUND"
                            : "  settings.json  not found");
@@ -1731,11 +1734,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
             if (mesh.initialized()) {
                 uint8_t curKey[4] = {};
                 mesh.getSelfPubKeyPrefix(curKey);
-                uint8_t sdId[128]; size_t sdIdLen = 0;
-                if (ops::sdcard::readFile("/ops/identity.bin", sdId, sizeof(sdId), &sdIdLen)
-                    && sdIdLen >= 32)
-                {
-                    if (memcmp(curKey, sdId, 4) == 0) {
+                uint8_t sdPub[32];
+                if (ops::idbackup::publicKey(sdPub)) {
+                    if (memcmp(curKey, sdPub, 4) == 0) {
                         appendLine("Identity: SD matches current node.");
                     } else {
                         appendLine("Identity: SD has DIFFERENT key.");
@@ -1887,9 +1888,14 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── identity restore ─────────────────────────────────────────────
     if (strcmp(cmd, "identity") == 0 && strcmp(args, "restore") == 0) {
         if (!ops::sdcard::isMounted()) { appendLine("SD not mounted. Try sd mount first."); return; }
+        // Only the public key is needed to compare; it's in the clear in
+        // identity.enc's header (plaintext identity.bin starts with it too).
         uint8_t sdId[128]; size_t sdIdLen = 0;
-        if (!ops::sdcard::readFile("/ops/identity.bin", sdId, sizeof(sdId), &sdIdLen) || sdIdLen < 32) {
-            appendLine("No identity.bin on SD."); return;
+        if (ops::idbackup::publicKey(sdId)) {
+            sdIdLen = 32;
+        } else if (!ops::sdcard::readFile(ops::idbackup::LEGACY_PATH, sdId, sizeof(sdId), &sdIdLen)
+                   || sdIdLen < 32) {
+            appendLine("No identity backup on SD."); return;
         }
         auto& mesh = MeshService::instance();
         if (mesh.initialized()) {

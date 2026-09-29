@@ -76,6 +76,7 @@ src/
   utils/Config.h/cpp        — Persistent config via NVS; SD backup /ops/settings.json
   utils/Contacts.h/cpp      — 50-slot NVS contact list; SD archive /ops/contacts.json
   utils/Crypto.h/cpp        — AES-256-GCM seal/unseal for secrets written to SD; storage password in NVS namespace opscrypt (never mirrored to SD)
+  utils/IdentityBackup.h/cpp — encrypted node-identity backup /ops/identity.enc (format, read/unlock, migration from plaintext)
   utils/Repeaters.h/cpp     — Repeater list (NVS-backed)
   utils/SDCard.h/cpp        — SD mount (CS=39, FSPI), /ops/ dir, binary file helpers
   utils/Sound.h/cpp         — I2S audio (MAX98357A); playPing()
@@ -139,7 +140,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 - `/ops/contacts.json` — full contact archive (ArduinoJson 7, written on every `contacts::save()`)
 - `/ops/repeaters.json` — repeater archive; includes `"pubKey64"` (64 hex chars) for full 32-byte key; field is optional for backward compatibility. `"pwEnc"` (184 hex chars, optional) is a remembered admin password sealed with AES-256-GCM — see `docs/STORED_SECRETS.md`
 - `/ops/settings.json` — config backup (written on every `config::save()`)
-- `/ops/identity.bin`  — raw copy of LittleFS `/mesh/self.id` (128 bytes: pub_key[32] + prv_key[64] + name[32]); restored to LittleFS on boot if missing
+- `/ops/identity.enc`  — the node identity (pub_key[32] + prv_key[64] + name[32]) sealed with `ops::crypto` (AES-256-GCM, storage password; salt + public key in a clear, authenticated header). `ops::idbackup` owns the format. Restored to LittleFS on boot if missing; if the storage password doesn't open it the node runs on an unsaved temporary identity and the boot screen asks for the password. Plaintext `identity.bin`/`.bak` from older firmware are read once and deleted — see `docs/STORED_SECRETS.md`
 - `/ops/msgs/<tag>.log` — per-channel/DM message history; one compact JSON line per message; written when `cfg.saveMsgs` is true; tag is channel name or `DM_<contactName>` for direct messages
 - `sdcard::init()` must run before `config::init()` and `contacts::init()` (see `main.cpp`)
 - ArduinoJson dependency: `bblanchon/ArduinoJson @ ^7.0` in `platformio.ini`

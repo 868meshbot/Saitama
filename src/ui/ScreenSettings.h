@@ -9,6 +9,9 @@ namespace ops { namespace ui {
 class ScreenSettings {
 public:
     static void show();
+    // Asks for the storage password when the SD identity backup is locked
+    // (MeshService::identityLocked()). Shown over the current screen.
+    static void showIdentityUnlock();
 
 private:
     static lv_obj_t* _screen;

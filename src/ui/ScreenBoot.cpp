@@ -2,6 +2,8 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenBoot.h"
+#include "ScreenSettings.h"
+#include "../mesh/MeshService.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "../version.h"
@@ -64,6 +66,9 @@ void ScreenBoot::_onTimerDone(lv_timer_t* /*t*/) {
     // Boot screen is done — transition to the main launcher.
     // The boot screen object stays in memory harmlessly; PSRAM is plentiful.
     ScreenLauncher::show();
+    // The SD identity backup needs the storage password (see IdentityBackup.h).
+    if (ops::MeshService::instance().identityLocked())
+        ScreenSettings::showIdentityUnlock();
 }
 
 }}  // namespace ops::ui

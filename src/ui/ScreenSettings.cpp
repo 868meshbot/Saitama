@@ -3800,6 +3800,8 @@ static void _onSPSave(lv_event_t* /*e*/)
     int lost = 0;
     int done = ops::repeaters::rekeyAdminPasswords(&lost);
     ops::crypto::endRekey();
+    // The SD identity backup is sealed with the storage password too.
+    ops::MeshService::instance().rewriteIdentityBackup();
 
     OPS_LOG("Settings", "Storage password changed: %d re-encrypted, %d lost", done, lost);
 
@@ -3858,8 +3860,9 @@ static void _openStoragePwDialog()
     lv_obj_set_width(note, 286);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_label_set_text(note,
-        "Encrypts passwords saved to the SD card. Protects a lost card, "
-        "not a lost device.");
+        "Encrypts saved passwords and the identity backup on the SD card. "
+        "Protects a lost card, not a lost device. Needed to restore the "
+        "identity after a full wipe.");
     lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
 
@@ -3937,6 +3940,185 @@ static void _openStoragePwDialog()
 
     lv_group_t* g = lv_group_get_default();
     if (g) lv_group_focus_obj(s_spCtx.curTa);
+}
+
+// ── Identity unlock dialog ────────────────────────────────────────────
+// Shown after boot when /ops/identity.enc exists but the storage password in
+// NVS doesn't open it — typically internal flash was wiped after the password
+// had been changed. Until it is unlocked the node runs on a temporary,
+// unsaved identity, so nothing overwrites the backup.
+
+struct IdUnlockCtx {
+    lv_obj_t* modal;
+    lv_obj_t* ta;
+    lv_obj_t* status;
+    lv_obj_t* newLbl;
+    bool      confirmNew;
+};
+static IdUnlockCtx s_iuCtx;
+
+static void _iuClose()
+{
+    if (s_iuCtx.modal) lv_obj_del_async(s_iuCtx.modal);   // child handler deletes an ancestor
+    s_iuCtx = IdUnlockCtx{};
+}
+
+static void _iuSetStatus(const char* msg, lv_color_t colour)
+{
+    if (!s_iuCtx.status) return;
+    lv_label_set_text(s_iuCtx.status, msg);
+    lv_obj_set_style_text_color(s_iuCtx.status, colour, 0);
+}
+
+static void _iuRestart(lv_timer_t* /*t*/) { ESP.restart(); }
+
+static void _onIUUnlock(lv_event_t* /*e*/)
+{
+    if (!s_iuCtx.ta) return;
+    const char* pw = lv_textarea_get_text(s_iuCtx.ta);
+    if (!pw || !pw[0]) { _iuSetStatus("Enter the storage password.", theme::RED); return; }
+    _iuSetStatus("Checking...", theme::TEXT_MUTED);
+    lv_refr_now(nullptr);   // key derivation takes a moment
+    if (!ops::MeshService::instance().unlockIdentity(pw)) {
+        lv_textarea_set_text(s_iuCtx.ta, "");
+        _iuSetStatus("Wrong password.", theme::RED);
+        return;
+    }
+    lv_textarea_set_text(s_iuCtx.ta, "");
+    _iuSetStatus("Unlocked. Restarting...", theme::GREEN);
+    lv_timer_t* t = lv_timer_create(_iuRestart, 1200, nullptr);
+    lv_timer_set_repeat_count(t, 1);
+}
+
+static void _onIUNew(lv_event_t* /*e*/)
+{
+    if (!s_iuCtx.confirmNew) {
+        s_iuCtx.confirmNew = true;
+        if (s_iuCtx.newLbl) lv_label_set_text(s_iuCtx.newLbl, "Confirm?");
+        _iuSetStatus("Keeps this new identity. The locked backup is kept as "
+                     "identity.enc.old.", theme::ORANGE);
+        return;
+    }
+    if (ops::MeshService::instance().discardLockedIdentity()) {
+        OPS_LOG("Settings", "Locked identity backup set aside; new identity kept");
+        _iuClose();
+    } else {
+        _iuSetStatus("Could not move the backup aside.", theme::RED);
+    }
+}
+
+static void _onIULater(lv_event_t* /*e*/) { _iuClose(); }
+
+static void _onIUKey(lv_event_t* e)
+{
+    if (lv_event_get_key(e) == LV_KEY_ESC) _iuClose();
+}
+
+static lv_obj_t* _iuButton(lv_obj_t* row, const char* text, lv_color_t bg,
+                           lv_color_t fg, lv_event_cb_t cb, lv_obj_t** lblOut)
+{
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 88, 24);
+    lv_obj_set_style_bg_color(b, bg, 0);
+    lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, theme::BORDER, 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_radius(b, 4, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_add_event_cb(b, cb,       LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(b, _onIUKey, LV_EVENT_KEY,     nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, fg, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+    lv_obj_center(l);
+    if (lblOut) *lblOut = l;
+    return b;
+}
+
+void ScreenSettings::showIdentityUnlock()
+{
+    if (s_iuCtx.modal) return;
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_iuCtx = IdUnlockCtx{};
+    s_iuCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onIUKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 300, 200);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::ORANGE, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 6, 0);
+    lv_obj_set_style_pad_row(panel, 5, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, LV_SYMBOL_WARNING " Identity backup locked");
+    lv_obj_set_style_text_color(title, theme::ORANGE, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 286);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note,
+        "The SD card has an encrypted identity this device can't open. Enter "
+        "the storage password it was saved with to restore it. Until then this "
+        "node uses a temporary identity.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    s_iuCtx.ta = lv_textarea_create(panel);
+    lv_obj_set_size(s_iuCtx.ta, 286, 26);
+    lv_textarea_set_one_line(s_iuCtx.ta, true);
+    lv_textarea_set_password_mode(s_iuCtx.ta, true);
+    lv_textarea_set_max_length(s_iuCtx.ta, (uint32_t)ops::crypto::PASSWORD_MAX);
+    lv_textarea_set_placeholder_text(s_iuCtx.ta, "storage password");
+    lv_obj_set_style_bg_color(s_iuCtx.ta, theme::BG, 0);
+    lv_obj_set_style_text_color(s_iuCtx.ta, theme::TEXT, 0);
+    lv_obj_set_style_border_color(s_iuCtx.ta, theme::BORDER, 0);
+    lv_obj_set_style_border_width(s_iuCtx.ta, 1, 0);
+    lv_obj_set_style_radius(s_iuCtx.ta, 4, 0);
+    lv_obj_set_style_pad_all(s_iuCtx.ta, 3, 0);
+    lv_obj_set_style_text_font(s_iuCtx.ta, &lv_font_montserrat_10, 0);
+    lv_obj_add_event_cb(s_iuCtx.ta, _onIUUnlock, LV_EVENT_READY, nullptr);   // Enter submits
+    lv_obj_add_event_cb(s_iuCtx.ta, _onIUKey,    LV_EVENT_KEY,   nullptr);
+
+    s_iuCtx.status = lv_label_create(panel);
+    lv_obj_set_width(s_iuCtx.status, 286);
+    lv_label_set_long_mode(s_iuCtx.status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_iuCtx.status, &lv_font_montserrat_10, 0);
+    _iuSetStatus("", theme::TEXT_MUTED);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 286, 28);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    _iuButton(row, LV_SYMBOL_OK " Unlock", theme::ACCENT, theme::BG, _onIUUnlock, nullptr);
+    _iuButton(row, "Later", theme::BG, theme::TEXT, _onIULater, nullptr);
+    _iuButton(row, "Start new", theme::BG, theme::RED, _onIUNew, &s_iuCtx.newLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(s_iuCtx.ta);
 }
 
 // ── CPU Governor dropdown dialog ──────────────────────────────────────
@@ -4397,7 +4579,7 @@ static void _openGenIdDialog()
 
 // ── Backup & Restore dialog ──────────────────────────────────────────────────
 // Copies /oms/*.bak   →  /oms/*.json (restore)
-// Files: contacts, repeaters, settings (identity.bin is already auto-backed up)
+// Files: contacts, repeaters, settings, and the encrypted identity.enc
 
 static lv_obj_t* s_brModal   = nullptr;
 static lv_obj_t* s_brStatus  = nullptr;
@@ -4445,9 +4627,9 @@ static const char* _runBackup()
         if (SD.exists(kSrc[i]))
             ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
     }
-    // Also backup identity.bin → identity.bak
-    if (SD.exists("/ops/identity.bin"))
-        _copyFile("/ops/identity.bin", "/ops/identity.bak");
+    // Also back up the (encrypted) identity: identity.enc → identity.enc.bak
+    if (SD.exists("/ops/identity.enc"))
+        _copyFile("/ops/identity.enc", "/ops/identity.enc.bak");
     if (ok == 0) return "No files to back up";
     static char msg[32];
     snprintf(msg, sizeof(msg), "Backed up %d file(s)", ok);
@@ -4470,8 +4652,8 @@ static const char* _runRestore()
         if (SD.exists(kSrc[i]))
             ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
     }
-    if (SD.exists("/ops/identity.bak")) {
-        _copyFile("/ops/identity.bak", "/ops/identity.bin");
+    if (SD.exists("/ops/identity.enc.bak")) {
+        _copyFile("/ops/identity.enc.bak", "/ops/identity.enc");
         // Identity restore requires clearing both LittleFS and NVS copies — both
         // take priority over SD in the boot-time load chain. SD wins only if both are absent.
         LittleFS.begin(false);
