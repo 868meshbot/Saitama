@@ -32,6 +32,7 @@
 #include "../utils/Crypto.h"
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#include <SHA256.h>
 #include <helpers/ESP32Board.h>
 #include <helpers/radiolib/CustomSX1262.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
@@ -797,7 +798,7 @@ class OMSMesh : public BaseChatMesh {
 
         } else if (cmd == COMP_CMD_SEND_SELF_ADVERT) {
             mesh::Packet* pkt = createSelfAdvert(_callsign);
-            if (pkt) { sendFlood(pkt, (uint32_t)0); _compWriteOK(); }
+            if (pkt) { _floodInScope(pkt, config::get().scopeTag, 0); _compWriteOK(); }
             else      { _compWriteErr(COMP_ERR_TABLE_FULL); }
 
         } else if (cmd == COMP_CMD_RESET_PATH && len >= 1 + PUB_KEY_SIZE) {
@@ -1401,6 +1402,7 @@ class OMSMesh : public BaseChatMesh {
 
     void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override
     {
+
         // All repeater responses are prefixed with a 4-byte timestamp.
         // The actual response code/text starts at data[4].
         const uint8_t* payload    = (len > 4) ? &data[4] : data;
@@ -2251,6 +2253,46 @@ public:
         }
     }
 
+    // Transport key for a region scope, as repeaters derive it
+    // (RegionMap::getTransportKeysFor): a plain name like "AU" is an implicit
+    // hashtag region, keyed SHA-256("#AU"). A legacy "#AU" is accepted too.
+    // Private "$" regions need a shared key and aren't supported.
+    // Surrounding spaces are trimmed (a channel saved as "AU " still keys as
+    // "#AU"); case is kept, since repeaters match it exactly.
+    static bool _regionKey(const char* scope, TransportKey& tk) {
+        if (!scope) return false;
+        while (*scope == ' ') scope++;
+        if (scope[0] == '#') scope++;
+        size_t n = strlen(scope);
+        while (n && scope[n - 1] == ' ') n--;
+        if (n == 0 || scope[0] == '$') return false;
+        char tag[34];
+        snprintf(tag, sizeof(tag), "#%.*s", (int)n, scope);
+        SHA256 sha;
+        sha.update(tag, strlen(tag));
+        sha.finalize(tk.key, sizeof(tk.key));
+        return true;
+    }
+
+    // Floods pkt with the region code for `scope`, or unscoped when there is
+    // none. The code covers the payload, so pkt must be complete.
+    void _floodInScope(mesh::Packet* pkt, const char* scope, uint32_t delay_millis) {
+        TransportKey tk;
+        if (_regionKey(scope, tk)) {
+            uint16_t codes[2] = { tk.calcTransportCode(pkt), 0 };
+            sendFlood(pkt, codes, delay_millis);
+        } else {
+            sendFlood(pkt, delay_millis);
+        }
+    }
+
+    // DMs, ACKs, path returns, logins, admin commands and telemetry all flood
+    // through here (BaseChatMesh): use the default scope (Settings > Region
+    // Scope), so they propagate on a mesh whose repeaters deny unscoped floods.
+    void sendFloodScoped(const ContactInfo& /*recipient*/, mesh::Packet* pkt, uint32_t delay_millis = 0) override {
+        _floodInScope(pkt, config::get().scopeTag, delay_millis);
+    }
+
     void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis = 0) override {
         // Find the config slot that owns this channel object
         const auto& cfg = config::get();
@@ -2258,18 +2300,12 @@ public:
             if (!_channels[i]) continue;
             if (&_channels[i]->channel != &channel) continue;
             // Matched — apply scope if configured for this slot
+            // The channel's own scope wins; otherwise the default scope.
             const char* scope = cfg.channels[i].scope;
-            if (scope && scope[0]) {
-                TransportKey tk;
-                TransportKeyStore tks;
-                tks.getAutoKeyFor(0, scope, tk);
-                uint16_t codes[2] = { tk.calcTransportCode(pkt), 0 };
-                sendFlood(pkt, codes, delay_millis);
-                return;
-            }
-            break;
+            _floodInScope(pkt, (scope && scope[0]) ? scope : cfg.scopeTag, delay_millis);
+            return;
         }
-        sendFlood(pkt, delay_millis);
+        _floodInScope(pkt, cfg.scopeTag, delay_millis);
     }
 
     bool sendChannelMsg(int chIdx, const char* text) {
@@ -2351,7 +2387,7 @@ public:
         if (!pkt) pkt = createSelfAdvert(_callsign);
         if (!pkt) return false;
         if (flood) {
-            sendFlood(pkt, delay_ms);
+            _floodInScope(pkt, cfg.scopeTag, delay_ms);
         } else {
             sendZeroHop(pkt, delay_ms);
         }

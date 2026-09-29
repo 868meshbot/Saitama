@@ -1044,12 +1044,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
-    // ── scope [#<region> | clear] ────────────────────────────────────
+    // ── scope [<region> | clear]  (a legacy leading # is accepted) ────────────────────────────────────
     if (strcmp(cmd, "scope") == 0) {
         auto& cfg = const_cast<ops::Config&>(ops::config::get());
         if (args[0] == '\0') {
             char buf[32];
-            if (cfg.scopeTag[0]) snprintf(buf, sizeof(buf), "Scope: #%s", cfg.scopeTag);
+            if (cfg.scopeTag[0]) snprintf(buf, sizeof(buf), "Scope: %s", cfg.scopeTag);
             else                 strncpy(buf, "Scope: (none)", sizeof(buf));
             appendLine(buf);
         } else if (strcmp(args, "clear") == 0) {
@@ -1062,7 +1062,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
             cfg.scopeTag[sizeof(cfg.scopeTag) - 1] = '\0';
             ops::config::save();
             char buf[32];
-            snprintf(buf, sizeof(buf), "Scope: #%s", cfg.scopeTag);
+            snprintf(buf, sizeof(buf), "Scope: %s", cfg.scopeTag);
             appendLine(buf);
         }
         return;

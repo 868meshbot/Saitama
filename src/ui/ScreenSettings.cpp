@@ -417,6 +417,9 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, LV_SYMBOL_REFRESH, lang::tr(lang::TR_DM_RETRIES), drStr, 38,
                 drOn ? ROW_ON : ROW_OFF);
     }
+    _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_SCOPE),
+            cfg.scopeTag[0] ? cfg.scopeTag : off, 40,
+            cfg.scopeTag[0] ? ROW_ON : ROW_OFF);
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
     _addRow(_list, LV_SYMBOL_EYE_CLOSE, lang::tr(lang::TR_SCR_TIMEOUT),  toStr, 13);
@@ -4189,6 +4192,168 @@ void ScreenSettings::showIdentityUnlock()
     if (g) lv_group_focus_obj(s_iuCtx.ta);
 }
 
+// ── Region Scope dialog ───────────────────────────────────────────────
+// Default region scope (cfg.scopeTag) for everything this node floods: DMs,
+// ACKs, adverts, logins, admin commands, and channels without their own
+// scope. Plain names ("AU"); a legacy leading '#' is dropped.
+
+struct ScopeCtx { lv_obj_t* modal; lv_obj_t* ta; lv_obj_t* status; };
+static ScopeCtx s_scCtx;
+
+static void _scClose()
+{
+    if (s_scCtx.modal) lv_obj_del_async(s_scCtx.modal);   // child handler deletes an ancestor
+    s_scCtx = ScopeCtx{};
+    ScreenSettings::show();
+}
+
+static void _scSetStatus(const char* msg, lv_color_t col)
+{
+    if (!s_scCtx.status) return;
+    lv_label_set_text(s_scCtx.status, msg);
+    lv_obj_set_style_text_color(s_scCtx.status, col, 0);
+}
+
+static void _scStore(const char* region)
+{
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    strncpy(cfg.scopeTag, region, sizeof(cfg.scopeTag) - 1);
+    cfg.scopeTag[sizeof(cfg.scopeTag) - 1] = '\0';
+    ops::config::save();
+    OPS_LOG("Settings", "Default scope: %s", cfg.scopeTag[0] ? cfg.scopeTag : "(none)");
+}
+
+static void _onSCSave(lv_event_t* /*e*/)
+{
+    const char* txt = s_scCtx.ta ? lv_textarea_get_text(s_scCtx.ta) : "";
+    if (!txt) txt = "";
+    while (*txt == ' ' || *txt == '#') txt++;   // legacy '#' form
+    size_t n = strlen(txt);
+    while (n && txt[n - 1] == ' ') n--;
+    if (n == 0) { _scStore(""); _scClose(); return; }
+    if (txt[0] == '$') { _scSetStatus("Private ($) regions aren't supported.", theme::RED); return; }
+    if (n < 2)         { _scSetStatus("Region names are 2+ characters.", theme::RED); return; }
+    if (n >= sizeof(ops::Config{}.scopeTag)) { _scSetStatus("Region name is too long.", theme::RED); return; }
+    for (size_t i = 0; i < n; i++) {
+        char c = txt[i];
+        if (!isalnum((unsigned char)c) && c != '-' && c != '_') {
+            _scSetStatus("Use letters, digits, - or _ only.", theme::RED);
+            return;
+        }
+    }
+    char region[sizeof(ops::Config{}.scopeTag)] = {};
+    memcpy(region, txt, n);
+    _scStore(region);
+    _scClose();
+}
+
+static void _onSCClear(lv_event_t* /*e*/) { _scStore(""); _scClose(); }
+static void _onSCExit (lv_event_t* /*e*/) { _scClose(); }
+static void _onSCKey  (lv_event_t* e) { if (lv_event_get_key(e) == LV_KEY_ESC) _scClose(); }
+
+static void _openScopeDialog()
+{
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_scCtx = ScopeCtx{};
+    s_scCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onSCKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 300, 180);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 6, 0);
+    lv_obj_set_style_pad_row(panel, 5, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, lang::tr(lang::TR_SCOPE));
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 286);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note,
+        "Region for everything you flood: DMs, adverts, logins and channels "
+        "without their own scope. Needed where repeaters deny unscoped "
+        "traffic. Empty = unscoped.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    s_scCtx.ta = lv_textarea_create(panel);
+    lv_obj_set_size(s_scCtx.ta, 286, 28);
+    lv_textarea_set_one_line(s_scCtx.ta, true);
+    lv_textarea_set_max_length(s_scCtx.ta, sizeof(ops::Config{}.scopeTag) - 1);
+    lv_textarea_set_placeholder_text(s_scCtx.ta, "e.g. AU");
+    lv_textarea_set_text(s_scCtx.ta, ops::config::get().scopeTag);
+    lv_obj_set_style_bg_color(s_scCtx.ta, theme::BG, 0);
+    lv_obj_set_style_text_color(s_scCtx.ta, theme::TEXT, 0);
+    lv_obj_set_style_border_color(s_scCtx.ta, theme::BORDER, 0);
+    lv_obj_set_style_border_width(s_scCtx.ta, 1, 0);
+    lv_obj_set_style_radius(s_scCtx.ta, 4, 0);
+    lv_obj_set_style_pad_all(s_scCtx.ta, 4, 0);
+    lv_obj_set_style_text_font(s_scCtx.ta, &lv_font_montserrat_12, 0);
+    lv_obj_add_event_cb(s_scCtx.ta, _onSCKey,  LV_EVENT_KEY,   nullptr);
+    lv_obj_add_event_cb(s_scCtx.ta, _onSCSave, LV_EVENT_READY, nullptr);   // Enter saves
+
+    s_scCtx.status = lv_label_create(panel);
+    lv_obj_set_width(s_scCtx.status, 286);
+    lv_label_set_long_mode(s_scCtx.status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_scCtx.status, &lv_font_montserrat_10, 0);
+    _scSetStatus("", theme::TEXT_MUTED);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 286, 28);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    struct Btn { const char* text; lv_event_cb_t cb; bool primary; };
+    const Btn btns[] = {
+        { LV_SYMBOL_OK " Save",     _onSCSave,  true  },
+        { LV_SYMBOL_TRASH " Clear", _onSCClear, false },
+        { LV_SYMBOL_CLOSE " Cancel", _onSCExit, false },
+    };
+    for (const Btn& bd : btns) {
+        lv_obj_t* b = lv_btn_create(row);
+        lv_obj_set_size(b, 88, 24);
+        lv_obj_set_style_bg_color(b, bd.primary ? theme::ACCENT : theme::BG, 0);
+        lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(b, theme::BORDER, 0);
+        lv_obj_set_style_border_width(b, bd.primary ? 0 : 1, 0);
+        lv_obj_set_style_radius(b, 4, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_add_event_cb(b, bd.cb,    LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(b, _onSCKey, LV_EVENT_KEY,     nullptr);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, bd.text);
+        lv_obj_set_style_text_color(l, bd.primary ? theme::BG : theme::TEXT, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_center(l);
+    }
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(s_scCtx.ta);
+}
+
 // ── CPU Governor dropdown dialog ──────────────────────────────────────
 
 struct CpuGovCtx { lv_obj_t* modal; lv_obj_t* dd; };
@@ -4416,6 +4581,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 38:  // DM Retries → two-slider dialog
             _openDmRetryDialog();
+            return;
+
+        case 40:  // Region Scope → default flood scope dialog
+            _openScopeDialog();
             return;
 
         case 32:  // Volume → slider dialog

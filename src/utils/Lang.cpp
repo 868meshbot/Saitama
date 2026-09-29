@@ -49,6 +49,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Language",             // TR_LANGUAGE
         "Storage Password",     // TR_STORAGE_PW
         "DM Retries",           // TR_DM_RETRIES
+        "Region Scope",         // TR_SCOPE
         "On",                   // TR_ON
         "Off",                  // TR_OFF
     },
@@ -88,6 +89,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Lingua",
         "Password Archivio",
         "Tentativi DM",
+        "Ambito Regione",
         "Attivo",
         "Inattivo",
     },
@@ -127,6 +129,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Langue",
         "Mot de Passe Stockage",
         "Renvois DM",
+        "Portee Region",
         "Actif",
         "Inactif",
     },
@@ -166,6 +169,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Sprache",
         "Speicher-Passwort",
         "DM-Wiederholungen",
+        "Regionsbereich",
         "Ein",
         "Aus",
     },
@@ -205,6 +209,7 @@ static const char* const s_strings[LANG_COUNT][TR_COUNT] = {
         "Idioma",
         "Contrasena Almacen",
         "Reintentos DM",
+        "Ambito Region",
         "Activo",
         "Inactivo",
     },
