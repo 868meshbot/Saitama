@@ -199,7 +199,7 @@ void ScreenTrace::_rebuildHopList() {
              numHops == 1 ? "" : "s");
     lv_label_set_text(hdr, buf);
     lv_obj_set_style_text_color(hdr, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_12, 0);
     lv_obj_set_width(hdr, lv_pct(100));
   }
 
@@ -245,28 +245,28 @@ void ScreenTrace::_rebuildHopList() {
     snprintf(hopBuf, sizeof(hopBuf), "%d.", i + 1);
     lv_label_set_text(hopLbl, hopBuf);
     lv_obj_set_style_text_color(hopLbl, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(hopLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_width(hopLbl, 18);
+    lv_obj_set_style_text_font(hopLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_width(hopLbl, 22);
 
     // Hash abbreviation (2 hex chars, accent colour)
     lv_obj_t *addrLbl = lv_label_create(row);
     lv_label_set_text(addrLbl, hashAbbr);
     lv_obj_set_style_text_color(addrLbl, theme::ACCENT, 0);
-    lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_width(addrLbl, 22);
+    lv_obj_set_style_text_font(addrLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_width(addrLbl, 26);
 
     // Node name (truncated)
     lv_obj_t *nameLbl = lv_label_create(row);
     lv_label_set_text(nameLbl, nodeName);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
-    lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_flex_grow(nameLbl, 1);
 
     // SNR value (right-aligned via grow spacer before it)
     lv_obj_t *snrLbl = lv_label_create(row);
     lv_label_set_text(snrLbl, snrBuf);
-    lv_obj_set_style_text_font(snrLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(snrLbl, &lv_font_montserrat_12, 0);
     // Colour by signal quality
     lv_color_t snrCol = theme::TEXT_MUTED;
     if (i < r.numSnrs) {
@@ -276,7 +276,8 @@ void ScreenTrace::_rebuildHopList() {
                                 : theme::RED;
     }
     lv_obj_set_style_text_color(snrLbl, snrCol, 0);
-    lv_obj_set_width(snrLbl, 54);
+    lv_obj_set_width(snrLbl, 66);
+    lv_obj_set_style_text_align(snrLbl, LV_TEXT_ALIGN_RIGHT, 0);
   }
 }
 
@@ -368,39 +369,45 @@ void ScreenTrace::_build() {
   lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
   lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_14, 0);
 
-  // ── Target row (below top bar) ─────────────────────────────────────
-  static constexpr int TARGET_ROW_H = 32;
-  lv_obj_t *targetRow = lv_obj_create(_screen);
-  lv_obj_set_size(targetRow, OPS_SCREEN_W, TARGET_ROW_H);
-  lv_obj_align(targetRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 2);
-  lv_obj_set_style_bg_color(targetRow, theme::BG, 0);
-  lv_obj_set_style_border_width(targetRow, 0, 0);
-  lv_obj_set_style_pad_hor(targetRow, 4, 0);
-  lv_obj_set_style_pad_ver(targetRow, 2, 0);
-  lv_obj_set_style_pad_column(targetRow, 6, 0);
-  lv_obj_set_scrollbar_mode(targetRow, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(targetRow, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(targetRow, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(targetRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
+  // ── Body: one column below the top bar ────────────────────────────
+  // Target label, dropdown (own line), Trace button (own line), status,
+  // then the hop list filling the rest. Flex layout keeps every row at its
+  // content height, so nothing clips or overlaps.
+  lv_obj_t *body = lv_obj_create(_screen);
+  lv_obj_set_size(body, OPS_SCREEN_W, OPS_SCREEN_H - TOP_H);
+  lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, TOP_H);
+  lv_obj_set_style_bg_color(body, theme::BG, 0);
+  lv_obj_set_style_border_width(body, 0, 0);
+  lv_obj_set_style_radius(body, 0, 0);
+  lv_obj_set_style_pad_hor(body, 6, 0);
+  lv_obj_set_style_pad_top(body, 4, 0);
+  lv_obj_set_style_pad_bottom(body, 2, 0);
+  lv_obj_set_style_pad_row(body, 4, 0);
+  lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
 
-  // "Target:" label
-  lv_obj_t *tgtLbl = lv_label_create(targetRow);
-  lv_label_set_text(tgtLbl, "Target:");
+  // "Target" label
+  lv_obj_t *tgtLbl = lv_label_create(body);
+  lv_label_set_text(tgtLbl, "Target");
   lv_obj_set_style_text_color(tgtLbl, theme::TEXT_MUTED, 0);
-  lv_obj_set_style_text_font(tgtLbl, &lv_font_montserrat_10, 0);
+  lv_obj_set_style_text_font(tgtLbl, &lv_font_montserrat_12, 0);
 
-  // Dropdown — grows to fill available width minus trace button
-  _dropdown = lv_dropdown_create(targetRow);
-  lv_obj_set_flex_grow(_dropdown, 1);
-  lv_obj_set_height(_dropdown, TARGET_ROW_H - 6);
+  // Dropdown — full width on its own line
+  _dropdown = lv_dropdown_create(body);
+  lv_obj_set_width(_dropdown, lv_pct(100));
+  lv_obj_set_height(_dropdown, LV_SIZE_CONTENT);
   lv_obj_set_style_bg_color(_dropdown, theme::BG_CARD, 0);
   lv_obj_set_style_border_color(_dropdown, theme::BORDER, 0);
+  lv_obj_set_style_border_color(_dropdown, theme::ACCENT, LV_STATE_FOCUSED);
   lv_obj_set_style_border_width(_dropdown, 1, 0);
+  lv_obj_set_style_radius(_dropdown, 4, 0);
   lv_obj_set_style_text_color(_dropdown, theme::TEXT, 0);
-  lv_obj_set_style_text_font(_dropdown, &lv_font_montserrat_10, 0);
-  lv_obj_set_style_pad_hor(_dropdown, 4, 0);
-  lv_obj_set_style_pad_ver(_dropdown, 2, 0);
+  lv_obj_set_style_text_font(_dropdown, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_pad_hor(_dropdown, 6, 0);
+  lv_obj_set_style_pad_ver(_dropdown, 6, 0);
 
   if (s_numTargets > 0) {
     lv_dropdown_set_options(_dropdown, _buildDropOptions());
@@ -418,24 +425,26 @@ void ScreenTrace::_build() {
   lv_obj_set_style_bg_color(dropList, theme::BG_CARD, 0);
   lv_obj_set_style_border_color(dropList, theme::BORDER, 0);
   lv_obj_set_style_text_color(dropList, theme::TEXT, 0);
-  lv_obj_set_style_text_font(dropList, &lv_font_montserrat_10, 0);
-  lv_obj_set_style_max_height(dropList, 140, 0);
+  lv_obj_set_style_text_font(dropList, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_max_height(dropList, 150, 0);
 
-  // "Trace" button
-  _traceBtn = lv_btn_create(targetRow);
-  lv_obj_set_size(_traceBtn, 58, TARGET_ROW_H - 6);
+  // "Trace" button — full width on its own line
+  _traceBtn = lv_btn_create(body);
+  lv_obj_set_width(_traceBtn, lv_pct(100));
+  lv_obj_set_height(_traceBtn, 30);
   lv_obj_set_style_bg_color(_traceBtn, theme::PRIMARY, 0);
   lv_obj_set_style_bg_color(_traceBtn, theme::ACCENT, LV_STATE_PRESSED);
-  lv_obj_set_style_radius(_traceBtn, 4, 0);
+  lv_obj_set_style_border_color(_traceBtn, theme::ACCENT, LV_STATE_FOCUSED);
   lv_obj_set_style_border_width(_traceBtn, 0, 0);
+  lv_obj_set_style_border_width(_traceBtn, 2, LV_STATE_FOCUSED);
+  lv_obj_set_style_bg_opa(_traceBtn, LV_OPA_40, LV_STATE_DISABLED);
+  lv_obj_set_style_radius(_traceBtn, 4, 0);
   lv_obj_set_style_shadow_width(_traceBtn, 0, 0);
-  lv_obj_set_style_pad_hor(_traceBtn, 4, 0);
-  lv_obj_set_style_pad_ver(_traceBtn, 2, 0);
   lv_obj_add_event_cb(_traceBtn, _onTraceClick, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *tBtnLbl = lv_label_create(_traceBtn);
   lv_label_set_text(tBtnLbl, LV_SYMBOL_LOOP " Trace");
   lv_obj_set_style_text_color(tBtnLbl, theme::TEXT, 0);
-  lv_obj_set_style_text_font(tBtnLbl, &lv_font_montserrat_10, 0);
+  lv_obj_set_style_text_font(tBtnLbl, &lv_font_montserrat_14, 0);
   lv_obj_center(tBtnLbl);
 
   // Disable trace btn if no targets or no path known; build initial status
@@ -466,31 +475,21 @@ void ScreenTrace::_build() {
     lv_obj_add_state(_traceBtn, LV_STATE_DISABLED);
   }
 
-  // ── Status bar ────────────────────────────────────────────────────
-  static constexpr int STATUS_H = 18;
-  lv_obj_t *statusRow = lv_obj_create(_screen);
-  lv_obj_set_size(statusRow, OPS_SCREEN_W, STATUS_H);
-  lv_obj_align(statusRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 2 + TARGET_ROW_H + 2);
-  lv_obj_set_style_bg_color(statusRow, theme::BG, 0);
-  lv_obj_set_style_border_width(statusRow, 0, 0);
-  lv_obj_set_style_pad_hor(statusRow, 6, 0);
-  lv_obj_set_style_pad_ver(statusRow, 1, 0);
-  lv_obj_clear_flag(statusRow, LV_OBJ_FLAG_SCROLLABLE);
-
-  _statusLbl = lv_label_create(statusRow);
+  // ── Status line ───────────────────────────────────────────────────
+  _statusLbl = lv_label_create(body);
+  lv_obj_set_width(_statusLbl, lv_pct(100));
+  lv_label_set_long_mode(_statusLbl, LV_LABEL_LONG_WRAP);
   lv_label_set_text(_statusLbl, initStatus);
   lv_obj_set_style_text_color(_statusLbl, initCol, 0);
-  lv_obj_set_style_text_font(_statusLbl, &lv_font_montserrat_10, 0);
+  lv_obj_set_style_text_font(_statusLbl, &lv_font_montserrat_12, 0);
 
-  // ── Hop list (scrollable) ────────────────────────────���────────────
-  int hopListY = TOP_H + 2 + TARGET_ROW_H + 2 + STATUS_H + 2;
-  int hopListH = OPS_SCREEN_H - hopListY - 2;
-
-  _hopList = lv_obj_create(_screen);
-  lv_obj_set_size(_hopList, OPS_SCREEN_W - 4, hopListH);
-  lv_obj_align(_hopList, LV_ALIGN_TOP_LEFT, 2, hopListY);
+  // ── Hop list (scrollable, fills the rest) ─────────────────────────
+  _hopList = lv_obj_create(body);
+  lv_obj_set_width(_hopList, lv_pct(100));
+  lv_obj_set_flex_grow(_hopList, 1);
   lv_obj_set_style_bg_color(_hopList, theme::BG, 0);
   lv_obj_set_style_border_width(_hopList, 0, 0);
+  lv_obj_set_style_radius(_hopList, 0, 0);
   lv_obj_set_style_pad_all(_hopList, 0, 0);
   lv_obj_set_style_pad_row(_hopList, 2, 0);
   lv_obj_set_scrollbar_mode(_hopList, LV_SCROLLBAR_MODE_AUTO);
