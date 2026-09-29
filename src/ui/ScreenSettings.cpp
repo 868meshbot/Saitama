@@ -48,6 +48,7 @@
 #include <cstdio>
 #include <time.h>
 #include <esp_ota_ops.h>
+#include <esp_sleep.h>
 #include <Preferences.h>
 #include <LittleFS.h>
 
@@ -220,8 +221,19 @@ static void _fmtScreenOffVal(char* buf, size_t len, int sec);
 // True when any app partition other than the one we're running from exists.
 // The Launcher lives in its own slot (factory/test/ota); as long as there is
 // at least one other app partition we can jump back.
+// The bmorcelli Launcher (2.9+, "keyboot" bootloader) lives in a `test`
+// subtype app partition. Its bootloader starts it on a power-on reset or a
+// wake from deep sleep, never on a software reset (see _returnToLauncher()).
+static const esp_partition_t* _launcherTestPartition()
+{
+    return esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                    ESP_PARTITION_SUBTYPE_APP_TEST, NULL);
+}
+
 static bool _hasLauncher()
 {
+    if (_launcherTestPartition()) return true;
+
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_partition_iterator_t it = esp_partition_find(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
@@ -236,6 +248,62 @@ static bool _hasLauncher()
     }
     esp_partition_iterator_release(it);
     return found;
+}
+
+// Hands control back to the Launcher. Never returns if it can.
+static void _returnToLauncher()
+{
+    // Tell the Launcher to stay in its menu instead of auto-booting us again.
+    {
+        Preferences prefs;
+        prefs.begin("launcher", false);
+        prefs.putBool("bootToApp", false);
+        prefs.end();
+    }
+
+    if (_launcherTestPartition()) {
+        // Launcher 2.9+: its bootloader ignores software resets, so a plain
+        // restart just boots us again. A wake from deep sleep does start it,
+        // unless the Launcher option "DeepSleep starts Launcher" is off (DDLB).
+        Preferences prefs;
+        prefs.begin("launcher", true);
+        bool ddlb = prefs.getBool("DDLB", false);
+        prefs.end();
+        if (ddlb) {
+            OPS_LOG("Settings", "Launcher has DeepSleep-to-Launcher off - power-cycle instead");
+            // lv_msgbox with a close button (NULL parent = top layer).
+            lv_obj_t* mb = lv_msgbox_create(NULL, "Return to Launcher",
+                "Turn the T-Deck off and on to open the Launcher. Its "
+                "'DeepSleep starts Launcher' option is off, so Saitama "
+                "can't hand over directly.", NULL, true);
+            lv_obj_set_width(mb, 280);
+            lv_obj_set_style_bg_color(mb, theme::BG_CARD, 0);
+            lv_obj_set_style_border_color(mb, theme::ORANGE, 0);
+            lv_obj_set_style_text_color(mb, theme::TEXT, 0);
+            lv_obj_set_style_text_font(mb, &lv_font_montserrat_12, 0);
+            lv_obj_center(mb);
+            return;
+        }
+        OPS_LOG("Settings", "Returning to Launcher via deep-sleep wake");
+        Serial.flush();
+        esp_sleep_enable_timer_wakeup(200 * 1000);   // 200 ms
+        esp_deep_sleep_start();
+    }
+
+    // Older Launcher builds live in an OTA slot: select it and restart.
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_partition_iterator_t it = esp_partition_find(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    while (it) {
+        const esp_partition_t* p = esp_partition_get(it);
+        if (p && (!running || p->address != running->address)) {
+            esp_ota_set_boot_partition(p);  // ignore error — NVS flag is the primary path
+            break;
+        }
+        it = esp_partition_next(it);
+    }
+    esp_partition_iterator_release(it);
+    esp_restart();
 }
 
 // ── _buildList() ─────────────────────────────────────────────────────
@@ -4418,31 +4486,9 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openFontDialog();
             return;
 
-        case 34: {  // Return to Launcher
-            // Tell Launcher not to auto-relaunch us (covers factory/test Launcher slots
-            // that always boot first and decide via this NVS flag).
-            {
-                Preferences prefs;
-                prefs.begin("launcher", false);
-                prefs.putBool("bootToApp", false);
-                prefs.end();
-            }
-            // Also try OTA boot selection for Launcher builds where it lives in an OTA slot.
-            const esp_partition_t* running = esp_ota_get_running_partition();
-            esp_partition_iterator_t it = esp_partition_find(
-                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
-            while (it) {
-                const esp_partition_t* p = esp_partition_get(it);
-                if (p && (!running || p->address != running->address)) {
-                    esp_ota_set_boot_partition(p);  // ignore error — NVS flag is the primary path
-                    break;
-                }
-                it = esp_partition_next(it);
-            }
-            esp_partition_iterator_release(it);
-            esp_restart();
+        case 34:  // Return to Launcher
+            _returnToLauncher();
             return;
-        }
 
         default: return;
     }
