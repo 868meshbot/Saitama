@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <nvs.h>
 #include "version.h"
 #include "hardware/Board.h"
 #include "mesh/MeshService.h"
@@ -58,6 +59,14 @@ void setup() {
     ops::crypto::init();
     ops::regions::init();
     ops::repeaters::init();
+    {
+        // NVS is 16 KB: a full partition makes config/contact saves fail.
+        nvs_stats_t st;
+        if (nvs_get_stats(nullptr, &st) == ESP_OK)
+            OPS_LOG("NVS", "%u/%u entries used, %u free, %u namespaces",
+                    (unsigned)st.used_entries, (unsigned)st.total_entries,
+                    (unsigned)st.free_entries, (unsigned)st.namespace_count);
+    }
 
     // Apply saved keyboard backlight state on boot
     ops::Board::instance().setKeyboardBacklight(ops::config::get().kbBrightness);

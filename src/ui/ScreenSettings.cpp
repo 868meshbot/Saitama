@@ -484,9 +484,13 @@ void ScreenSettings::_refreshList() {
         }
     }
 
-    lv_obj_del(_list);
+    // May run from a row's own click handler — hide the old list and let
+    // LVGL free it after the event finishes.
+    lv_obj_add_flag(_list, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* oldList = _list;
     _list = nullptr;
     _buildList(_screen);
+    lv_obj_del_async(oldList);
     lv_obj_scroll_to_y(_list, savedY, LV_ANIM_OFF);
 
     if (g) {
@@ -496,8 +500,18 @@ void ScreenSettings::_refreshList() {
 }
 
 // ── _openNameDialog() ────────────────────────────────────────────────
+// Dialogs close from handlers on their own children (buttons, textareas).
+// A synchronous lv_obj_del() there frees the object whose event is still
+// being dispatched and corrupts LVGL's heap a few dialogs later — always
+// delete asynchronously. _delModal also clears the pointer so a second
+// close (Enter + Esc in one frame) can't queue a double delete.
+static void _delModal(lv_obj_t*& m) {
+    if (m) lv_obj_del_async(m);
+    m = nullptr;
+}
+
 static void _closeModal(lv_obj_t* modal) {
-    lv_obj_del(modal);
+    if (modal) lv_obj_del_async(modal);
 }
 
 static void _onModalSave(lv_event_t* e) {
@@ -665,7 +679,7 @@ static void _closeEditCh(bool doSave) {
         OPS_LOG("Settings", "Channel %d saved: name=%s scope=%s",
                 s_editCtx.ch + 1, cleanName, scope ? scope : "");
     }
-    lv_obj_del(s_editCtx.modal);
+    _delModal(s_editCtx.modal);
     s_editCtx.modal = nullptr;
     ScreenSettings::show();
 }
@@ -685,20 +699,20 @@ static lv_obj_t* s_chModal = nullptr;
 static void _openChannelsDialog();  // forward declaration — defined after _onChPageChange
 
 static void _onChannelListClose(lv_event_t* /*e*/) {
-    lv_obj_del(s_chModal);
+    _delModal(s_chModal);
     s_chModal = nullptr;
 }
 
 static void _onChannelRowClick(lv_event_t* e) {
     int ch = (int)(intptr_t)lv_event_get_user_data(e);
-    lv_obj_del(s_chModal);
+    _delModal(s_chModal);
     s_chModal = nullptr;
     _openEditChannelDialog(ch);
 }
 
 static void _onChPageChange(lv_event_t* e) {
     s_chPage = (int)(intptr_t)lv_event_get_user_data(e);
-    lv_obj_del(s_chModal);
+    _delModal(s_chModal);
     s_chModal = nullptr;
     _openChannelsDialog();
 }
@@ -1191,18 +1205,18 @@ static void _onAASave(lv_event_t* /*e*/) {
     cfg.autoAddClient   = s_aaCtx.clientOn;
     cfg.autoAddRepeater = s_aaCtx.repOn;
     ops::config::save();
-    lv_obj_del(s_aaCtx.modal);
+    _delModal(s_aaCtx.modal);
     ScreenSettings::show();
 }
 
 static void _onAAExit(lv_event_t* /*e*/) {
-    lv_obj_del(s_aaCtx.modal);
+    _delModal(s_aaCtx.modal);
 }
 
 static void _onAAKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
-        lv_obj_del(s_aaCtx.modal);
+        _delModal(s_aaCtx.modal);
 }
 
 static lv_obj_t* _makeToggleRow(lv_obj_t* parent, const char* label,
@@ -1380,14 +1394,14 @@ static void _onSTSave(lv_event_t* /*e*/) {
     settimeofday(&tv, nullptr);
     OPS_LOG("Settings", "Time set: %04d-%02d-%02d %02d:%02d",
             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
-    lv_obj_del(s_stCtx.modal);
+    _delModal(s_stCtx.modal);
     ScreenLauncher::refreshClock();
     ScreenSettings::show();
 }
 
-static void _onSTExit(lv_event_t* /*e*/) { lv_obj_del(s_stCtx.modal); }
+static void _onSTExit(lv_event_t* /*e*/) { _delModal(s_stCtx.modal); }
 static void _onSTKey(lv_event_t* e) {
-    if (lv_event_get_key(e) == LV_KEY_ESC) lv_obj_del(s_stCtx.modal);
+    if (lv_event_get_key(e) == LV_KEY_ESC) _delModal(s_stCtx.modal);
 }
 
 static void _openSetTimeDialog() {
@@ -1558,13 +1572,13 @@ static void _onNSave(lv_event_t* /*e*/) {
     cfg.notifySound = s_nCtx.soundOn;
     cfg.notifyPopup = s_nCtx.popupOn;
     ops::config::save();
-    lv_obj_del(s_nCtx.modal);
+    _delModal(s_nCtx.modal);
     ScreenSettings::show();
 }
-static void _onNExit(lv_event_t* /*e*/) { lv_obj_del(s_nCtx.modal); }
+static void _onNExit(lv_event_t* /*e*/) { _delModal(s_nCtx.modal); }
 static void _onNKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_nCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_nCtx.modal);
 }
 
 static void _openNotificationsDialog() {
@@ -1677,13 +1691,13 @@ static void _onTzSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.timezoneOffsetHours = (int8_t)v;
     ops::config::save();
-    lv_obj_del(s_tzCtx.modal);
+    _delModal(s_tzCtx.modal);
     ScreenSettings::show();
 }
-static void _onTzExit(lv_event_t* /*e*/) { lv_obj_del(s_tzCtx.modal); }
+static void _onTzExit(lv_event_t* /*e*/) { _delModal(s_tzCtx.modal); }
 static void _onTzKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_tzCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_tzCtx.modal);
 }
 
 static void _openTimezoneDialog() {
@@ -1812,13 +1826,13 @@ static void _onToSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.screenTimeoutSec = step * 10;
     ops::config::save();
-    lv_obj_del(s_toCtx.modal);
+    _delModal(s_toCtx.modal);
     ScreenSettings::show();
 }
-static void _onToExit(lv_event_t* /*e*/) { lv_obj_del(s_toCtx.modal); }
+static void _onToExit(lv_event_t* /*e*/) { _delModal(s_toCtx.modal); }
 static void _onToKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_toCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_toCtx.modal);
 }
 
 static void _openTimeoutDialog() {
@@ -1951,13 +1965,13 @@ static void _onSoSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.screenOffSec = (step < 2) ? 0 : (uint8_t)(step * 10);
     ops::config::save();
-    lv_obj_del(s_soCtx.modal);
+    _delModal(s_soCtx.modal);
     ScreenSettings::show();
 }
-static void _onSoExit(lv_event_t* /*e*/) { lv_obj_del(s_soCtx.modal); }
+static void _onSoExit(lv_event_t* /*e*/) { _delModal(s_soCtx.modal); }
 static void _onSoKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_soCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_soCtx.modal);
 }
 
 static void _openScreenOffDialog() {
@@ -2244,20 +2258,20 @@ static void _onKbSave(lv_event_t* /*e*/) {
     ops::config::save();
     ops::Board::instance().setKeyboardBacklight(v);
     resetKbBacklight();  // let tick() re-evaluate auto/manual state immediately
-    lv_obj_del(s_kbCtx.modal);
+    _delModal(s_kbCtx.modal);
     ScreenSettings::show();
 }
 static void _onKbExit(lv_event_t* /*e*/) {
     ops::Board::instance().setKeyboardBacklight(s_kbCtx.origVal);
     resetKbBacklight();  // re-apply KB auto/manual state after the live preview above
-    lv_obj_del(s_kbCtx.modal);
+    _delModal(s_kbCtx.modal);
 }
 static void _onKbKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
         ops::Board::instance().setKeyboardBacklight(s_kbCtx.origVal);
         resetKbBacklight();  // re-apply KB auto/manual state after the live preview above
-        lv_obj_del(s_kbCtx.modal);
+        _delModal(s_kbCtx.modal);
     }
 }
 
@@ -2401,18 +2415,18 @@ static void _onTxPowerSave(lv_event_t* /*e*/) {
     ops::config::save();
     ops::MeshService::instance().setTxPower(v);
     ops::MeshService::instance().setRxBoost(s_txCtx.boostOn);
-    lv_obj_del(s_txCtx.modal);
+    _delModal(s_txCtx.modal);
     ScreenSettings::show();
 }
 
 static void _onTxPowerExit(lv_event_t* /*e*/) {
-    lv_obj_del(s_txCtx.modal);
+    _delModal(s_txCtx.modal);
 }
 
 static void _onTxPowerKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
-        lv_obj_del(s_txCtx.modal);
+        _delModal(s_txCtx.modal);
 }
 
 static void _openTxPowerDialog() {
@@ -2557,20 +2571,20 @@ static void _onBrightSave(lv_event_t* /*e*/) {
     cfg.brightness = (int)v;
     ops::config::save();
     ops::Board::instance().setDisplayBrightness(v);
-    lv_obj_del(s_brightCtx.modal);
+    _delModal(s_brightCtx.modal);
     ScreenSettings::show();
 }
 
 static void _onBrightExit(lv_event_t* /*e*/) {
     ops::Board::instance().setDisplayBrightness(s_brightCtx.origVal);
-    lv_obj_del(s_brightCtx.modal);
+    _delModal(s_brightCtx.modal);
 }
 
 static void _onBrightKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
         ops::Board::instance().setDisplayBrightness(s_brightCtx.origVal);
-        lv_obj_del(s_brightCtx.modal);
+        _delModal(s_brightCtx.modal);
     }
 }
 
@@ -2702,14 +2716,15 @@ static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Custom",             ""               },  // 14 user-defined
 };
 
+static lv_obj_t* s_radioModal = nullptr;
+
 static void _onRadioRowClick(lv_event_t* e) {
-    int* info = static_cast<int*>(lv_event_get_user_data(e));
-    lv_obj_t* modal   = reinterpret_cast<lv_obj_t*>((uintptr_t)info[0]);
-    uint8_t   profIdx = (uint8_t)info[1];
-    delete[] info;
+    uint8_t profIdx = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t* modal = s_radioModal;
+    s_radioModal = nullptr;
 
     if (profIdx == 14) {
-        lv_obj_del(modal);
+        lv_obj_del_async(modal);
         _openCustomRadioDialog();
         return;
     }
@@ -2721,17 +2736,18 @@ static void _onRadioRowClick(lv_event_t* e) {
     ops::MeshService::instance().applyLoraProfile(profIdx);
     OPS_LOG("Settings", "Radio profile -> %d", profIdx);
 
-    lv_obj_del(modal);
+    lv_obj_del_async(modal);
     ScreenSettings::show();
 }
 
 static void _onRadioClose(lv_event_t* e) {
     lv_obj_t* modal = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-    lv_obj_del(modal);
+    lv_obj_del_async(modal);
 }
 
 static void _openRadioDialog() {
     lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_radioModal = modal;
     lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
     lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
@@ -2742,7 +2758,7 @@ static void _openRadioDialog() {
     lv_obj_add_event_cb(modal, [](lv_event_t* e) {
         uint32_t key = lv_event_get_key(e);
         if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
-            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(e)));
+            lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(e)));
     }, LV_EVENT_KEY, modal);
 
     // Panel: fixed height; title + scrollable row list + exit button
@@ -2826,13 +2842,10 @@ static void _openRadioDialog() {
         lv_obj_set_style_text_color(parLbl, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(parLbl, &lv_font_montserrat_10, 0);
 
-        int* info = new int[2];
-        info[0] = (int)(uintptr_t)modal;
-        info[1] = i;
-        lv_obj_add_event_cb(row, _onRadioRowClick, LV_EVENT_CLICKED, info);
+        lv_obj_add_event_cb(row, _onRadioRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         lv_obj_add_event_cb(row, [](lv_event_t* ev) {
             if (lv_event_get_key(ev) == LV_KEY_ESC)
-                lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+                lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
         }, LV_EVENT_KEY, modal);
     }
 
@@ -2848,7 +2861,7 @@ static void _openRadioDialog() {
     lv_obj_add_event_cb(exitBtn, _onRadioClose, LV_EVENT_CLICKED, modal);
     lv_obj_add_event_cb(exitBtn, [](lv_event_t* ev) {
         if (lv_event_get_key(ev) == LV_KEY_ESC)
-            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+            lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
     }, LV_EVENT_KEY, modal);
 
     lv_obj_t* exitLbl = lv_label_create(exitBtn);
@@ -2902,18 +2915,18 @@ static void _onCustomRadioSave(lv_event_t* /*e*/) {
     ops::MeshService::instance().applyRadioOverrides();
     OPS_LOG("Settings", "Custom radio: %.3f MHz SF%d BW%d CR%d",
             (double)cfg.freqMHz, cfg.radioSF, cfg.radioBW, cfg.radioCR);
-    lv_obj_del(s_rcCtx.modal);
+    _delModal(s_rcCtx.modal);
     ScreenSettings::show();
 }
 
 static void _onCustomRadioCancel(lv_event_t* /*e*/) {
-    lv_obj_del(s_rcCtx.modal);
+    _delModal(s_rcCtx.modal);
 }
 
 static void _onCustomRadioKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
-        lv_obj_del(s_rcCtx.modal);
+        _delModal(s_rcCtx.modal);
 }
 
 static lv_obj_t* _makeCustomRadioRow(lv_obj_t* parent, const char* label) {
@@ -3077,13 +3090,13 @@ static void _onKbLSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.kbLayout = sel < ops::keymap::LAYOUT_COUNT ? sel : 0;
     ops::config::save();
-    lv_obj_del(s_kbLCtx.modal);
+    _delModal(s_kbLCtx.modal);
     ScreenSettings::show();
 }
-static void _onKbLExit(lv_event_t* /*e*/) { lv_obj_del(s_kbLCtx.modal); }
+static void _onKbLExit(lv_event_t* /*e*/) { _delModal(s_kbLCtx.modal); }
 static void _onKbLKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_kbLCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_kbLCtx.modal);
 }
 
 // ── Language picker dialog ────────────────────────────────────────────
@@ -3092,22 +3105,21 @@ struct LangCtx { lv_obj_t* modal; };
 static LangCtx s_langCtx;
 
 static void _onLangRowClick(lv_event_t* e) {
-    int* info = static_cast<int*>(lv_event_get_user_data(e));
-    lv_obj_t* modal = reinterpret_cast<lv_obj_t*>((uintptr_t)info[0]);
-    uint8_t    lang = (uint8_t)info[1];
-    delete[] info;
+    uint8_t   lang  = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t* modal = s_langCtx.modal;
+    s_langCtx.modal = nullptr;
 
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.uiLanguage = lang;
     ops::config::save();
     OPS_LOG("Settings", "Language -> %d", lang);
-    lv_obj_del(modal);
+    lv_obj_del_async(modal);
     ScreenSettings::show();
 }
 
 static void _onLangClose(lv_event_t* e) {
     lv_obj_t* modal = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-    lv_obj_del(modal);
+    lv_obj_del_async(modal);
 }
 
 static void _openLangDialog() {
@@ -3123,7 +3135,7 @@ static void _openLangDialog() {
     lv_obj_add_event_cb(modal, [](lv_event_t* ev) {
         uint32_t key = lv_event_get_key(ev);
         if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
-            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+            lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
     }, LV_EVENT_KEY, modal);
 
     lv_obj_t* panel = lv_obj_create(modal);
@@ -3171,13 +3183,10 @@ static void _openLangDialog() {
         lv_obj_set_style_text_color(nameLbl, isSelected ? theme::ACCENT : theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
 
-        int* info = new int[2];
-        info[0] = (int)(uintptr_t)modal;
-        info[1] = i;
-        lv_obj_add_event_cb(row, _onLangRowClick, LV_EVENT_CLICKED, info);
+        lv_obj_add_event_cb(row, _onLangRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         lv_obj_add_event_cb(row, [](lv_event_t* ev) {
             if (lv_event_get_key(ev) == LV_KEY_ESC)
-                lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+                lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
         }, LV_EVENT_KEY, modal);
     }
 
@@ -3192,7 +3201,7 @@ static void _openLangDialog() {
     lv_obj_add_event_cb(exitBtn, _onLangClose, LV_EVENT_CLICKED, modal);
     lv_obj_add_event_cb(exitBtn, [](lv_event_t* ev) {
         if (lv_event_get_key(ev) == LV_KEY_ESC)
-            lv_obj_del(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
+            lv_obj_del_async(static_cast<lv_obj_t*>(lv_event_get_user_data(ev)));
     }, LV_EVENT_KEY, modal);
 
     lv_obj_t* exitLbl = lv_label_create(exitBtn);
@@ -3337,13 +3346,13 @@ static void _onVolSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.speakerVolume = (uint8_t)v;
     ops::config::save();
-    lv_obj_del(s_volCtx.modal);
+    _delModal(s_volCtx.modal);
     ScreenSettings::show();
 }
-static void _onVolExit(lv_event_t* /*e*/) { lv_obj_del(s_volCtx.modal); }
+static void _onVolExit(lv_event_t* /*e*/) { _delModal(s_volCtx.modal); }
 static void _onVolKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_volCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_volCtx.modal);
 }
 
 static void _openVolumeDialog() {
@@ -3438,17 +3447,17 @@ static void _onNSDSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.notifySoundChoice = sel < 4 ? sel : 0;
     ops::config::save();
-    lv_obj_del(s_nsCtx.modal);
+    _delModal(s_nsCtx.modal);
     ScreenSettings::show();
 }
 static void _onNSDPreview(lv_event_t* /*e*/) {
     uint8_t sel = (uint8_t)lv_dropdown_get_selected(s_nsCtx.dd);
     ops::sound::playPreview(sel);
 }
-static void _onNSDExit(lv_event_t* /*e*/) { lv_obj_del(s_nsCtx.modal); }
+static void _onNSDExit(lv_event_t* /*e*/) { _delModal(s_nsCtx.modal); }
 static void _onNSDKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_nsCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_nsCtx.modal);
 }
 
 static void _openNotifSoundDialog() {
@@ -3673,13 +3682,13 @@ static void _onRMSave(lv_event_t* /*e*/) {
     // (or the SD settings.json) still behaves sensibly.
     cfg.loraDutyCycle  = (cfg.radioPowerMode == ops::RADIO_POWER_DUTY_CYCLE);
     ops::config::save();
-    lv_obj_del(s_rmCtx.modal);
+    _delModal(s_rmCtx.modal);
     ScreenSettings::show();
 }
-static void _onRMExit(lv_event_t* /*e*/) { lv_obj_del(s_rmCtx.modal); }
+static void _onRMExit(lv_event_t* /*e*/) { _delModal(s_rmCtx.modal); }
 static void _onRMKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_rmCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_rmCtx.modal);
 }
 
 static void _openRadioModeDialog() {
@@ -4367,13 +4376,13 @@ static void _onCGSave(lv_event_t* /*e*/) {
     cfg.cpuGovernor = sel < 4 ? sel : 2;
     ops::config::save();
     ops::ui::applyGovernorNow();
-    lv_obj_del(s_cgCtx.modal);
+    _delModal(s_cgCtx.modal);
     ScreenSettings::show();
 }
-static void _onCGExit(lv_event_t* /*e*/) { lv_obj_del(s_cgCtx.modal); }
+static void _onCGExit(lv_event_t* /*e*/) { _delModal(s_cgCtx.modal); }
 static void _onCGKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_cgCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_cgCtx.modal);
 }
 
 static void _openCpuGovDialog() {
@@ -5008,12 +5017,12 @@ static void _onThemeSave(lv_event_t* /*e*/) {
         delay(400);
         ESP.restart();
     }
-    lv_obj_del(s_thCtx.modal);
+    _delModal(s_thCtx.modal);
 }
-static void _onThemeExit(lv_event_t* /*e*/) { lv_obj_del(s_thCtx.modal); }
+static void _onThemeExit(lv_event_t* /*e*/) { _delModal(s_thCtx.modal); }
 static void _onThemeKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_thCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_thCtx.modal);
 }
 
 static void _openThemeDialog() {
@@ -5149,13 +5158,13 @@ static void _onFontSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.fontExtLatin = (lv_dropdown_get_selected(s_fontCtx.dd) == 1);
     ops::config::save();
-    lv_obj_del(s_fontCtx.modal);
+    _delModal(s_fontCtx.modal);
     ScreenSettings::show();
 }
-static void _onFontExit(lv_event_t* /*e*/) { lv_obj_del(s_fontCtx.modal); }
+static void _onFontExit(lv_event_t* /*e*/) { _delModal(s_fontCtx.modal); }
 static void _onFontKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
-    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) lv_obj_del(s_fontCtx.modal);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_fontCtx.modal);
 }
 
 static void _openFontDialog() {
