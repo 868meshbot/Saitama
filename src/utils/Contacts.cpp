@@ -419,11 +419,17 @@ void contacts::setPath(int idx, uint8_t pathLen, const uint8_t* path, uint32_t l
     if (nb < 0 || (nb > 0 && !path)) return;
     bool same = s_contacts[idx].outPathValid && s_contacts[idx].outPathLen == pathLen &&
                 (nb == 0 || memcmp(s_contacts[idx].outPath, path, nb) == 0);
-    // Re-confirming the same path only refreshes its age in RAM; the file is
-    // rewritten on the next real change. A hand-set path is never downgraded.
+    // Re-confirming the same path rewrites the file only once the saved age
+    // is PATH_RESAVE_S old (RAM keeps the saved time until then, so it always
+    // matches the file). A hand-set path is never downgraded.
     if (same) {
-        if (s_contacts[idx].pathAt != PATH_AT_PINNED || learnedAt == PATH_AT_PINNED)
-            s_contacts[idx].pathAt = learnedAt;
+        if (learnedAt == PATH_AT_PINNED) {
+            if (s_contacts[idx].pathAt != PATH_AT_PINNED) { s_contacts[idx].pathAt = PATH_AT_PINNED; save(); }
+            return;
+        }
+        if (!pathNeedsResave(s_contacts[idx].pathAt, learnedAt)) return;
+        s_contacts[idx].pathAt = learnedAt;
+        save();
         return;
     }
     s_contacts[idx].outPathValid = true;
