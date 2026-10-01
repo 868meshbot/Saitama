@@ -164,12 +164,24 @@ public:
     uint32_t lastExpectedAck() const;
 
     // ── Region discovery ──────────────────────────────────────────────
-    // Asks every repeater heard at zero hops which regions it floods for
-    // (MeshCore ANON_REQ_TYPE_REGIONS, sent direct). Returns how many were
-    // asked — 0 means no repeater is in direct range. Replies arrive over the
-    // next few seconds via pollRegionReply(); names also go into the catalog.
+    // Asks every repeater in direct range which regions it floods for
+    // (MeshCore ANON_REQ_TYPE_REGIONS, sent direct). Repeaters already known
+    // at zero hops are asked at once; a zero-hop discover scan finds the rest
+    // over regionScanMs(), asking each as it answers. Returns how many were
+    // asked straight away — regionAskedCount() has the running total.
+    // Replies arrive via pollRegionReply(); names also go into the catalog.
     int  discoverRegions();
+    uint32_t regionScanMs();
+    int  regionAskedCount();
+    bool regionScanning();
     bool pollRegionReply(RegionReply& out);
+    // Asks the repeaters that haven't answered once more; returns how many.
+    int  retryRegions();
+    // How long to wait for the replies to a round of n requests, from the
+    // current preset's airtime.
+    uint32_t regionWaitMs(int n);
+    // Names (up to max) of repeaters asked that haven't answered.
+    int  regionUnanswered(char names[][32], int max);
 
     // ── Identity backup (encrypted, /ops/identity.enc) ────────────────
     // True when the SD backup exists but the storage password doesn't open

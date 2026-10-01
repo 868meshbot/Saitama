@@ -242,9 +242,26 @@ class OMSMesh : public BaseChatMesh {
     // Outstanding ANON_REQ_TYPE_REGIONS requests, matched on the timestamp
     // the repeater echoes as the first 4 bytes of its reply.
     static constexpr uint8_t ANON_REQ_REGIONS = 0x01;   // simple_repeater ANON_REQ_TYPE_REGIONS
+    // On-air sizes for airtime estimates: header + dest hash + our pub key +
+    // MAC + encrypted 6-byte request; reply = header + hashes + MAC + up to
+    // 8 + ~100 bytes of names.
+    static constexpr int     REG_REQ_BYTES   = 2 + 1 + 32 + 2 + 16;
+    static constexpr int     REG_REPLY_BYTES = 2 + 2 + 2 + 112;
     static constexpr int     REG_MAX = 8;
-    uint32_t    _regTags[REG_MAX] = {};
-    int         _regTagCount = 0;
+    // One per repeater asked. Every request sent to it (first try + retry)
+    // leaves a tag here, so a late answer to the first one still counts.
+    struct RegTarget {
+        uint8_t  pubKey[PUB_KEY_SIZE];
+        char     name[32];
+        uint32_t tags[2];
+        uint8_t  tagCount;
+        bool     answered;
+    };
+    RegTarget   _regTargets[REG_MAX] = {};
+    int         _regTargetCount = 0;
+    // While millis() < this, repeaters answering our zero-hop discover scan
+    // are asked for their regions as their replies arrive.
+    uint32_t    _regScanUntil = 0;
     RegionReply _regQ[REG_MAX] = {};
     int         _regQHead = 0, _regQCount = 0;
 
@@ -1221,6 +1238,15 @@ class OMSMesh : public BaseChatMesh {
                     break;
                 }
             }
+            if (!e.name[0]) {   // not heard since boot — try the saved lists
+                int si;
+                ops::Repeater sr;
+                ops::Contact  sc;
+                if (ops::repeaters::findByKey(pubKey, &si) && ops::repeaters::get(si, sr))
+                    strncpy(e.name, sr.name, 31);
+                else if (ops::contacts::findByKey(pubKey, &si) && ops::contacts::get(si, sc))
+                    strncpy(e.name, sc.name, 31);
+            }
 
             _discoverTail = (_discoverTail + 1) % DISCOVER_QUEUE_SIZE;
             _discoverCount++;
@@ -1228,14 +1254,25 @@ class OMSMesh : public BaseChatMesh {
                     pubKey[0], pubKey[1], nodeType, (double)e.rssi);
 
             // Add to in-memory routing table as a direct neighbor (path_len=0)
-            if (!lookupContactByPubKey(pubKey, 4)) {
+            ContactInfo* known = lookupContactByPubKey(pubKey, 4);
+            if (!known) {
                 ContactInfo ci{};
                 ci.id = mesh::Identity(pubKey);
                 if (e.name[0]) strncpy(ci.name, e.name, 31);
                 ci.type        = nodeType;
                 ci.out_path_len = 0;
                 addContact(ci);
+            } else {
+                if (!known->name[0] && e.name[0]) strncpy(known->name, e.name, 31);
+                // The reply proves a direct link both ways — route straight
+                // to it (unless a path is already set; it may be pinned), and
+                // save that so it is reloaded after a reboot.
+                if (known->out_path_len == OUT_PATH_UNKNOWN) known->out_path_len = 0;
+                if (known->out_path_len == 0)
+                    _persistContactPath(*known, getRTCClock()->getCurrentTime());
             }
+            if (nodeType == ADV_TYPE_REPEATER && millis() < _regScanUntil)
+                _regAskNeighbour(pubKey, e.name);
 
             // Auto-add to NVS lists when configured — name falls back to hex prefix
             char fallbackName[16];
@@ -2266,32 +2303,121 @@ public:
     }
 
     // Region discovery ────────────────────────────────────────────────
+    // Spacing between requests: one request's airtime plus a little, so
+    // they don't queue behind each other on slow presets.
+    uint32_t _regStaggerMs() {
+        uint32_t req = radio_driver.getEstAirtimeFor(REG_REQ_BYTES);
+        return req + 150 > 400 ? req + 150 : 400;
+    }
+
+    bool _sendRegionReq(RegTarget& t, uint32_t delayMs) {
+        if (t.tagCount >= 2) return false;
+        ContactInfo* c = lookupContactByPubKey(t.pubKey, PUB_KEY_SIZE);
+        if (!c) return false;
+        uint8_t req[6];
+        uint32_t tag = getRTCClock()->getCurrentTimeUnique();
+        memcpy(req, &tag, 4);
+        req[4] = ANON_REQ_REGIONS;
+        req[5] = 0;   // reply path length: 0 = answer straight back, zero hop
+        mesh::Packet* pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, c->id,
+                                               c->getSharedSecret(self_id), req, sizeof(req));
+        if (!pkt) return false;
+        sendDirect(pkt, c->out_path, 0, delayMs);
+        t.tags[t.tagCount++] = tag;
+        OPS_LOG("Regions", "Asked %s for its regions (tag %08X, try %d)", t.name, tag, t.tagCount);
+        return true;
+    }
+
     int discoverRegions() {
         if (!_active) return 0;
-        _regTagCount = 0;
+        _regTargetCount = 0;
         _regQHead = _regQCount = 0;
         ContactsIterator it = startContactsIterator();
         ContactInfo c;
+        uint32_t stagger = _regStaggerMs();
         int asked = 0;
-        while (it.hasNext(this, c) && _regTagCount < REG_MAX) {
+        // Ask for repeaters in range right now too: stored paths don't
+        // survive a reboot, so a neighbour may not be marked 0-hop yet.
+        _regScanUntil = 0;
+        if (sendDiscoverReqMsg(1 << ADV_TYPE_REPEATER))
+            _regScanUntil = millis() + regionScanMs();
+        while (it.hasNext(this, c) && _regTargetCount < REG_MAX) {
             // Zero hops = heard directly, which is what the request needs:
             // repeaters only answer it when it arrives direct.
             if (c.type != ADV_TYPE_REPEATER || c.out_path_len != 0) continue;
-            uint8_t req[6];
-            uint32_t tag = getRTCClock()->getCurrentTimeUnique();
-            memcpy(req, &tag, 4);
-            req[4] = ANON_REQ_REGIONS;
-            req[5] = 0;   // reply path length: 0 = answer straight back, zero hop
-            mesh::Packet* pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, c.id,
-                                                   c.getSharedSecret(self_id), req, sizeof(req));
-            if (!pkt) continue;
+            RegTarget& t = _regTargets[_regTargetCount];
+            memset(&t, 0, sizeof(t));
+            memcpy(t.pubKey, c.id.pub_key, PUB_KEY_SIZE);
+            strncpy(t.name, c.name, sizeof(t.name) - 1);
             // Stagger so the replies don't all key up at once.
-            sendDirect(pkt, c.out_path, 0, (uint32_t)asked * 400);
-            _regTags[_regTagCount++] = tag;
+            if (!_sendRegionReq(t, (uint32_t)asked * stagger)) continue;
+            _regTargetCount++;
             asked++;
-            OPS_LOG("Regions", "Asked %s for its regions (tag %08X)", c.name, tag);
         }
         return asked;
+    }
+
+    // A repeater answered the discover scan: ask it too, unless it already was.
+    void _regAskNeighbour(const uint8_t* pubKey, const char* name) {
+        if (_regTargetCount >= REG_MAX) return;
+        for (int i = 0; i < _regTargetCount; i++)
+            if (memcmp(_regTargets[i].pubKey, pubKey, PUB_KEY_SIZE) == 0) return;
+        RegTarget& t = _regTargets[_regTargetCount];
+        memset(&t, 0, sizeof(t));
+        memcpy(t.pubKey, pubKey, PUB_KEY_SIZE);
+        ops::Repeater saved;
+        int ri;
+        if (name && name[0]) strncpy(t.name, name, sizeof(t.name) - 1);
+        else if (ops::repeaters::findByKey(pubKey, &ri) && ops::repeaters::get(ri, saved) && saved.name[0])
+            strncpy(t.name, saved.name, sizeof(t.name) - 1);
+        else snprintf(t.name, sizeof(t.name), "%02X%02X%02X%02X",
+                      pubKey[0], pubKey[1], pubKey[2], pubKey[3]);
+        if (_sendRegionReq(t, 0)) _regTargetCount++;
+    }
+
+    // How long repeaters take to answer a discover scan: they reply after a
+    // random delay of up to ~10.4x the reply's airtime (getRetransmitDelay x 4).
+    uint32_t regionScanMs() {
+        return 1500 + 11 * radio_driver.getEstAirtimeFor(2 + 6 + 32 + 4);
+    }
+
+    int regionAskedCount() const { return _regTargetCount; }
+    bool regionScanning() const  { return millis() < _regScanUntil; }
+
+    // Asks every repeater that hasn't answered once more. Returns how many.
+    int retryRegions() {
+        if (!_active) return 0;
+        uint32_t stagger = _regStaggerMs();
+        int asked = 0;
+        for (int i = 0; i < _regTargetCount; i++) {
+            RegTarget& t = _regTargets[i];
+            if (t.answered) continue;
+            if (_sendRegionReq(t, (uint32_t)asked * stagger)) asked++;
+        }
+        return asked;
+    }
+
+    // How long a round of n requests needs before giving up on the replies:
+    // the staggered sends, then each repeater's 300 ms turnaround and reply
+    // airtime (replies can't overlap), plus a margin for CAD backoff.
+    uint32_t regionWaitMs(int n) {
+        if (n <= 0) return 0;
+        uint32_t reqAir = radio_driver.getEstAirtimeFor(REG_REQ_BYTES);
+        uint32_t repAir = radio_driver.getEstAirtimeFor(REG_REPLY_BYTES);
+        return (uint32_t)n * _regStaggerMs() + reqAir
+             + (uint32_t)n * (300 + repAir + 200) + 1500;
+    }
+
+    // Names of repeaters asked that haven't answered.
+    int regionUnanswered(char names[][32], int max) {
+        int n = 0;
+        for (int i = 0; i < _regTargetCount && n < max; i++) {
+            if (_regTargets[i].answered) continue;
+            memcpy(names[n], _regTargets[i].name, 32);
+            names[n][31] = '\0';
+            n++;
+        }
+        return n;
     }
 
     bool pollRegionReply(RegionReply& out) {
@@ -2304,16 +2430,33 @@ public:
 
     // Reply layout: our tag(4) + their clock(4) + comma-separated region names.
     bool _takeRegionReply(const ContactInfo& contact, const uint8_t* data, uint8_t len) {
-        if (len < 8 || _regTagCount == 0) return false;
+        if (len < 8 || _regTargetCount == 0) return false;
         uint32_t tag;
         memcpy(&tag, data, 4);
-        int t = -1;
-        for (int i = 0; i < _regTagCount; i++) if (_regTags[i] == tag) { t = i; break; }
-        if (t < 0) return false;
-        _regTags[t] = _regTags[--_regTagCount];   // each tag answers once
+        RegTarget* t = nullptr;
+        for (int i = 0; i < _regTargetCount && !t; i++)
+            for (int k = 0; k < _regTargets[i].tagCount; k++)
+                if (_regTargets[i].tags[k] == tag) { t = &_regTargets[i]; break; }
+        if (!t) return false;
+        if (t->answered) return true;   // first try and retry both answered
+        t->answered = true;
+        // Asked and answered at zero hops: a confirmed direct path — save it.
+        ContactInfo* ci = lookupContactByPubKey(t->pubKey, PUB_KEY_SIZE);
+        if (ci && ci->out_path_len == 0)
+            _persistContactPath(*ci, getRTCClock()->getCurrentTime());
 
         RegionReply r{};
-        strncpy(r.repeater, contact.name, sizeof(r.repeater) - 1);
+        // A repeater found by the scan may have no name yet (no advert heard
+        // since boot): try the saved repeater list, then the key prefix.
+        const char* nm = contact.name;
+        ops::Repeater saved;
+        int ri;
+        if (!nm[0] && ops::repeaters::findByKey(contact.id.pub_key, &ri) &&
+            ops::repeaters::get(ri, saved) && saved.name[0]) {
+            strncpy(t->name, saved.name, sizeof(t->name) - 1);
+        }
+        if (!nm[0]) nm = t->name;
+        strncpy(r.repeater, nm, sizeof(r.repeater) - 1);
         r.snr = radio_driver.getLastSNR();   // this reply is the packet just received
         int n = len - 8;
         if (n > (int)sizeof(r.regions) - 1) n = sizeof(r.regions) - 1;
@@ -3099,6 +3242,30 @@ bool MeshService::pollDmFailed(uint32_t& id) {
 
 int MeshService::discoverRegions() {
     return _initialized ? the_mesh.discoverRegions() : 0;
+}
+
+uint32_t MeshService::regionScanMs() {
+    return _initialized ? the_mesh.regionScanMs() : 0;
+}
+
+int MeshService::regionAskedCount() {
+    return _initialized ? the_mesh.regionAskedCount() : 0;
+}
+
+bool MeshService::regionScanning() {
+    return _initialized && the_mesh.regionScanning();
+}
+
+int MeshService::retryRegions() {
+    return _initialized ? the_mesh.retryRegions() : 0;
+}
+
+uint32_t MeshService::regionWaitMs(int n) {
+    return _initialized ? the_mesh.regionWaitMs(n) : 0;
+}
+
+int MeshService::regionUnanswered(char names[][32], int max) {
+    return _initialized ? the_mesh.regionUnanswered(names, max) : 0;
 }
 
 bool MeshService::pollRegionReply(RegionReply& out) {

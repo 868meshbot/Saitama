@@ -33,6 +33,10 @@ static bool             s_running    = false;
 static bool             s_everRan    = false;
 static int              s_asked      = 0;
 static uint32_t         s_until      = 0;
+static bool             s_retried    = false;
+// Repeaters that never answered, named once discovery finishes.
+static char             s_noReply[MAX_REP][32];
+static int              s_noReplyCount = 0;
 
 // ── Small builders ────────────────────────────────────────────────────
 
@@ -89,7 +93,7 @@ void ScreenRegions::_rebuildRepeaters()
     if (!_repList) return;
     lv_obj_clean(_repList);
 
-    if (s_repCount == 0) {
+    if (s_repCount == 0 && (s_running || s_noReplyCount == 0)) {
         lv_obj_t* l = lv_label_create(_repList);
         lv_label_set_text(l, s_everRan ? (s_running ? "Waiting for replies..." : "No replies.")
                                        : "Press Discover to ask repeaters in direct range.");
@@ -115,15 +119,18 @@ void ScreenRegions::_rebuildRepeaters()
         lv_obj_set_style_text_color(nm, theme::TEXT, 0);
         lv_obj_set_style_text_font(nm, theme::bodyFont12(), 0);
 
-        // "AU,NSW,*" → "AU · NSW · *"
+        // "AU,NSW,*" → "AU | NSW | *" — ASCII only: montserrat has no "·".
         char regs[160] = {};
         if (!r.regions[0]) {
             snprintf(regs, sizeof(regs), "(no regions)");
         } else {
             const char* p = r.regions;
             while (*p && strlen(regs) < sizeof(regs) - 6) {
-                if (*p == ',') strncat(regs, " \xC2\xB7 ", sizeof(regs) - strlen(regs) - 1);
-                else { size_t n = strlen(regs); regs[n] = *p; regs[n + 1] = '\0'; }
+                if (*p == ',') {
+                    if (p[1] && regs[0]) strncat(regs, " | ", sizeof(regs) - strlen(regs) - 1);
+                } else {
+                    size_t n = strlen(regs); regs[n] = *p; regs[n + 1] = '\0';
+                }
                 p++;
             }
         }
@@ -141,6 +148,29 @@ void ScreenRegions::_rebuildRepeaters()
         lv_obj_set_style_text_font(sl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(sl, r.snr >= 5.0f ? theme::GREEN
                                       : r.snr >= -2.5f ? theme::ORANGE : theme::RED, 0);
+    }
+
+    if (s_running) return;
+    for (int i = 0; i < s_noReplyCount; i++) {
+        lv_obj_t* row = _flexBox(_repList, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(row, theme::BG_CARD, 0);
+        lv_obj_set_style_radius(row, 4, 0);
+        lv_obj_set_style_pad_hor(row, 6, 0);
+        lv_obj_set_style_pad_ver(row, 4, 0);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* nm = lv_label_create(row);
+        lv_label_set_text(nm, s_noReply[i]);
+        lv_label_set_long_mode(nm, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(nm, 104);
+        lv_obj_set_style_text_color(nm, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(nm, theme::bodyFont12(), 0);
+
+        lv_obj_t* l = lv_label_create(row);
+        lv_label_set_text(l, "no reply");
+        lv_obj_set_style_text_color(l, theme::ORANGE, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
     }
 }
 
@@ -221,21 +251,20 @@ void ScreenRegions::_onChipClick(lv_event_t* e)
 void ScreenRegions::_onDiscoverClick(lv_event_t* /*e*/)
 {
     if (s_running) return;
-    int n = ops::MeshService::instance().discoverRegions();
+    auto& mesh = ops::MeshService::instance();
+    int n = mesh.discoverRegions();
     s_everRan  = true;
     s_repCount = 0;
-    if (n == 0) {
-        _setStatus("No repeaters in direct range (none heard at 0 hops).", theme::ORANGE);
-        _rebuildRepeaters();
-        return;
-    }
-    s_asked   = n;
-    s_running = true;
-    // Requests go out 400 ms apart; give each ~4 s to answer.
-    s_until   = millis() + 4000 + 400u * (uint32_t)n;
-    char msg[48];
-    snprintf(msg, sizeof(msg), "Asking %d repeater(s)...", n);
-    _setStatus(msg, theme::ACCENT);
+    s_noReplyCount = 0;
+    s_retried  = false;
+    s_asked    = n;
+    s_running  = true;
+    // Repeaters found by the scan are asked as they answer, so wait out the
+    // scan and then long enough for the last one asked to reply.
+    uint32_t scan = mesh.regionScanMs() + mesh.regionWaitMs(1);
+    uint32_t wait = mesh.regionWaitMs(n);
+    s_until = millis() + (scan > wait ? scan : wait);
+    _setStatus("Looking for repeaters in direct range...", theme::ACCENT);
     _rebuildRepeaters();
 }
 
@@ -245,24 +274,64 @@ void ScreenRegions::tick()
 {
     if (!s_running) return;
 
+    auto& mesh = ops::MeshService::instance();
     bool changed = false;
+    int asked = mesh.regionAskedCount();
+    if (asked != s_asked) {
+        // The scan found another repeater and asked it — give it time to answer.
+        s_asked = asked;
+        uint32_t until = millis() + mesh.regionWaitMs(1);
+        if ((int32_t)(until - s_until) > 0) s_until = until;
+        changed = true;
+    }
     ops::RegionReply r;
     while (ops::MeshService::instance().pollRegionReply(r)) {
         if (s_repCount < MAX_REP) s_reps[s_repCount++] = r;
         changed = true;
     }
-    bool done = s_repCount >= s_asked || millis() > s_until;
-    if (done) s_running = false;
+    bool timedOut = millis() > s_until;
+    bool retrying = false;
+    if (s_repCount < s_asked && timedOut && !s_retried) {
+        // One more try for the quiet ones — a missed packet or a collision
+        // between replies is the common reason. Only once: repeaters allow
+        // 4 anonymous requests per 3 minutes.
+        s_retried = true;
+        int k = ops::MeshService::instance().retryRegions();
+        if (k > 0) {
+            s_until  = millis() + ops::MeshService::instance().regionWaitMs(k);
+            timedOut = false;
+            retrying = true;
+            OPS_LOG("Regions", "Retrying %d repeater(s)", k);
+        }
+    }
+    bool done = (s_asked > 0 && s_repCount >= s_asked && !mesh.regionScanning()) || timedOut;
+    if (done) {
+        s_running = false;
+        s_noReplyCount = ops::MeshService::instance().regionUnanswered(s_noReply, MAX_REP);
+    }
 
     // Only touch widgets while the screen is showing.
     if (!_screen || lv_scr_act() != _screen) return;
+    if (changed && !done && s_asked > 0) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "Asking %d repeater(s)...", s_asked);
+        _setStatus(msg, theme::ACCENT);
+    }
     if (changed || done) {
         _rebuildRepeaters();
         _rebuildChips();   // replies add names to the catalog
     }
+    if (retrying) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "%d of %d replied - asking the rest again...",
+                 s_repCount, s_asked);
+        _setStatus(msg, theme::ACCENT);
+    }
     if (done) {
         char msg[72];
-        if (s_repCount == 0)
+        if (s_asked == 0)
+            snprintf(msg, sizeof(msg), "No repeaters in direct range answered the scan.");
+        else if (s_repCount == 0)
             snprintf(msg, sizeof(msg), "Asked %d repeater(s); none replied.", s_asked);
         else
             snprintf(msg, sizeof(msg), "%d of %d replied.  * = also accepts unscoped.",
