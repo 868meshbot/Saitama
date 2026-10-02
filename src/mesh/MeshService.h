@@ -82,6 +82,9 @@ struct PeerInfo {
     float    lastRssi;
     int32_t  lat;         // last-known latitude  × 1 000 000 (0 = unknown)
     int32_t  lon;         // last-known longitude × 1 000 000 (0 = unknown)
+    uint8_t  hops;        // hops the last flooded packet from it took; 0 = heard
+                          // directly, 0xFF = unknown (lastRssi is then the last
+                          // hop's signal, not the node's own)
 };
 
 // One raw over-the-air frame, captured verbatim before parsing (for PCAP export).
@@ -151,6 +154,10 @@ public:
     int      peerCount()  const;
     uint32_t peerSerial() const;  // increments on every peer add or update
     bool getPeer(int idx, PeerInfo& out) const;
+    // Looks a peer up by its first 4 key bytes. Positions in the list change
+    // (the oldest is replaced when it is full), so hold keys, not indices,
+    // across user actions.
+    bool findPeerByKey(const uint8_t* prefix4, PeerInfo& out) const;
     void clearPeers();  // wipes the in-memory Heard list
 
     // ── ACK ───────────────────────────────────────────────────────────

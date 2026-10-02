@@ -21,6 +21,9 @@ bool ScreenHeard::_isVisible = false;
 static constexpr int TOP_H = 28;
 
 static int s_pendingPeer = -1;
+// Key of the peer the open popup is about — its list position can change
+// while the popup is up (the oldest peer is replaced when the list is full).
+static uint8_t s_pendingKey[4] = {};
 static bool s_dialogOpen = false;
 
 // ── Time formatter ────────────────────────────────────────────────────
@@ -319,6 +322,7 @@ void ScreenHeard::_onRowClick(lv_event_t *e) {
   PeerInfo peer;
   if (!MeshService::instance().getPeer(s_pendingPeer, peer))
     return;
+  memcpy(s_pendingKey, peer.pubKeyPrefix, 4);
   theme::sanitizeText(peer.name);
 
   char msg[72];
@@ -345,7 +349,7 @@ void ScreenHeard::_onSaveConfirm(lv_event_t *e) {
 
   PeerInfo peer;
   if (s_pendingPeer >= 0 &&
-      MeshService::instance().getPeer(s_pendingPeer, peer)) {
+      MeshService::instance().findPeerByKey(s_pendingKey, peer)) {
     theme::sanitizeText(peer.name);
     Contact c{};
     strncpy(c.name, peer.name, sizeof(c.name) - 1);
@@ -359,7 +363,7 @@ void ScreenHeard::_onSaveConfirm(lv_event_t *e) {
   }
 
   s_dialogOpen = false;
-  lv_obj_del(overlay);
+  lv_obj_del_async(overlay);   // this handler is on a child of overlay
   s_pendingPeer = -1;
 }
 
@@ -369,7 +373,7 @@ void ScreenHeard::_onSaveRepConfirm(lv_event_t *e) {
 
   PeerInfo peer;
   if (s_pendingPeer >= 0 &&
-      MeshService::instance().getPeer(s_pendingPeer, peer)) {
+      MeshService::instance().findPeerByKey(s_pendingKey, peer)) {
     theme::sanitizeText(peer.name);
     Repeater r{};
     strncpy(r.name, peer.name, sizeof(r.name) - 1);
@@ -382,7 +386,7 @@ void ScreenHeard::_onSaveRepConfirm(lv_event_t *e) {
   }
 
   s_dialogOpen = false;
-  lv_obj_del(overlay);
+  lv_obj_del_async(overlay);   // this handler is on a child of overlay
   s_pendingPeer = -1;
 }
 
@@ -390,7 +394,7 @@ void ScreenHeard::_onSaveRepConfirm(lv_event_t *e) {
 void ScreenHeard::_onSaveCancel(lv_event_t *e) {
   lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
   s_dialogOpen = false;
-  lv_obj_del(overlay);
+  lv_obj_del_async(overlay);   // this handler is on a child of overlay
   s_pendingPeer = -1;
 }
 

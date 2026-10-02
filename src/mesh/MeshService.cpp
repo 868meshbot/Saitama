@@ -430,9 +430,12 @@ class OMSMesh : public BaseChatMesh {
         }
     }
 
-    void _upsertPeer(const ContactInfo& contact) {
+    // hops: how far the packet that brought it travelled (0xFF = not known,
+    // e.g. a direct-routed packet — keeps the previous value).
+    void _upsertPeer(const ContactInfo& contact, uint8_t hops = 0xFF) {
         for (int i = 0; i < _peerCount; i++) {
             if (memcmp(_peers[i].pubKeyPrefix, contact.id.pub_key, 4) == 0) {
+                if (hops != 0xFF) _peers[i].hops = hops;
                 strncpy(_peers[i].name, contact.name, 31);
                 memcpy(_peers[i].pubKey, contact.id.pub_key, 32);
                 _peers[i].lastSeen = getRTCClock()->getCurrentTime();
@@ -461,8 +464,20 @@ class OMSMesh : public BaseChatMesh {
                 return;
             }
         }
+        // New peer. When the list is full, the one heard longest ago makes
+        // room, so a busy session keeps showing newly heard stations.
+        int slot = _peerCount;
         if (_peerCount < MAX_PEERS) {
-            PeerInfo& p = _peers[_peerCount++];
+            _peerCount++;
+        } else {
+            slot = 0;
+            for (int i = 1; i < _peerCount; i++)
+                if (_peers[i].lastSeen < _peers[slot].lastSeen) slot = i;
+            OPS_LOG("Mesh", "Heard list full - replacing %s", _peers[slot].name);
+        }
+        {
+            PeerInfo& p = _peers[slot];
+            memset(&p, 0, sizeof(p));
             strncpy(p.name, contact.name, 31);
             p.name[31] = '\0';
             memcpy(p.pubKeyPrefix, contact.id.pub_key, 4);
@@ -472,6 +487,7 @@ class OMSMesh : public BaseChatMesh {
             p.lastRssi = radio_driver.getLastRSSI();
             p.lat      = contact.gps_lat;
             p.lon      = contact.gps_lon;
+            p.hops     = hops;
             _peerSerial++;
             _autoAddPeer(p);
         }
@@ -1010,7 +1026,7 @@ class OMSMesh : public BaseChatMesh {
     }
 
     void onDiscoveredContact(ContactInfo& contact, bool is_new, uint8_t path_len, const uint8_t* path) override {
-        _upsertPeer(contact);
+        _upsertPeer(contact, path_len & 63);   // low 6 bits = hop count
         // Record reverse of the inbound advert path so trace (and sendDirect) can
         // route to this node without needing a prior bidirectional DM exchange.
         // RAM only: links aren't always symmetric, so a path guessed from an
@@ -1140,7 +1156,7 @@ class OMSMesh : public BaseChatMesh {
     }
 
     void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {
-        _upsertPeer(from);
+        _upsertPeer(from, pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF);
         // A retry of a DM we already showed: drop it here. BaseChatMesh still
         // ACKs it after we return, which is what stops the sender retrying.
         if (_isDuplicateDm(from.id.pub_key, sender_timestamp, text)) {
@@ -3230,6 +3246,15 @@ void MeshService::clearPeers() {
 
 bool MeshService::getPeer(int idx, PeerInfo& out) const {
     return _initialized && the_mesh.getPeerInfo(idx, out);
+}
+
+bool MeshService::findPeerByKey(const uint8_t* prefix4, PeerInfo& out) const {
+    if (!_initialized || !prefix4) return false;
+    int n = peerCount();
+    for (int i = 0; i < n; i++)
+        if (the_mesh.getPeerInfo(i, out) && memcmp(out.pubKeyPrefix, prefix4, 4) == 0)
+            return true;
+    return false;
 }
 
 bool MeshService::pollAck(uint32_t& acked_crc) {
