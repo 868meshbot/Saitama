@@ -15,7 +15,7 @@ Open-source standalone firmware for LoRa mesh devices. Built on [MeshCore](https
 
 | Home | Chat | Channels |
 |:----:|:----:|:--------:|
-| ![Home screen — app launcher](screenshots/home.png) | ![Chat — public channel messages](screenshots/chat.png) | ![Channels — channel and DM list](screenshots/channels.png) |
+| ![Home screen — callsign and channel waterfall](screenshots/home.png) | ![2nd screen app launcher](screenshots/home1.png) |![Chat — public channel messages](screenshots/chat.png) | ![Channels — channel and DM list](screenshots/channels.png) | ![Contacts — contact list](screenshots/contacts.png) |
 
 | Map | MP3 Player |
 |:---:|:----------:|
