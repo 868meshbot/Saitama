@@ -62,7 +62,7 @@ src/
   mesh/MeshService.h/cpp    — MeshCore bridge, RxMessage queue, RadioStats
   ui/UIScreen.h/cpp         — LVGL init, display/touch/trackball drivers, tick loop
   ui/ScreenBoot.h/cpp       — Splash screen
-  ui/ScreenLauncher.h/cpp   — 4×3 app grid
+  ui/ScreenLauncher.h/cpp   — 3 swipeable pages: home (heard-station rain + Chat/Contacts/Map/Settings), two 4×3 app grids
   ui/ScreenHome.h/cpp       — Chat screen (channel tabs + DM)
   ui/ScreenTerminal.h/cpp   — Serial-style terminal + CDC echo
   ui/ScreenSettings.h/cpp   — Settings
@@ -89,7 +89,7 @@ lib/
 
 ## Architecture
 
-**Boot flow:** `ScreenBoot` (2.5 s splash) → `ScreenLauncher` (4×3 grid) → individual screens.
+**Boot flow:** `ScreenBoot` (2.5 s splash) → `ScreenLauncher` (lands on the home page; swipe or trackball past an edge for the two 4×3 grids) → individual screens.
 
 **Screen pattern — lazy create:** Each screen's static `show()` creates LVGL objects on the first call and reuses them on subsequent calls. Navigation back to the launcher calls `ScreenLauncher::show()` directly (not `ops::ui::showLauncher()` — that wrapper exists but `UIScreen.h` is not typically included in screen files; `ScreenLauncher.h` is always present).
 

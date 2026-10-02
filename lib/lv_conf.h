@@ -31,6 +31,11 @@
    HAL SETTINGS
  *=====================*/
 #define LV_DISP_DEF_REFR_PERIOD  33    /* 30fps */
+/* Areas a frame can invalidate before LVGL gives up and redraws the whole
+ * screen. The default 32 overflows on the home page rain (each moving label
+ * invalidates its old and new position) — that forced a ~135 ms full-screen
+ * redraw every frame. 8 bytes each. */
+#define LV_INV_BUF_SIZE 96
 #define LV_INDEV_DEF_READ_PERIOD 30
 #define LV_TICK_CUSTOM 1
 #define LV_TICK_CUSTOM_INCLUDE <Arduino.h>

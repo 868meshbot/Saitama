@@ -64,6 +64,12 @@ int      ScreenHome::s_sendMode    = 0;
 uint8_t  ScreenHome::s_dmPubKey[4] = {};
 char     ScreenHome::s_dmName[32]  = {};
 
+// DM picker: peer rows remember the peer's key, as its position in the
+// heard list can change before the row is tapped (the oldest is replaced
+// when the list is full).
+static constexpr int PICK_PEERS = 64;
+static uint8_t s_pickPeerKeys[PICK_PEERS][4];
+
 lv_obj_t* ScreenHome::s_listScreen = nullptr;
 lv_obj_t* ScreenHome::_screen      = nullptr;
 lv_obj_t* ScreenHome::_msgArea     = nullptr;
@@ -1740,6 +1746,8 @@ void ScreenHome::_openDMPicker()
         char addr[8];
         snprintf(addr, sizeof(addr), "%02X%02X%02X",
                  p.pubKeyPrefix[0], p.pubKeyPrefix[1], p.pubKeyPrefix[2]);
+        if (i >= PICK_PEERS) break;
+        memcpy(s_pickPeerKeys[i], p.pubKeyPrefix, 4);
         char peerName[36];
         snprintf(peerName, sizeof(peerName), "%s *", p.name);
         addPickerRow(peerName, addr, -(i + 1));
@@ -1803,6 +1811,7 @@ void ScreenHome::_onSend(lv_event_t* /*e*/)
     } else {
         ok = ops::MeshService::instance().sendChannel(s_sendMode, txt);
     }
+    if (ok) ScreenLauncher::noteOwnMessage(s_sendMode == 10 ? -1 : s_sendMode, s_dmName, txt);
     if (!ok) {
         OPS_LOG("Chat", "Send returned false");
         lv_obj_t* row = lv_obj_create(_msgArea);
@@ -1992,7 +2001,8 @@ void ScreenHome::_onDMPickerRow(lv_event_t* e)
     } else {
         int pIdx = -(encoded + 1);
         ops::PeerInfo p;
-        if (ops::MeshService::instance().getPeer(pIdx, p)) {
+        if (pIdx >= 0 && pIdx < PICK_PEERS &&
+            ops::MeshService::instance().findPeerByKey(s_pickPeerKeys[pIdx], p)) {
             memcpy(s_dmPubKey, p.pubKeyPrefix, 4);
             strncpy(s_dmName, p.name, sizeof(s_dmName) - 1);
             s_dmName[sizeof(s_dmName) - 1] = '\0';

@@ -915,6 +915,7 @@ void tick() {
                 if (ops::contacts::findByKey(msg.pubKeyPrefix, &cidx))
                     ops::contacts::setUnread(cidx, true);
                 ScreenLauncher::refreshUnreadDot();
+                ScreenLauncher::noteDirectMessage(msg.senderName);
                 ops::sound::playNotification();
                 lv_refr_now(nullptr);
             } else {
@@ -923,6 +924,8 @@ void tick() {
                          msg.channelName[0] ? msg.channelName : "?",
                          msg.senderName, msg.text, msg.hops,
                          (double)msg.rssi, (double)msg.snr);
+                ScreenLauncher::noteChannelMessage(msg.senderName, msg.channelName,
+                                                   msg.text, msg.rssi, msg.hops);
             }
             ScreenTerminal::appendLine(line);
             ScreenHome::appendMessage(msg);
