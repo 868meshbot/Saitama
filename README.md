@@ -13,13 +13,13 @@ Open-source standalone firmware for LoRa mesh devices. Built on [MeshCore](https
 
 ---
 
-| Home | Chat | Channels |
-|:----:|:----:|:--------:|
-| ![Home screen — callsign and channel waterfall](screenshots/home.png) | ![2nd screen app launcher](screenshots/home1.png) |![Chat — public channel messages](screenshots/chat.png) | ![Channels — channel and DM list](screenshots/channels.png) | ![Contacts — contact list](screenshots/contacts.png) |
+| Home | Apps | Chat | Channels |
+|:----:|:----:|:----:|:--------:|
+| ![Home screen — callsign and channel waterfall](screenshots/home.png) | ![2nd screen app launcher](screenshots/home1.png) |![Chat — public channel messages](screenshots/chat.png) | ![Channels — channel and DM list](screenshots/channels.png) | 
 
-| Map | MP3 Player |
-|:---:|:----------:|
-| ![Map — offline tile map with mesh nodes](screenshots/maps.png) | ![MP3 Player — audio playback from SD](screenshots/mp3player.png) |
+| Contacts | Map | MP3 Player |
+|:---:|:----:|:----------:|
+| ![Contacts — contact list](screenshots/contacts.png)| ![Map — offline tile map with mesh nodes](screenshots/maps.png) | ![MP3 Player — audio playback from SD](screenshots/mp3player.png) |
 
 ---
 
