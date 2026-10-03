@@ -170,6 +170,14 @@ public:
     // CRC the last sendDirect expects to be ACKed (0 if send failed).
     uint32_t lastExpectedAck() const;
 
+    // ── Channel message repeats ("repeated xN") ─────────────────────────
+    // Id of the channel message just sent (sendChannel), for matching repeats.
+    uint32_t lastChannelFloodId() const;
+    // One update per repeater heard re-sending a channel message we sent
+    // (count = distinct repeaters so far), or count 0 when 30 s passed with
+    // none heard.
+    bool pollFloodRepeat(uint32_t& id, uint8_t& count);
+
     // ── Region discovery ──────────────────────────────────────────────
     // Asks every repeater in direct range which regions it floods for
     // (MeshCore ANON_REQ_TYPE_REGIONS, sent direct). Repeaters already known

@@ -317,6 +317,8 @@ bool ScreenHome::_historyAdd(bool           sent,
     e.expectedAck = expectedAck;
     e.isAcked     = false;
     e.isFailed    = false;
+    e.floodId     = 0;
+    e.repeats     = -1;
     s_metaLabels[s_histCount] = nullptr;
     s_histCount++;
 
@@ -400,6 +402,14 @@ void ScreenHome::_fmtTime(char* buf, size_t len, uint32_t ts)
 static void _fmtFailedMeta(char* buf, size_t len, const char* timeBuf)
 {
     snprintf(buf, len, "%s " LV_SYMBOL_CLOSE " Not delivered", timeBuf);
+}
+
+// Meta line for a sent channel message: "↻ repeated x3  12:34", or
+// "! not repeated  12:34" when no repeater was heard re-sending it in 30 s.
+static void _fmtRepeatMeta(char* buf, size_t len, const char* timeBuf, int repeats)
+{
+    if (repeats > 0) snprintf(buf, len, LV_SYMBOL_LOOP " repeated x%d  %s", repeats, timeBuf);
+    else             snprintf(buf, len, LV_SYMBOL_WARNING " not repeated  %s", timeBuf);
 }
 
 // ── Bubble helper ──────────────────────────────────────────────────────
@@ -503,8 +513,12 @@ void ScreenHome::_addBubble(int         histIdx,
         uint32_t expAck = (histIdx >= 0 && histIdx < HISTORY_MAX)
                           ? s_history[histIdx].expectedAck : 1;
         bool failed = (histIdx >= 0 && histIdx < HISTORY_MAX) && s_history[histIdx].isFailed;
+        int rep = (histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
+                  ? s_history[histIdx].repeats : -1;
         if (failed && !isAcked) {
             _fmtFailedMeta(meta, sizeof(meta), timeBuf);
+        } else if (rep >= 0) {
+            _fmtRepeatMeta(meta, sizeof(meta), timeBuf, rep);
         } else if (isAcked || expAck == 0) {
             // green tick for DM ACK; grey tick for channel (no ACK possible)
             snprintf(meta, sizeof(meta), "%s " LV_SYMBOL_OK, timeBuf);
@@ -522,8 +536,12 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_obj_set_width(metaLbl, LV_PCT(100));
     bool metaFailed = sent && !isAcked && histIdx >= 0 && histIdx < HISTORY_MAX
                       && s_history[histIdx].isFailed;
+    int metaRep = (sent && histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
+                  ? s_history[histIdx].repeats : -1;
     lv_obj_set_style_text_color(metaLbl,
-        (sent && isAcked) ? theme::GREEN : metaFailed ? theme::RED : theme::TEXT_MUTED, 0);
+        (sent && (isAcked || metaRep > 0)) ? theme::GREEN
+        : metaFailed   ? theme::RED
+        : metaRep == 0 ? theme::ORANGE : theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);  // needs LVGL symbol glyphs; don't use bodyFont here
     lv_label_set_text(metaLbl, meta);
     if (sent) lv_obj_set_style_text_align(metaLbl, LV_TEXT_ALIGN_RIGHT, 0);
@@ -794,14 +812,16 @@ void ScreenHome::appendMessage(const RxMessage& msg)
 
 // ── appendSent() ──────────────────────────────────────────────────────
 
-void ScreenHome::appendSent(const char* text, uint32_t ts, uint32_t expectedAck)
+void ScreenHome::appendSent(const char* text, uint32_t ts, uint32_t expectedAck, uint32_t floodId)
 {
     const char* viewTag = _getViewTag();
     int slot = _tagToSlot(viewTag);
     if (slot >= 0)              _notePreview(s_chPreview[slot], viewTag, "You", ts);
     else if (s_sendMode == 10)  _notePreview(s_dmPreview, viewTag, "You", ts);
 
-    if (_historyAdd(true, nullptr, text, 0, ts, 0.0f, expectedAck, _getViewTag()))
+    bool evicted = _historyAdd(true, nullptr, text, 0, ts, 0.0f, expectedAck, _getViewTag());
+    if (s_histCount > 0) s_history[s_histCount - 1].floodId = floodId;
+    if (evicted)
         _rebuildMsgArea();
     else
         _addBubble(s_histCount - 1, true, nullptr, text, 0, ts, 0.0f, false);
@@ -826,6 +846,25 @@ void ScreenHome::checkPendingAck()
                 lv_obj_set_style_text_color(s_metaLabels[i], theme::RED, 0);
             }
             OPS_LOG("Chat", "Not-delivered shown for msg %d", i);
+        }
+    }
+
+    uint32_t floodId;
+    uint8_t  repeats;
+    while (ops::MeshService::instance().pollFloodRepeat(floodId, repeats)) {
+        for (int i = 0; i < s_histCount; i++) {
+            MsgEntry& e = s_history[i];
+            if (!e.sent || e.floodId != floodId) continue;
+            e.repeats = (int8_t)(repeats > 99 ? 99 : repeats);
+            if (s_metaLabels[i]) {
+                char timeBuf[8];
+                _fmtTime(timeBuf, sizeof(timeBuf), e.ts);
+                char meta[48];
+                _fmtRepeatMeta(meta, sizeof(meta), timeBuf, e.repeats);
+                lv_label_set_text(s_metaLabels[i], meta);
+                lv_obj_set_style_text_color(s_metaLabels[i],
+                    e.repeats > 0 ? theme::GREEN : theme::ORANGE, 0);
+            }
         }
     }
 
@@ -1933,7 +1972,9 @@ void ScreenHome::_onSend(lv_event_t* /*e*/)
         return;
     }
 
-    appendSent(txt, ts, expectedAck);
+    // Channel sends: track repeaters re-sending it ("repeated xN").
+    uint32_t floodId = (s_sendMode == 10) ? 0 : ops::MeshService::instance().lastChannelFloodId();
+    appendSent(txt, ts, expectedAck, floodId);
     lv_textarea_set_text(_textarea, "");
 }
 

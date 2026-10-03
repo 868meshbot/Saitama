@@ -239,6 +239,28 @@ class OMSMesh : public BaseChatMesh {
     // backup survives until it is unlocked or deliberately set aside.
     bool _identityLocked = false;
 
+    // ── Own channel floods: "repeated xN" ────────────────────────────
+    // A channel message is flooded once with no ACK. Hearing a repeater
+    // re-send it is the only sign it got out, so for 30 s after each send we
+    // count copies by packet hash (payload only, so every copy matches),
+    // once per distinct repeater (the last hop in the copy's path).
+    static constexpr int      OWN_FLOODS   = 6;
+    static constexpr uint32_t OWN_FLOOD_MS = 30000;
+    struct OwnFlood {
+        uint8_t  hash[MAX_HASH_SIZE];
+        uint32_t id;          // first 4 hash bytes, never 0 — what the UI holds
+        uint32_t sentMs;
+        uint8_t  count;
+        uint8_t  lastHops[8]; // first byte of each repeater heard
+        bool     active;
+    };
+    OwnFlood _own[OWN_FLOODS] = {};
+    int      _ownNext        = 0;
+    uint32_t _lastFloodId    = 0;
+    struct FloodEvent { uint32_t id; uint8_t count; };
+    FloodEvent _floodQ[8]    = {};
+    int      _floodQHead = 0, _floodQCount = 0;
+
     // ── Region discovery ──────────────────────────────────────────────
     // Outstanding ANON_REQ_TYPE_REGIONS requests, matched on the timestamp
     // the repeater echoes as the first 4 bytes of its reply.
@@ -992,9 +1014,78 @@ class OMSMesh : public BaseChatMesh {
         return _active && ops::config::get().autoForward;
     }
 
+    void _noteOwnFlood(const mesh::Packet* pkt) {
+        OwnFlood& o = _own[_ownNext];
+        _ownNext = (_ownNext + 1) % OWN_FLOODS;
+        memset(&o, 0, sizeof(o));
+        pkt->calculatePacketHash(o.hash);
+        memcpy(&o.id, o.hash, 4);
+        if (o.id == 0) o.id = 1;
+        o.sentMs = millis();
+        o.active = true;
+        _lastFloodId = o.id;
+    }
+
+    void _pushFloodEvent(uint32_t id, uint8_t count) {
+        if (_floodQCount == 8) { _floodQHead = (_floodQHead + 1) % 8; _floodQCount--; }
+        _floodQ[(_floodQHead + _floodQCount) % 8] = { id, count };
+        _floodQCount++;
+    }
+
+    // A frame heard: is it a repeater re-sending one of our channel floods?
+    void _checkOwnFloodEcho(const uint8_t raw[], int len) {
+        bool any = false;
+        for (const OwnFlood& o : _own) if (o.active) { any = true; break; }
+        if (!any) return;
+        static mesh::Packet pkt;   // static: ~250 bytes, kept off the stack
+        if (!pkt.readFrom(raw, (uint8_t)len)) return;
+        if (pkt.getPayloadType() != PAYLOAD_TYPE_GRP_TXT || !pkt.isRouteFlood()) return;
+        uint8_t hops = pkt.getPathHashCount();
+        if (hops == 0) return;
+        uint8_t h[MAX_HASH_SIZE];
+        pkt.calculatePacketHash(h);
+        for (OwnFlood& o : _own) {
+            if (!o.active || memcmp(o.hash, h, MAX_HASH_SIZE) != 0) continue;
+            uint8_t hashSz = (pkt.path_len >> 6) + 1;
+            uint8_t last   = pkt.path[(hops - 1) * hashSz];
+            for (int k = 0; k < o.count && k < 8; k++) if (o.lastHops[k] == last) return;
+            if (o.count < 8) o.lastHops[o.count] = last;
+            if (o.count < 255) o.count++;
+            _pushFloodEvent(o.id, o.count);
+            OPS_LOG("Mesh", "Channel msg %08X repeated x%u (via %02X)", o.id, o.count, last);
+            return;
+        }
+    }
+
+public:
+    // Ends each flood's listening window; one that no repeater re-sent is
+    // reported with count 0.
+    void serviceOwnFloods() {
+        uint32_t now = millis();
+        for (OwnFlood& o : _own) {
+            if (!o.active || now - o.sentMs < OWN_FLOOD_MS) continue;
+            o.active = false;
+            if (o.count == 0) {
+                _pushFloodEvent(o.id, 0);
+                OPS_LOG("Mesh", "Channel msg %08X: no repeater heard re-sending it", o.id);
+            }
+        }
+    }
+    uint32_t lastChannelFloodId() const { return _lastFloodId; }
+    bool pollFloodRepeat(uint32_t& id, uint8_t& count) {
+        if (_floodQCount == 0) return false;
+        id    = _floodQ[_floodQHead].id;
+        count = _floodQ[_floodQHead].count;
+        _floodQHead = (_floodQHead + 1) % 8;
+        _floodQCount--;
+        return true;
+    }
+private:
+
     // Fires for every received frame, before parsing — raw bytes as they came
-    // off the radio. Buffered only while ScreenPcap has a capture running.
+    // off the radio. Also buffered for ScreenPcap while a capture runs.
     void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override {
+        if (len > 0) _checkOwnFloodEcho(raw, len);
         if (!_pcapCaptureEnabled || len <= 0) return;
         if (_pcapCount >= PCAP_QUEUE_SIZE) return;  // drop — screen isn't draining fast enough
         CapturedPacket& p = _pcapBuf[_pcapTail];
@@ -2532,6 +2623,7 @@ public:
     }
 
     void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis = 0) override {
+        _noteOwnFlood(pkt);
         // Find the config slot that owns this channel object
         const auto& cfg = config::get();
         for (int i = 0; i < 10; i++) {
@@ -3195,6 +3287,7 @@ void MeshService::tick() {
     if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
     the_mesh.serviceDmRetries();
+    the_mesh.serviceOwnFloods();
     the_mesh.checkSerialInterface();
     the_mesh.restoreDeferredPaths();   // no-op unless deferred at boot
     _tickFhss();
@@ -3325,6 +3418,14 @@ bool MeshService::pollTraceResult(TraceResult& out) {
 
 bool MeshService::hasPathTo(const uint8_t* pubKeyPrefix4) const {
     return _initialized && the_mesh.hasPathToContact(pubKeyPrefix4);
+}
+
+uint32_t MeshService::lastChannelFloodId() const {
+    return _initialized ? the_mesh.lastChannelFloodId() : 0;
+}
+
+bool MeshService::pollFloodRepeat(uint32_t& id, uint8_t& count) {
+    return _initialized && the_mesh.pollFloodRepeat(id, count);
 }
 
 uint32_t MeshService::lastExpectedAck() const {

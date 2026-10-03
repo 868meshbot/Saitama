@@ -24,7 +24,8 @@ public:
 
     // Called by _onSend for outgoing messages.
     // expectedAck: CRC the mesh stack will ACK; 0 for channel (flood) messages.
-    static void appendSent(const char* text, uint32_t ts, uint32_t expectedAck = 0);
+    static void appendSent(const char* text, uint32_t ts, uint32_t expectedAck = 0,
+                           uint32_t floodId = 0);
 
     // Called each tick to update sent-bubble check indicator if ACK has arrived.
     static void checkPendingAck();
@@ -45,6 +46,8 @@ private:
         uint32_t expectedAck;
         bool     isAcked;
         bool     isFailed;        // DM retries ran out with no ACK
+        uint32_t floodId;         // sent channel msg: MeshService flood id (0 = none)
+        int8_t   repeats;         // repeaters heard re-sending it; -1 = still listening
     };
 
     // 200 slots shared across all channels/DMs, ps_malloc'd in PSRAM on first
