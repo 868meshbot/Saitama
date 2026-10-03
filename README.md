@@ -7,7 +7,7 @@
 [![Platform](https://img.shields.io/badge/platform-T--Deck%20Plus-orange)](https://www.lilygo.cc/products/t-deck)
 [![MeshCore](https://img.shields.io/badge/mesh-MeshCore-green)](https://github.com/meshcore-dev/MeshCore)
 
-Open-source standalone firmware for LoRa mesh devices. Built on [MeshCore](https://github.com/meshcore-dev/MeshCore), designed for the LilyGo T-Deck and T-Deck Plus.
+Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.com/meshcore-dev/MeshCore) messenger for the LilyGo T-Deck and T-Deck Plus: encrypted channels and DMs, a live view of every station around you, offline maps, and repeater and region tools, all on the device. No phone, no internet, no subscription. Free and open source.
 
 **A phone in your pocket, without the phone, and without the paywall.**
 
@@ -29,16 +29,25 @@ Saitama is a free, open-source firmware that turns affordable LoRa devices into 
 
 Saitama is a community project. Development tooling includes AI coding assistants — contributions are reviewed and tested by humans on real hardware.
 
-## Features (Target)
+## Features
 
-- **Chat**: Public channels, private channels, direct messages with speech-bubble UI
-- **GPS Map**: Offline tile-based map from SD card, node positions, route tracing
-- **Encrypted Comms**: End-to-end encryption via MeshCore protocol
-- **Repeater Scanner**: Discover and manage repeaters, signal strength, noise floor
-- **Notifications**: Customizable alerts with screen wake, auto-dimming, lock screen
-- **Terminal Access**: Full MeshCore terminal for power users
-- **BLE Companion**: Connect with MeshCore mobile apps via Bluetooth
-- **Config Import/Export**: Compatible with MeshCore companion app format
+- **Home screen**: the stations heard this session fall like rain behind Chat / Contacts / Map / Settings — coloured by signal strength, channels in blue, with lines linking each new message to its channel, reply target or DM recipient. Swipe (or trackball past the edge) for the full app grids.
+- **Chat**: Public plus up to 9 private channels, and direct messages, in a speech-bubble UI; unread counts and last-message previews; replies (`@[Name]`); DM auto-retries with delivery ticks; history saved to SD.
+- **Region scopes**: a default flood scope plus up to 9 saved regions (Settings > Region Scope), a per-channel scope, and a **Regions** app that asks nearby repeaters which regions they serve — for meshes whose repeaters only forward scoped traffic.
+- **Contacts, Repeaters & Heard**: contact and repeater directories with saved routes, repeater admin login (optional remembered password), path set/reset, and a live list of every station heard.
+- **Network tools**: Finder (zero-hop neighbour scan), hop-by-hop Trace, Signal (RSSI/SNR/noise, airtime), channel scan, spectrum, PCAP capture, signal generator, BT foxhunt.
+- **GPS Map**: offline tile map from the SD card with node positions.
+- **Media & extras**: MP3 player, picture viewer, file manager, terminal, 2048.
+- **Power**: CPU governor, screensaver and screen-off with radio light sleep, LoRa duty cycle or FHSS, RX boost, power estimates.
+- **BLE Companion**: works with the MeshCore mobile apps over Bluetooth, paired with a per-device PIN.
+- **Backup**: settings, contacts, repeaters and the node identity are mirrored to `/ops/` on the SD card and restored after a reflash.
+
+## Security
+
+- Mesh traffic is end-to-end encrypted by MeshCore.
+- Secrets written to the SD card — channel keys, remembered repeater passwords and the node identity backup — are sealed with AES-256-GCM using a **storage password** (Settings > Storage Password). It starts as `changeme1`; **change it**, or a lifted SD card is as readable as that published default. See [docs/STORED_SECRETS.md](docs/STORED_SECRETS.md).
+- The Bluetooth pairing PIN is random per device (Settings > Bluetooth PIN). Changing it unpairs all phones.
+- Report vulnerabilities privately — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Supported Hardware
 
@@ -69,7 +78,7 @@ Workflow: contribute to `dev` via PR. When stable, merge to `main` and tag a rel
 ### Build
 
 ```bash
-git clone --recurse-submodules https://github.com/868-Meshbot/Saitama.git
+git clone --recurse-submodules https://github.com/868meshbot/Saitama.git
 cd Saitama
 pio run -e t-deck
 ```
@@ -120,34 +129,38 @@ Output path: /Volumes/SD/maps/osm
 ```
 Saitama/
 ├── src/
-│   ├── main.cpp              # Entry point
+│   ├── main.cpp              # Entry point: setup() + loop()
+│   ├── version.h             # Release version
 │   ├── hardware/
-│   │   ├── Board.h/cpp       # T-Deck hardware abstraction
-│   │   └── Keyboard.h/cpp   # BBQ10KB I2C keyboard driver
+│   │   └── Board.h/cpp       # T-Deck hardware abstraction (display, keyboard, trackball, GPS, LoRa)
 │   ├── mesh/
-│   │   └── MeshService.h/cpp # MeshCore bridge
-│   ├── ui/
-│   │   ├── UIScreen.h/cpp    # LVGL display controller
-│   │   ├── ScreenHome.h/cpp  # Chat screen
-│   │   ├── ScreenMap.h/cpp   # Map screen
-│   │   ├── ScreenSettings.h/cpp
-│   │   ├── ScreenTerminal.h/cpp
-│   │   └── Theme.h/cpp       # Colour palette
+│   │   ├── MeshService.h/cpp # MeshCore bridge: messages, contacts, routes, scopes, BLE companion
+│   │   └── Fhss.h/cpp        # Frequency hopping
 │   ├── map/
 │   │   └── MapEngine.h/cpp   # Tile renderer
+│   ├── bt/
+│   │   └── BTCompanionService.h/cpp  # BLE companion transport
+│   ├── ui/
+│   │   ├── UIScreen.h/cpp    # LVGL init, input drivers, tick loop, screensaver
+│   │   ├── ScreenLauncher    # Home page (heard rain) + app grids
+│   │   ├── ScreenHome        # Chat (channel list, conversations, DMs)
+│   │   ├── ScreenSettings    # Settings
+│   │   ├── ScreenRegions     # Region discovery
+│   │   ├── ScopePicker       # Shared region-scope dropdown
+│   │   ├── Screen*           # Contacts, Repeaters, Heard, Finder, Trace, Map, Terminal, tools…
+│   │   └── Theme.h/cpp       # Colour palette and fonts
 │   └── utils/
-│       ├── Config.h/cpp      # Persistent settings
-│       └── ConfigExport.h/cpp # SD card import/export (MeshCore format)
-│       └── Log.h              # Serial logger
+│       ├── Config.h/cpp      # Persistent settings (NVS + /ops/settings.json)
+│       ├── Contacts / Repeaters / Regions  # Saved lists
+│       ├── Crypto.h/cpp      # AES-256-GCM sealing for SD secrets
+│       ├── IdentityBackup    # Encrypted node identity backup
+│       ├── BtPin.h/cpp       # Bluetooth pairing PIN
+│       ├── SDCard.h/cpp      # SD mount, /ops/ files, message logs
+│       └── Log.h             # Serial logger
 ├── lib/
 │   └── MeshCore/             # Git submodule (mesh protocol)
-├── docs/
-│   ├── UI_DESIGN.md          # ASCII art UI layouts
-│   ├── ARCHITECTURE.md       # System design
-│   ├── MAP_SYSTEM.md         # Map tile system design
-│   ├── ROADMAP.md            # Development plan
-│   ├── CONTRIBUTING.md       # How to help
-│   └── HARDWARE.md           # T-Deck pin reference
+├── docs/                     # ARCHITECTURE, HARDWARE, STORED_SECRETS, SECURITY, FHSS, VERSIONING, …
+├── scripts/                  # download_tiles.py and helpers
 ├── platformio.ini
 ├── partitions.csv
 └── LICENSE                   # GPL-3.0
@@ -159,19 +172,19 @@ Saitama is layered:
 
 ```
 ┌─────────────────────────────────┐
-│         UI (LVGL 8.3)           │
-│  Home │ Map │ Settings │ Term   │
+│          UI (LVGL 8.3)          │
+│ Home │ Chat │ Map │ Settings │ …│
 ├─────────────────────────────────┤
-│        App Logic                 │
-│  Messages │ Contacts │ Config    │
+│            App Logic            │
+│   Messages │ Contacts │ Config  │
 ├─────────────────────────────────┤
-│      Hardware Abstraction        │
-│  Board │ Keyboard │ GPS │ LoRa   │
+│       Hardware Abstraction      │
+│  Board │ Keyboard │ GPS │ LoRa  │
 ├─────────────────────────────────┤
-│     MeshCore (C++ library)       │
-│  Routing │ Encryption │ Radio    │
+│      MeshCore (C++ library)     │
+│   Routing │ Encryption │ Radio  │
 ├─────────────────────────────────┤
-│         ESP32-S3 Hardware         │
+│        ESP32-S3 Hardware        │
 └─────────────────────────────────┘
 ```
 
@@ -189,7 +202,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.0.1** (compiled and tested on LilyGo T-Deck Plus)
+Current version: **1.4.0** (compiled and tested on LilyGo T-Deck Plus)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
@@ -199,7 +212,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for full details.
 
 ## Status
 
-Compiled and hardware-tested on a LilyGo T-Deck Plus. Core features (chat, mesh, GPS, repeater management, BLE companion) are functional. Edge cases and untested hardware variants are expected — contributions welcome.
+Compiled and hardware-tested on a LilyGo T-Deck Plus. Core features (chat, mesh, region scopes, GPS, repeater management, BLE companion) are functional. Edge cases and untested hardware variants are expected — contributions welcome.
 
 ## License
 
