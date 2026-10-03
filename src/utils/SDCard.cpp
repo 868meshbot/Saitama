@@ -164,6 +164,8 @@ size_t sdcard::readMsgLog(const char* tag, char* buf, size_t bufSize)
     if (!s_mounted || !buf || bufSize < 2) return 0;
     char path[52];
     _buildMsgPath(tag, path, sizeof(path));
+    // A conversation with no log yet is normal; opening it would log a VFS error.
+    if (!SD.exists(path)) return 0;
     File f = SD.open(path, FILE_READ);
     if (!f) return 0;
     size_t fileSize = f.size();

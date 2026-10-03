@@ -107,6 +107,7 @@ struct RainLink {
     lv_color_t col;
     uint32_t   createdMs;
     uint32_t   startMs;  // first shown; 0 = not on screen yet
+    lv_opa_t   opa;      // last opacity set (changes are batched)
     bool       active;
     bool       warned;   // logged a missing end already
 };
@@ -513,8 +514,13 @@ static void _rainLinkPoint(int drop, lv_point_t& pt)
     pt.y = (lv_coord_t)(s_drops[drop].y + 7);
 }
 
+// A line redraws its whole bounding box whenever it changes, and a diagonal
+// one spans most of the screen — so only touch it when it visibly changes:
+// ends moved (checked every other tick), or the fade stepped by 8+.
 static void _rainUpdateLinks()
 {
+    static uint8_t tick = 0;
+    tick++;
     uint32_t now = millis();
     for (int i = 0; i < RAIN_LINKS; i++) {
         RainLink& l = s_links[i];
@@ -539,12 +545,25 @@ static void _rainUpdateLinks()
             lv_obj_add_flag(l.line, LV_OBJ_FLAG_HIDDEN);
             continue;
         }
-        _rainLinkPoint(da, l.pts[0]);
-        _rainLinkPoint(db, l.pts[1]);
-        lv_line_set_points(l.line, l.pts, 2);
+        bool hidden = lv_obj_has_flag(l.line, LV_OBJ_FLAG_HIDDEN);
+        if (hidden || (tick & 1) == 0) {
+            lv_point_t a, b;
+            _rainLinkPoint(da, a);
+            _rainLinkPoint(db, b);
+            if (hidden || a.x != l.pts[0].x || a.y != l.pts[0].y ||
+                          b.x != l.pts[1].x || b.y != l.pts[1].y) {
+                l.pts[0] = a;
+                l.pts[1] = b;
+                lv_line_set_points(l.line, l.pts, 2);
+            }
+        }
         uint32_t left = RAIN_LINK_MS - (now - l.startMs);
-        lv_obj_set_style_line_opa(l.line, (lv_opa_t)(left * 220 / RAIN_LINK_MS + 35), 0);
-        lv_obj_clear_flag(l.line, LV_OBJ_FLAG_HIDDEN);
+        lv_opa_t opa = (lv_opa_t)(left * 220 / RAIN_LINK_MS + 35);
+        if (hidden || l.opa - opa >= 8) {
+            l.opa = opa;
+            lv_obj_set_style_line_opa(l.line, opa, 0);
+        }
+        if (hidden) lv_obj_clear_flag(l.line, LV_OBJ_FLAG_HIDDEN);
     }
 }
 

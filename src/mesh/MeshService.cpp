@@ -30,6 +30,7 @@
 #include <helpers/IdentityStore.h>
 #include "../utils/IdentityBackup.h"
 #include "../utils/Regions.h"
+#include "../utils/BtPin.h"
 #include "../utils/Crypto.h"
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
@@ -2481,7 +2482,8 @@ public:
         for (char* p = r.regions; *p; p++)   // keep only printable name characters
             if ((unsigned char)*p < ' ' || (unsigned char)*p > '~') *p = '?';
 
-        ops::regions::addList(r.regions);
+        // Not saved automatically: the Regions screen offers unsaved names
+        // as "+ NAME" chips for the user to add.
         if (_regQCount == REG_MAX) { _regQHead = (_regQHead + 1) % REG_MAX; _regQCount--; }
         _regQ[(_regQHead + _regQCount) % REG_MAX] = r;
         _regQCount++;
@@ -3600,7 +3602,7 @@ void MeshService::startCompanionBLE()
 {
     const auto& cfg = ops::config::get();
     ops::BTCompanionService::instance().init(
-        cfg.callsign[0] ? cfg.callsign : "OMS-NODE", 123456);
+        cfg.callsign[0] ? cfg.callsign : "OMS-NODE", ops::btpin::get());
     if (_initialized)
         the_mesh.startCompanionInterface(
             ops::BTCompanionService::instance().getInterface());

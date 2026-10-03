@@ -32,6 +32,8 @@
 #include "Emoji.h"
 #include "emoji/emoji_data.h"
 #include "../utils/Config.h"
+#include "../utils/Regions.h"
+#include "ScopePicker.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
 #include "../utils/Repeaters.h"
@@ -91,11 +93,42 @@ int  ScreenHome::s_loadedTagCnt = 0;
 bool ScreenHome::s_loadingFromSD = false;
 
 // File-scope statics for overlays / dialog state
+// ── Row preview cache ─────────────────────────────────────────────────
+// The list's "<sender> - HH:MM" subtitles, kept in RAM: each log is read
+// from SD once (first time the list needs it), then kept current by
+// _notePreview() as messages come and go. Reading every channel's and DM's
+// log on each list open stalled the UI for about a second.
+struct RowPreview {
+    bool     known;      // filled (from SD or a live message)
+    bool     has;        // there is a last message
+    char     tag[32];    // channel the entry is for (slots get renamed/reused)
+    char     sender[32];
+    uint32_t ts;
+};
+static RowPreview s_chPreview[10] = {};
+static RowPreview s_dmPreview     = {};
+
+static void _notePreview(RowPreview& p, const char* tag, const char* sender, uint32_t ts)
+{
+    p.known = p.has = true;
+    snprintf(p.tag,    sizeof(p.tag),    "%s", tag ? tag : "");
+    snprintf(p.sender, sizeof(p.sender), "%s", sender && sender[0] ? sender : "Unknown");
+    p.ts = ts;
+}
+
 static lv_obj_t* s_actionOverlay    = nullptr;
+// Channel popup action waiting for the next frame (see _runPendingAction).
+enum PendingAct { ACT_NONE, ACT_CLOSE, ACT_CLEAR, ACT_DELETE, ACT_SCOPE };
+static int       s_pendAct          = ACT_NONE;
+static int       s_pendCh           = -1;
+// Configure Scope dialog.
+static lv_obj_t* s_scopeOverlay     = nullptr;
+static lv_obj_t* s_scopeDd          = nullptr;
+static int       s_scopeCh          = -1;
 static lv_obj_t* s_addOverlay       = nullptr;
 static lv_obj_t* s_addNameTa        = nullptr;
 static lv_obj_t* s_addPskTa         = nullptr;
-static lv_obj_t* s_addScopeTa       = nullptr;
+static lv_obj_t* s_addScopeDd       = nullptr;
 static lv_obj_t* s_dmPickerOverlay  = nullptr;
 static lv_obj_t* s_addContactOverlay = nullptr;
 // Channel icon picker (avatar tap on the list row)
@@ -617,6 +650,9 @@ void ScreenHome::_clearChannelMessages(int chIdx)
     if (!tag || !tag[0]) return;
 
     ops::sdcard::deleteMsgLog(tag);
+    // Re-read (now empty) next time the list shows.
+    if (chIdx >= 0 && chIdx < 10) s_chPreview[chIdx].known = false;
+    if (strncmp(tag, "DM_", 3) == 0) s_dmPreview.known = false;
 
     // Remove from loadedTags so history can be reloaded if needed
     for (int i = 0; i < s_loadedTagCnt; i++) {
@@ -720,6 +756,8 @@ void ScreenHome::appendMessage(const RxMessage& msg)
                                msg.rssi, 0, tag, msg.pathStr, msg.pubKeyPrefix);
 
     int slot = _tagToSlot(tag);
+    if (slot >= 0)          _notePreview(s_chPreview[slot], tag, msg.senderName, msg.timestamp);
+    else if (msg.isDirect)  _notePreview(s_dmPreview, tag, msg.senderName, msg.timestamp);
     if (slot >= 0) {
         bool isViewing = (s_mode == MODE_CHAT && s_activeChIdx == slot &&
                           _screen && lv_scr_act() == _screen);
@@ -758,6 +796,11 @@ void ScreenHome::appendMessage(const RxMessage& msg)
 
 void ScreenHome::appendSent(const char* text, uint32_t ts, uint32_t expectedAck)
 {
+    const char* viewTag = _getViewTag();
+    int slot = _tagToSlot(viewTag);
+    if (slot >= 0)              _notePreview(s_chPreview[slot], viewTag, "You", ts);
+    else if (s_sendMode == 10)  _notePreview(s_dmPreview, viewTag, "You", ts);
+
     if (_historyAdd(true, nullptr, text, 0, ts, 0.0f, expectedAck, _getViewTag()))
         _rebuildMsgArea();
     else
@@ -900,6 +943,35 @@ static bool _lastDMSummaryFromLogs(char* senderOut, int senderMax, uint32_t* tsO
     return true;
 }
 
+static bool _channelPreview(int slot, const char* tag, char* sender, int senderMax, uint32_t* ts)
+{
+    RowPreview& p = s_chPreview[slot];
+    if (!p.known || strcmp(p.tag, tag) != 0) {
+        memset(&p, 0, sizeof(p));
+        p.known = true;
+        snprintf(p.tag, sizeof(p.tag), "%s", tag);
+        p.has = _lastMsgFromLog(tag, p.sender, sizeof(p.sender), &p.ts);
+    }
+    if (!p.has) return false;
+    snprintf(sender, senderMax, "%s", p.sender);
+    *ts = p.ts;
+    return true;
+}
+
+static bool _dmPreview(char* sender, int senderMax, uint32_t* ts)
+{
+    RowPreview& p = s_dmPreview;
+    if (!p.known) {
+        memset(&p, 0, sizeof(p));
+        p.known = true;
+        p.has = _lastDMSummaryFromLogs(p.sender, sizeof(p.sender), &p.ts);
+    }
+    if (!p.has) return false;
+    snprintf(sender, senderMax, "%s", p.sender);
+    *ts = p.ts;
+    return true;
+}
+
 // Renders a subtitle label as "<sender> - HH:MM", or a placeholder if empty.
 static void _setRowSubtitle(lv_obj_t* lbl, bool hasMsg, const char* sender, uint32_t ts)
 {
@@ -967,10 +1039,12 @@ void ScreenHome::_showList()
 
     // Nullify overlay pointers — their objects will be deleted with the old screen
     s_actionOverlay     = nullptr;
+    s_scopeOverlay      = nullptr;
+    s_scopeDd           = nullptr;
     s_addOverlay        = nullptr;
     s_addNameTa         = nullptr;
     s_addPskTa          = nullptr;
-    s_addScopeTa        = nullptr;
+    s_addScopeDd        = nullptr;
     s_addContactOverlay = nullptr;
 
     // Capture old screens — delete them AFTER loading the new one (safe LVGL pattern)
@@ -1036,6 +1110,27 @@ void ScreenHome::_showList()
     lv_label_set_text(titleLbl, "Channels");
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_flex_grow(titleLbl, 1);
+
+    // + Add Channel — same size and inset as the rows' edit buttons below
+    // (pulled 45px in from the right edge, clear of the panel's dead pixels).
+    lv_obj_t* addBtn = lv_btn_create(hdr);
+    lv_obj_set_size(addBtn, 26, 22);
+    lv_obj_set_style_bg_color(addBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(addBtn, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(addBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(addBtn, 1, 0);
+    lv_obj_set_style_radius(addBtn, 4, 0);
+    lv_obj_set_style_shadow_width(addBtn, 0, 0);
+    lv_obj_set_style_pad_all(addBtn, 2, 0);
+    lv_obj_set_style_translate_x(addBtn, -45, 0);
+    lv_group_remove_obj(addBtn);
+    lv_obj_add_event_cb(addBtn, _onListAdd, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* addLbl = lv_label_create(addBtn);
+    lv_label_set_text(addLbl, LV_SYMBOL_PLUS);
+    lv_obj_set_style_text_color(addLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(addLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(addLbl);
 
     // ── Scrollable channel list ──────────────────────────────────────
     lv_obj_t* listBody = lv_obj_create(s_listScreen);
@@ -1147,8 +1242,8 @@ void ScreenHome::_showList()
             char sender[32] = {};
             uint32_t ts = 0;
             bool has = (chIdx >= 0)
-                ? _lastMsgFromLog(name, sender, sizeof(sender), &ts)
-                : _lastDMSummaryFromLogs(sender, sizeof(sender), &ts);
+                ? _channelPreview(chIdx, name, sender, sizeof(sender), &ts)
+                : _dmPreview(sender, sizeof(sender), &ts);
             _setRowSubtitle(subLbl, has, sender, ts);
         }
         if (chIdx >= 0 && chIdx < 10) s_rowSubtitle[chIdx] = subLbl;
@@ -1237,10 +1332,12 @@ void ScreenHome::_showChat()
 
     // Nullify overlay pointers — their objects are about to be deleted with the old screen
     s_actionOverlay     = nullptr;
+    s_scopeOverlay      = nullptr;
+    s_scopeDd           = nullptr;
     s_addOverlay        = nullptr;
     s_addNameTa         = nullptr;
     s_addPskTa          = nullptr;
-    s_addScopeTa        = nullptr;
+    s_addScopeDd        = nullptr;
     s_dmPickerOverlay   = nullptr;
     s_addContactOverlay = nullptr;
 
@@ -1473,7 +1570,7 @@ void ScreenHome::_openActionPopup(int chIdx)
         lv_obj_center(lbl);
     };
 
-    mkBtn("Add Channel",    theme::PRIMARY, _onActionAdd,    (void*)(intptr_t)chIdx);
+    mkBtn("Configure Scope", theme::PRIMARY, _onActionScope, (void*)(intptr_t)chIdx);
     mkBtn("Clear Messages", theme::ORANGE,  _onActionClear,  (void*)(intptr_t)chIdx);
     {
         bool notifyOn = cfg.channels[chIdx].notify;
@@ -1535,7 +1632,7 @@ static void _onAddNameChanged(lv_event_t* /*e*/)
 void ScreenHome::_openAddChannelDialog()
 {
     if (s_addOverlay) { lv_obj_del(s_addOverlay); s_addOverlay = nullptr; }
-    s_addNameTa = s_addPskTa = s_addScopeTa = nullptr;
+    s_addNameTa = s_addPskTa = s_addScopeDd = nullptr;
 
     s_addOverlay = lv_obj_create(lv_scr_act());
     lv_obj_set_size(s_addOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -1593,9 +1690,10 @@ void ScreenHome::_openAddChannelDialog()
     s_addPskTa = mkTa(32);
     lv_textarea_set_placeholder_text(s_addPskTa, "auto-random if blank");
 
-    mkLabel("Scope (optional, e.g. AU):");
-    s_addScopeTa = mkTa(15);
-    lv_textarea_set_placeholder_text(s_addScopeTa, "leave blank for no scope");
+    mkLabel("Scope:");
+    lv_obj_t* addScopeBtn = nullptr;
+    s_addScopeDd = ops::ui::scopepick::createRow(box, "", false, &addScopeBtn);
+    lv_obj_set_width(lv_obj_get_parent(s_addScopeDd), 238);
 
     // Button row
     lv_obj_t* btnRow = lv_obj_create(box);
@@ -1644,7 +1742,8 @@ void ScreenHome::_openAddChannelDialog()
     if (grp) {
         lv_group_add_obj(grp, s_addNameTa);
         lv_group_add_obj(grp, s_addPskTa);
-        lv_group_add_obj(grp, s_addScopeTa);
+        lv_group_add_obj(grp, s_addScopeDd);
+        lv_group_add_obj(grp, addScopeBtn);
         lv_group_focus_obj(s_addNameTa);
     }
 }
@@ -1889,25 +1988,58 @@ void ScreenHome::_onActionBtn(lv_event_t* e)
 
 // ── Action popup callbacks ────────────────────────────────────────────
 
-void ScreenHome::_onActionAdd(lv_event_t* /*e*/)
+void ScreenHome::_onListAdd(lv_event_t* /*e*/)
 {
-    if (s_actionOverlay) { lv_obj_del(s_actionOverlay); s_actionOverlay = nullptr; }
     _openAddChannelDialog();
+}
+
+// The popup's buttons live inside it, so they must not delete it (or the
+// list screen it sits on) from their own handlers: hide it and record the
+// action; the handler then has _runPendingAction run it next frame.
+static void _queueAction(int act, int ch)
+{
+    s_pendAct = act;
+    s_pendCh  = ch;
+    if (s_actionOverlay) lv_obj_add_flag(s_actionOverlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ScreenHome::_runPendingAction(void* /*unused*/)
+{
+    int act = s_pendAct, ch = s_pendCh;
+    s_pendAct = ACT_NONE;
+    if (s_actionOverlay) { lv_obj_del(s_actionOverlay); s_actionOverlay = nullptr; }
+    switch (act) {
+        case ACT_CLEAR:
+            _clearChannelMessages(ch);
+            if (s_mode == MODE_LIST) _showList();
+            break;
+        case ACT_DELETE:
+            _deleteChannel(ch);   // calls _showList() or show() internally
+            break;
+        case ACT_SCOPE:
+            _openChannelScopeDialog(ch);
+            break;
+        default:
+            break;
+    }
+}
+
+void ScreenHome::_onActionScope(lv_event_t* e)
+{
+    _queueAction(ACT_SCOPE, (int)(intptr_t)lv_event_get_user_data(e));
+    lv_async_call(_runPendingAction, nullptr);
 }
 
 void ScreenHome::_onActionClear(lv_event_t* e)
 {
-    int chIdx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (s_actionOverlay) { lv_obj_del(s_actionOverlay); s_actionOverlay = nullptr; }
-    _clearChannelMessages(chIdx);
-    if (s_mode == MODE_LIST) _showList();
+    _queueAction(ACT_CLEAR, (int)(intptr_t)lv_event_get_user_data(e));
+    lv_async_call(_runPendingAction, nullptr);
 }
 
 void ScreenHome::_onActionDelete(lv_event_t* e)
 {
-    int chIdx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (s_actionOverlay) { lv_obj_del(s_actionOverlay); s_actionOverlay = nullptr; }
-    _deleteChannel(chIdx);  // calls _showList() or show() internally
+    _queueAction(ACT_DELETE, (int)(intptr_t)lv_event_get_user_data(e));
+    lv_async_call(_runPendingAction, nullptr);
 }
 
 void ScreenHome::_onActionNotify(lv_event_t* e)
@@ -1924,7 +2056,128 @@ void ScreenHome::_onActionNotify(lv_event_t* e)
 
 void ScreenHome::_onActionClose(lv_event_t* /*e*/)
 {
-    if (s_actionOverlay) { lv_obj_del(s_actionOverlay); s_actionOverlay = nullptr; }
+    _queueAction(ACT_CLOSE, -1);
+    lv_async_call(_runPendingAction, nullptr);
+}
+
+// ── Configure Scope dialog ────────────────────────────────────────────
+// Pick the channel's flood scope: "Default" (empty — follows Settings >
+// Region Scope 1, shown as the current default or * when unscoped) or one
+// of the saved regions.
+
+void ScreenHome::_openChannelScopeDialog(int chIdx)
+{
+    if (chIdx < 0 || chIdx >= 10) return;
+    if (s_scopeOverlay) { lv_obj_del(s_scopeOverlay); s_scopeOverlay = nullptr; }
+    s_scopeCh = chIdx;
+
+    const auto& cfg = ops::config::get();
+    const char* chName = (chIdx == 0)
+        ? (cfg.channels[0].name[0] ? cfg.channels[0].name : "Public")
+        : cfg.channels[chIdx].name;
+    const char* cur = cfg.channels[chIdx].scope;
+
+    s_scopeOverlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_scopeOverlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_scopeOverlay, 0, 0);
+    lv_obj_set_style_bg_color(s_scopeOverlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_scopeOverlay, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_scopeOverlay, 0, 0);
+    lv_obj_clear_flag(s_scopeOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* box = lv_obj_create(s_scopeOverlay);
+    lv_obj_set_size(box, 240, LV_SIZE_CONTENT);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(box, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 6, 0);
+    lv_obj_set_style_pad_all(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 6, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    char titleBuf[40];
+    snprintf(titleBuf, sizeof(titleBuf), "Scope: %.24s", chName);
+    lv_obj_t* tLbl = lv_label_create(box);
+    lv_label_set_text(tLbl, titleBuf);
+    lv_obj_set_style_text_color(tLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_width(tLbl, LV_PCT(100));
+
+    // "Default (X)", the saved regions, the channel's current scope; + adds one.
+    s_scopeDd = ops::ui::scopepick::createRow(box, cur, false);
+    lv_obj_set_width(lv_obj_get_parent(s_scopeDd), 220);
+
+    lv_obj_t* note = lv_label_create(box);
+    lv_label_set_text(note, "Default follows Settings > Region Scope 1.");
+    lv_obj_set_width(note, 220);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* row = lv_obj_create(box);
+    lv_obj_set_size(row, 220, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto mkBtn = [&](const char* label, lv_color_t bg, lv_color_t fg, lv_event_cb_t cb) {
+        lv_obj_t* btn = lv_btn_create(row);
+        lv_obj_set_size(btn, 96, 28);
+        lv_obj_set_style_bg_color(btn, bg, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_group_remove_obj(btn);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl, fg, 0);
+        lv_obj_center(lbl);
+    };
+    mkBtn(LV_SYMBOL_OK " Save",    theme::ACCENT, theme::BG,   _onScopeSave);
+    mkBtn(LV_SYMBOL_CLOSE " Exit", theme::BG,     theme::TEXT, _onScopeExit);
+}
+
+static void _closeScopeDialog()
+{
+    if (s_scopeOverlay) lv_obj_del_async(s_scopeOverlay);   // called from its own buttons
+    s_scopeOverlay = nullptr;
+    s_scopeDd      = nullptr;
+    s_scopeCh      = -1;
+}
+
+void ScreenHome::_onScopeSave(lv_event_t* /*e*/)
+{
+    int ch = s_scopeCh;
+    if (s_scopeDd && ch >= 0 && ch < 10) {
+        char scope[ops::regions::NAME_LEN];
+        ops::ui::scopepick::selected(s_scopeDd, scope, sizeof(scope));
+        const ops::ChannelCfg& c = ops::config::get().channels[ch];
+        // Copies: setChannel writes into the same config entry.
+        char name[32], psk[28], sn[6];
+        strncpy(name, c.name, sizeof(name) - 1);      name[sizeof(name) - 1] = '\0';
+        strncpy(psk,  c.psk,  sizeof(psk) - 1);       psk[sizeof(psk) - 1]   = '\0';
+        strncpy(sn,   c.shortname, sizeof(sn) - 1);   sn[sizeof(sn) - 1]     = '\0';
+        ops::config::setChannel(ch, name, psk, sn, scope);
+        ops::MeshService::instance().syncChannel(ch);
+        OPS_LOG("Chat", "Channel %d scope: %s", ch + 1, scope[0] ? scope : "(default)");
+    }
+    _closeScopeDialog();
+}
+
+void ScreenHome::_onScopeExit(lv_event_t* /*e*/)
+{
+    _closeScopeDialog();
 }
 
 // ── Add channel dialog callbacks ──────────────────────────────────────
@@ -1934,11 +2187,11 @@ void ScreenHome::_onAddSave(lv_event_t* /*e*/)
     if (!s_addNameTa || !s_addPskTa) return;
     const char* name       = lv_textarea_get_text(s_addNameTa);
     const char* pskField   = lv_textarea_get_text(s_addPskTa);
-    const char* scopeField = s_addScopeTa ? lv_textarea_get_text(s_addScopeTa) : "";
+    char scopeField[ops::regions::NAME_LEN];
+    ops::ui::scopepick::selected(s_addScopeDd, scopeField, sizeof(scopeField));
 
     if (!name || !name[0]) {
-        if (s_addOverlay) { lv_obj_del(s_addOverlay); s_addOverlay = nullptr; }
-        s_addNameTa = s_addPskTa = s_addScopeTa = nullptr;
+        _onAddCancel(nullptr);
         return;
     }
 
@@ -1972,15 +2225,19 @@ void ScreenHome::_onAddSave(lv_event_t* /*e*/)
         OPS_LOG("Chat", "No empty channel slot available");
     }
 
-    if (s_addOverlay) { lv_obj_del(s_addOverlay); s_addOverlay = nullptr; }
-    s_addNameTa = s_addPskTa = s_addScopeTa = nullptr;
-    _showList();
+    // Called from the form's own Save button: hide it and rebuild the list
+    // (which deletes the form with the old screen) next frame.
+    if (s_addOverlay) lv_obj_add_flag(s_addOverlay, LV_OBJ_FLAG_HIDDEN);
+    s_addOverlay = nullptr;
+    s_addNameTa = s_addPskTa = s_addScopeDd = nullptr;
+    lv_async_call([](void*) { _showList(); }, nullptr);
 }
 
 void ScreenHome::_onAddCancel(lv_event_t* /*e*/)
 {
-    if (s_addOverlay) { lv_obj_del(s_addOverlay); s_addOverlay = nullptr; }
-    s_addNameTa = s_addPskTa = s_addScopeTa = nullptr;
+    if (s_addOverlay) lv_obj_del_async(s_addOverlay);   // called from its own button
+    s_addOverlay = nullptr;
+    s_addNameTa = s_addPskTa = s_addScopeDd = nullptr;
 }
 
 // ── DM picker callbacks ───────────────────────────────────────────────

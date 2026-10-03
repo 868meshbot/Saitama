@@ -26,6 +26,7 @@
 #include "UIScreen.h"
 #include "ScreenLauncher.h"
 #include "QRPopup.h"
+#include "ScopePicker.h"
 #include "Theme.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
@@ -41,6 +42,8 @@
 #include "../mesh/Fhss.h"
 #include "../utils/Crypto.h"
 #include "../utils/Regions.h"
+#include "../utils/BtPin.h"
+#include "../bt/BTCompanionService.h"
 #include "../utils/Repeaters.h"
 #include "../hardware/Board.h"
 #include "../utils/GpsMgr.h"
@@ -374,6 +377,11 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
             cfg.fontExtLatin ? "Extended Latin" : "Standard", 33);
     _addRow(_list, LV_SYMBOL_BLUETOOTH, lang::tr(lang::TR_BLUETOOTH),
             cfg.bluetoothEnabled ? on : off, 7, cfg.bluetoothEnabled ? ROW_ON : ROW_OFF);
+    {
+        char pinStr[8];
+        snprintf(pinStr, sizeof(pinStr), "%06lu", (unsigned long)ops::btpin::get());
+        _addRow(_list, LV_SYMBOL_BLUETOOTH, "Bluetooth PIN", pinStr, 41);
+    }
     _addRow(_list, LV_SYMBOL_VOLUME_MAX, lang::tr(lang::TR_SPEAKER),
             cfg.speakerEnabled ? on : off, 8, cfg.speakerEnabled ? ROW_ON : ROW_OFF);
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
@@ -419,7 +427,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
                 drOn ? ROW_ON : ROW_OFF);
     }
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_SCOPE),
-            cfg.scopeTag[0] ? cfg.scopeTag : off, 40,
+            cfg.scopeTag[0] ? cfg.scopeTag : "*", 40,
             cfg.scopeTag[0] ? ROW_ON : ROW_OFF);
     char toStr[12];
     _fmtTimeoutVal(toStr, sizeof(toStr), cfg.screenTimeoutSec);
@@ -653,7 +661,7 @@ struct EditChCtx {
     int        ch;
     lv_obj_t* nameTa;
     lv_obj_t* pskTa;
-    lv_obj_t* scopeTa;
+    lv_obj_t* scopeDd;
 };
 static EditChCtx s_editCtx;
 
@@ -668,8 +676,9 @@ static void _closeEditCh(bool doSave) {
         const char* rawPsk = lv_textarea_get_text(s_editCtx.pskTa);
         char pskNorm[25] = {};
         ops::MeshService::normalizePsk(rawPsk ? rawPsk : "", pskNorm, sizeof(pskNorm));
-        const char* scope = s_editCtx.scopeTa
-                            ? lv_textarea_get_text(s_editCtx.scopeTa) : "";
+        char scopeBuf[ops::regions::NAME_LEN];
+        scopepick::selected(s_editCtx.scopeDd, scopeBuf, sizeof(scopeBuf));
+        const char* scope = scopeBuf;
         // Preserve existing shortname — field removed from UI
         const char* sn = ops::config::get().channels[s_editCtx.ch].shortname;
         ops::config::setChannel(s_editCtx.ch, cleanName,
@@ -1096,9 +1105,15 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_set_style_text_color(shuffleLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(shuffleLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(shuffleLbl);
-    s_editCtx.scopeTa = _makeChField(panel, "Scope (optional, e.g. AU)",
-                                     cfg.channels[ch].scope, 15,
-                                     "leave blank for no scope");
+    // Scope: pick from the saved scopes (Default = Region Scope 1); + adds one.
+    lv_obj_t* scopeLbl = lv_label_create(panel);
+    lv_label_set_text(scopeLbl, "Scope");
+    lv_obj_set_style_text_color(scopeLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(scopeLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_width(scopeLbl, LV_PCT(100));
+
+    lv_obj_t* addScopeBtn = nullptr;
+    s_editCtx.scopeDd = scopepick::createRow(panel, cfg.channels[ch].scope, false, &addScopeBtn);
 
     // Button row: [Share QR]  [Save]  [Exit]
     lv_obj_t* btnRow = lv_obj_create(panel);
@@ -1162,7 +1177,8 @@ static void _openEditChannelDialog(int ch) {
         lv_group_add_obj(g, s_editCtx.nameTa);
         lv_group_add_obj(g, s_editCtx.pskTa);
         lv_group_add_obj(g, shuffleBtn);
-        lv_group_add_obj(g, s_editCtx.scopeTa);
+        lv_group_add_obj(g, s_editCtx.scopeDd);
+        lv_group_add_obj(g, addScopeBtn);
         lv_group_add_obj(g, qrBtn);
         lv_group_add_obj(g, saveBtn);
         lv_group_add_obj(g, exitBtn);
@@ -1171,12 +1187,22 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_add_event_cb(s_editCtx.nameTa,  _onEditChKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(s_editCtx.pskTa,   _onEditChKey, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(shuffleBtn,         _onEditChKey, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(s_editCtx.scopeTa, _onEditChKey, LV_EVENT_KEY, nullptr);
-    // Enter on scope (last text field) = save
-    lv_obj_add_event_cb(s_editCtx.scopeTa, _onEditChSave, LV_EVENT_READY, nullptr);
+    lv_obj_add_event_cb(s_editCtx.scopeDd, _onEditChKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(addScopeBtn,       _onEditChKey, LV_EVENT_KEY, nullptr);
 }
 
 // ── Auto Add Contacts dialog ──────────────────────────────────────────
+// Shows a _makeToggleRow() switch as on/off: its label and the button
+// behind it (valLbl's parent), so the button colour follows each toggle
+// rather than keeping the state the dialog opened with.
+static void _setToggle(lv_obj_t* valLbl, bool on) {
+    if (!valLbl) return;
+    lv_label_set_text(valLbl, on ? "On" : "Off");
+    lv_obj_set_style_text_color(valLbl, on ? theme::GREEN : theme::TEXT_MUTED, 0);
+    lv_obj_t* btn = lv_obj_get_parent(valLbl);
+    if (btn) lv_obj_set_style_bg_color(btn, on ? theme::PRIMARY : theme::BG, 0);
+}
+
 struct AutoAddCtx {
     lv_obj_t* modal;
     lv_obj_t* clientValLbl;
@@ -1188,16 +1214,12 @@ static AutoAddCtx s_aaCtx;
 
 static void _onAAClientToggle(lv_event_t* /*e*/) {
     s_aaCtx.clientOn = !s_aaCtx.clientOn;
-    lv_label_set_text(s_aaCtx.clientValLbl, s_aaCtx.clientOn ? "On" : "Off");
-    lv_obj_set_style_text_color(s_aaCtx.clientValLbl,
-        s_aaCtx.clientOn ? theme::GREEN : theme::TEXT_MUTED, 0);
+    _setToggle(s_aaCtx.clientValLbl, s_aaCtx.clientOn);
 }
 
 static void _onAARepToggle(lv_event_t* /*e*/) {
     s_aaCtx.repOn = !s_aaCtx.repOn;
-    lv_label_set_text(s_aaCtx.repValLbl, s_aaCtx.repOn ? "On" : "Off");
-    lv_obj_set_style_text_color(s_aaCtx.repValLbl,
-        s_aaCtx.repOn ? theme::GREEN : theme::TEXT_MUTED, 0);
+    _setToggle(s_aaCtx.repValLbl, s_aaCtx.repOn);
 }
 
 static void _onAASave(lv_event_t* /*e*/) {
@@ -1239,7 +1261,6 @@ static lv_obj_t* _makeToggleRow(lv_obj_t* parent, const char* label,
 
     lv_obj_t* btn = lv_btn_create(row);
     lv_obj_set_size(btn, 44, 22);
-    lv_obj_set_style_bg_color(btn, on ? theme::PRIMARY : theme::BG, 0);
     lv_obj_set_style_border_color(btn, theme::BORDER, 0);
     lv_obj_set_style_border_width(btn, 1, 0);
     lv_obj_set_style_radius(btn, 4, 0);
@@ -1250,10 +1271,9 @@ static lv_obj_t* _makeToggleRow(lv_obj_t* parent, const char* label,
     if (modal) lv_obj_add_event_cb(btn, _onModalKey, LV_EVENT_KEY, modal);
 
     lv_obj_t* valLbl = lv_label_create(btn);
-    lv_label_set_text(valLbl, on ? "On" : "Off");
-    lv_obj_set_style_text_color(valLbl, on ? theme::GREEN : theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(valLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(valLbl);
+    _setToggle(valLbl, on);
 
     return valLbl;  // caller stores pointer for live update
 }
@@ -1557,15 +1577,11 @@ static NotifCtx s_nCtx;
 
 static void _onNSoundToggle(lv_event_t* /*e*/) {
     s_nCtx.soundOn = !s_nCtx.soundOn;
-    lv_label_set_text(s_nCtx.soundLbl, s_nCtx.soundOn ? "On" : "Off");
-    lv_obj_set_style_text_color(s_nCtx.soundLbl,
-        s_nCtx.soundOn ? theme::GREEN : theme::TEXT_MUTED, 0);
+    _setToggle(s_nCtx.soundLbl, s_nCtx.soundOn);
 }
 static void _onNPopupToggle(lv_event_t* /*e*/) {
     s_nCtx.popupOn = !s_nCtx.popupOn;
-    lv_label_set_text(s_nCtx.popupLbl, s_nCtx.popupOn ? "On" : "Off");
-    lv_obj_set_style_text_color(s_nCtx.popupLbl,
-        s_nCtx.popupOn ? theme::GREEN : theme::TEXT_MUTED, 0);
+    _setToggle(s_nCtx.popupLbl, s_nCtx.popupOn);
 }
 static void _onNSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
@@ -3881,6 +3897,8 @@ static void _onSPSave(lv_event_t* /*e*/)
     int lost = 0;
     int done = ops::repeaters::rekeyAdminPasswords(&lost);
     ops::crypto::endRekey();
+    // Channel PSKs in settings.json are sealed with it as well.
+    ops::config::save();
     // The SD identity backup is sealed with the storage password too.
     ops::MeshService::instance().rewriteIdentityBackup();
 
@@ -4202,19 +4220,32 @@ void ScreenSettings::showIdentityUnlock()
     if (g) lv_group_focus_obj(s_iuCtx.ta);
 }
 
-// ── Region Scope dialog ───────────────────────────────────────────────
-// Default region scope (cfg.scopeTag) for everything this node floods: DMs,
-// ACKs, adverts, logins, admin commands, and channels without their own
-// scope. Plain names ("AU"); a legacy leading '#' is dropped.
+// ── Region Scope dialogs ──────────────────────────────────────────────
+// Ten slots on two pages of five, like Channels. Slot 1 is the default
+// scope (cfg.scopeTag) for everything this node floods — DMs, ACKs, adverts,
+// logins, admin commands, channels without their own scope — shown as "*"
+// when unset (unscoped). Slots 2-10 are the saved regions (ops::regions),
+// offered wherever a scope is picked; "Default" swaps one into slot 1.
+// Plain names ("AU"); a legacy leading '#' is dropped.
 
-struct ScopeCtx { lv_obj_t* modal; lv_obj_t* ta; lv_obj_t* status; };
+static constexpr int SCOPE_SLOTS = 1 + ops::regions::MAX_REGIONS;   // 10
+
+static int       s_rsPage  = 0;         // 0 = slots 1-5, 1 = slots 6-10
+static lv_obj_t* s_rsModal = nullptr;   // the slot list
+
+static void _openRegionScopesDialog();
+static void _openScopeEditDialog(int slot);
+
+struct ScopeCtx { lv_obj_t* modal; lv_obj_t* ta; lv_obj_t* status; int slot; };
 static ScopeCtx s_scCtx;
 
+// Back to the slot list (refreshing the Settings row underneath).
 static void _scClose()
 {
     if (s_scCtx.modal) lv_obj_del_async(s_scCtx.modal);   // child handler deletes an ancestor
     s_scCtx = ScopeCtx{};
     ScreenSettings::show();
+    _openRegionScopesDialog();
 }
 
 static void _scSetStatus(const char* msg, lv_color_t col)
@@ -4224,49 +4255,86 @@ static void _scSetStatus(const char* msg, lv_color_t col)
     lv_obj_set_style_text_color(s_scCtx.status, col, 0);
 }
 
-static void _scStore(const char* region)
+static void _scSetDefault(const char* region)
 {
-    ops::regions::add(region);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     strncpy(cfg.scopeTag, region, sizeof(cfg.scopeTag) - 1);
     cfg.scopeTag[sizeof(cfg.scopeTag) - 1] = '\0';
     ops::config::save();
-    OPS_LOG("Settings", "Default scope: %s", cfg.scopeTag[0] ? cfg.scopeTag : "(none)");
+    OPS_LOG("Settings", "Default scope: %s", cfg.scopeTag[0] ? cfg.scopeTag : "* (unscoped)");
+}
+
+// Reads the textarea into out (plain name, "" = empty). Returns false and
+// shows why when it isn't a usable region name.
+static bool _scReadName(char* out, size_t outMax)
+{
+    const char* err = scopepick::nameError(s_scCtx.ta ? lv_textarea_get_text(s_scCtx.ta) : "",
+                                           out, outMax);
+    if (err) _scSetStatus(err, theme::RED);
+    return err == nullptr;
 }
 
 static void _onSCSave(lv_event_t* /*e*/)
 {
-    const char* txt = s_scCtx.ta ? lv_textarea_get_text(s_scCtx.ta) : "";
-    if (!txt) txt = "";
-    while (*txt == ' ' || *txt == '#') txt++;   // legacy '#' form
-    size_t n = strlen(txt);
-    while (n && txt[n - 1] == ' ') n--;
-    if (n == 0) { _scStore(""); _scClose(); return; }
-    if (txt[0] == '$') { _scSetStatus("Private ($) regions aren't supported.", theme::RED); return; }
-    if (n < 2)         { _scSetStatus("Region names are 2+ characters.", theme::RED); return; }
-    if (n >= sizeof(ops::Config{}.scopeTag)) { _scSetStatus("Region name is too long.", theme::RED); return; }
-    for (size_t i = 0; i < n; i++) {
-        char c = txt[i];
-        if (!isalnum((unsigned char)c) && c != '-' && c != '_') {
-            _scSetStatus("Use letters, digits, - or _ only.", theme::RED);
-            return;
+    char region[sizeof(ops::Config{}.scopeTag)];
+    if (!_scReadName(region, sizeof(region))) return;
+    int slot = s_scCtx.slot;
+    if (slot == 0) {
+        _scSetDefault(region);
+    } else {
+        int idx = slot - 1;
+        if (!region[0]) {
+            ops::regions::remove(idx);
+        } else {
+            if (idx > ops::regions::count()) idx = ops::regions::count();   // no gaps
+            if (!ops::regions::set(idx, region)) {
+                _scSetStatus("Already saved in another slot.", theme::RED);
+                return;
+            }
         }
     }
-    char region[sizeof(ops::Config{}.scopeTag)] = {};
-    memcpy(region, txt, n);
-    _scStore(region);
     _scClose();
 }
 
-static void _onSCClear(lv_event_t* /*e*/) { _scStore(""); _scClose(); }
-static void _onSCExit (lv_event_t* /*e*/) { _scClose(); }
-static void _onSCKey  (lv_event_t* e) { if (lv_event_get_key(e) == LV_KEY_ESC) _scClose(); }
-
-static void _openScopeDialog()
+// Slots 2-10: make this scope the default; the old default takes its slot.
+static void _onSCMakeDefault(lv_event_t* /*e*/)
 {
+    char region[sizeof(ops::Config{}.scopeTag)];
+    if (!_scReadName(region, sizeof(region))) return;
+    if (!region[0]) { _scSetStatus("Enter a region first.", theme::RED); return; }
+    int idx = s_scCtx.slot - 1;
+    char old[sizeof(ops::Config{}.scopeTag)];
+    strncpy(old, ops::config::get().scopeTag, sizeof(old) - 1);
+    old[sizeof(old) - 1] = '\0';
+    _scSetDefault(region);
+    if (idx < ops::regions::count()) {
+        if (old[0]) ops::regions::set(idx, old);
+        else        ops::regions::remove(idx);
+    } else if (old[0]) {
+        ops::regions::add(old);
+    }
+    _scClose();
+}
+
+static void _onSCClear(lv_event_t* /*e*/)
+{
+    if (s_scCtx.slot == 0) _scSetDefault("");
+    else                   ops::regions::remove(s_scCtx.slot - 1);
+    _scClose();
+}
+
+static void _onSCExit(lv_event_t* /*e*/) { _scClose(); }
+static void _onSCKey (lv_event_t* e) { if (lv_event_get_key(e) == LV_KEY_ESC) _scClose(); }
+
+static void _openScopeEditDialog(int slot)
+{
+    const char* current = (slot == 0) ? ops::config::get().scopeTag
+                                      : ops::regions::get(slot - 1);
+
     lv_obj_t* modal = lv_obj_create(lv_scr_act());
     s_scCtx = ScopeCtx{};
     s_scCtx.modal = modal;
+    s_scCtx.slot  = slot;
     lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
     lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
@@ -4290,18 +4358,23 @@ static void _openScopeDialog()
     lv_obj_set_flex_align(panel,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    char titleBuf[32];
+    if (slot == 0) snprintf(titleBuf, sizeof(titleBuf), "Scope 1 - default");
+    else           snprintf(titleBuf, sizeof(titleBuf), "Scope %d", slot + 1);
     lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, lang::tr(lang::TR_SCOPE));
+    lv_label_set_text(title, titleBuf);
     lv_obj_set_style_text_color(title, theme::ACCENT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
 
     lv_obj_t* note = lv_label_create(panel);
     lv_obj_set_width(note, 286);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(note,
-        "Region for everything you flood: DMs, adverts, logins and channels "
-        "without their own scope. Needed where repeaters deny unscoped "
-        "traffic. Empty = unscoped.");
+    lv_label_set_text(note, slot == 0
+        ? "Region for everything you flood: DMs, adverts, logins and channels "
+          "without their own scope. Needed where repeaters deny unscoped "
+          "traffic. Empty or * = unscoped."
+        : "A saved region, offered when picking a scope. Default makes it "
+          "scope 1; the current default moves into this slot.");
     lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
 
@@ -4309,8 +4382,8 @@ static void _openScopeDialog()
     lv_obj_set_size(s_scCtx.ta, 286, 28);
     lv_textarea_set_one_line(s_scCtx.ta, true);
     lv_textarea_set_max_length(s_scCtx.ta, sizeof(ops::Config{}.scopeTag) - 1);
-    lv_textarea_set_placeholder_text(s_scCtx.ta, "e.g. AU");
-    lv_textarea_set_text(s_scCtx.ta, ops::config::get().scopeTag);
+    lv_textarea_set_placeholder_text(s_scCtx.ta, slot == 0 ? "* (unscoped)" : "e.g. AU");
+    lv_textarea_set_text(s_scCtx.ta, current ? current : "");
     lv_obj_set_style_bg_color(s_scCtx.ta, theme::BG, 0);
     lv_obj_set_style_text_color(s_scCtx.ta, theme::TEXT, 0);
     lv_obj_set_style_border_color(s_scCtx.ta, theme::BORDER, 0);
@@ -4338,20 +4411,30 @@ static void _openScopeDialog()
         LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     struct Btn { const char* text; lv_event_cb_t cb; bool primary; };
-    const Btn btns[] = {
-        { LV_SYMBOL_OK " Save",     _onSCSave,  true  },
-        { LV_SYMBOL_TRASH " Clear", _onSCClear, false },
-        { LV_SYMBOL_CLOSE " Cancel", _onSCExit, false },
+    const Btn btnsDefault[] = {
+        { LV_SYMBOL_OK " Save",      _onSCSave,  true  },
+        { LV_SYMBOL_TRASH " Clear",  _onSCClear, false },
+        { LV_SYMBOL_CLOSE " Cancel", _onSCExit,  false },
     };
-    for (const Btn& bd : btns) {
+    const Btn btnsSaved[] = {
+        { LV_SYMBOL_OK " Save",      _onSCSave,        true  },
+        { LV_SYMBOL_HOME " Default", _onSCMakeDefault, false },
+        { LV_SYMBOL_TRASH " Clear",  _onSCClear,       false },
+        { LV_SYMBOL_CLOSE " Cancel", _onSCExit,        false },
+    };
+    const Btn* btns = slot == 0 ? btnsDefault : btnsSaved;
+    int nBtns       = slot == 0 ? 3 : 4;
+    for (int i = 0; i < nBtns; i++) {
+        const Btn& bd = btns[i];
         lv_obj_t* b = lv_btn_create(row);
-        lv_obj_set_size(b, 88, 24);
+        lv_obj_set_size(b, nBtns == 3 ? 88 : 68, 24);
         lv_obj_set_style_bg_color(b, bd.primary ? theme::ACCENT : theme::BG, 0);
         lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
         lv_obj_set_style_border_color(b, theme::BORDER, 0);
         lv_obj_set_style_border_width(b, bd.primary ? 0 : 1, 0);
         lv_obj_set_style_radius(b, 4, 0);
         lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_set_style_pad_hor(b, 2, 0);
         lv_obj_add_event_cb(b, bd.cb,    LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(b, _onSCKey, LV_EVENT_KEY,     nullptr);
         lv_obj_t* l = lv_label_create(b);
@@ -4363,6 +4446,327 @@ static void _openScopeDialog()
 
     lv_group_t* g = lv_group_get_default();
     if (g) lv_group_focus_obj(s_scCtx.ta);
+}
+
+// ── Slot list ──
+
+static void _onRSClose(lv_event_t* /*e*/) { _delModal(s_rsModal); }
+static void _onRSKey(lv_event_t* e)
+{
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_rsModal);
+}
+
+static void _onRSRowClick(lv_event_t* e)
+{
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    _delModal(s_rsModal);
+    _openScopeEditDialog(slot);
+}
+
+static void _onRSPage(lv_event_t* e)
+{
+    s_rsPage = (int)(intptr_t)lv_event_get_user_data(e);
+    _delModal(s_rsModal);
+    _openRegionScopesDialog();
+}
+
+static void _openRegionScopesDialog()
+{
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_rsModal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 300, 210);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(panel, 3, 0);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    char titleBuf[28];
+    snprintf(titleBuf, sizeof(titleBuf), "Region Scopes %d-%d",
+             s_rsPage * 5 + 1, s_rsPage * 5 + 5);
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, titleBuf);
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_pad_bottom(title, 2, 0);
+
+    const char* def = ops::config::get().scopeTag;
+    int base = s_rsPage * 5;
+    for (int slot = base; slot < base + 5 && slot < SCOPE_SLOTS; slot++) {
+        lv_obj_t* row = lv_btn_create(panel);
+        lv_obj_set_size(row, 280, 24);
+        lv_obj_set_style_bg_color(row, theme::BG, 0);
+        lv_obj_set_style_bg_color(row, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, slot == 0 ? theme::ACCENT : theme::BORDER, 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_radius(row, 4, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 6, 0);
+        lv_obj_set_style_pad_ver(row, 2, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row,
+            LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        char rowBuf[48];
+        bool set;
+        if (slot == 0) {
+            set = true;   // always has a value: the scope, or * when unscoped
+            snprintf(rowBuf, sizeof(rowBuf), "1: %s  (default)", def[0] ? def : "*");
+        } else {
+            const char* nm = ops::regions::get(slot - 1);
+            set = nm != nullptr;
+            snprintf(rowBuf, sizeof(rowBuf), "%d: %s", slot + 1, set ? nm : "[empty]");
+        }
+        lv_obj_t* lbl = lv_label_create(row);
+        lv_label_set_text(lbl, rowBuf);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(lbl, 240);
+        lv_obj_set_style_text_color(lbl, set ? theme::TEXT : theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* arr = lv_label_create(row);
+        lv_label_set_text(arr, LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(arr, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(arr, &lv_font_montserrat_10, 0);
+
+        lv_obj_add_event_cb(row, _onRSRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
+    }
+
+    // Navigation row: [◄ 1-5]  [✕ Exit]  [6-10 ►]
+    lv_obj_t* navRow = lv_obj_create(panel);
+    lv_obj_set_size(navRow, 280, 30);
+    lv_obj_set_style_bg_opa(navRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(navRow, 0, 0);
+    lv_obj_set_style_pad_all(navRow, 0, 0);
+    lv_obj_clear_flag(navRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(navRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(navRow,
+        LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    struct Nav { const char* text; lv_event_cb_t cb; intptr_t ud; bool current; bool exit; };
+    const Nav navs[] = {
+        { LV_SYMBOL_LEFT " 1-5",     _onRSPage,  0, s_rsPage == 0, false },
+        { LV_SYMBOL_CLOSE " Exit",   _onRSClose, 0, false,         true  },
+        { "6-10 " LV_SYMBOL_RIGHT,   _onRSPage,  1, s_rsPage == 1, false },
+    };
+    lv_obj_t* navBtns[3];
+    for (int i = 0; i < 3; i++) {
+        const Nav& nv = navs[i];
+        lv_obj_t* b = lv_btn_create(navRow);
+        navBtns[i] = b;
+        lv_obj_set_size(b, 72, 26);
+        lv_obj_set_style_bg_color(b, nv.exit ? theme::BG_CARD : nv.current ? theme::PRIMARY : theme::BG, 0);
+        lv_obj_set_style_bg_color(b, nv.exit ? theme::RED : theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(b, theme::BORDER, 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_radius(b, 4, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_add_event_cb(b, nv.cb, LV_EVENT_CLICKED, (void*)nv.ud);
+        lv_obj_add_event_cb(b, _onRSKey, LV_EVENT_KEY, nullptr);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, nv.text);
+        lv_obj_set_style_text_color(l, (nv.exit || nv.current) ? theme::TEXT : theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_center(l);
+    }
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        // Slot rows are children 1-5 (after the title), then the nav buttons.
+        for (int ci = 1; ci <= 5; ci++) {
+            lv_obj_t* r = lv_obj_get_child(panel, ci);
+            if (!r || r == navRow) break;
+            lv_group_add_obj(g, r);
+            lv_obj_add_event_cb(r, _onRSKey, LV_EVENT_KEY, nullptr);
+        }
+        for (lv_obj_t* b : navBtns) lv_group_add_obj(g, b);
+        lv_group_focus_obj(lv_obj_get_child(panel, 1));
+    }
+}
+
+// ── Bluetooth PIN dialog ──────────────────────────────────────────────
+// The companion app pairs with this 6-digit PIN. Changing it removes every
+// existing pairing, so a phone that knew the old PIN must pair again.
+
+struct BtPinCtx { lv_obj_t* modal; lv_obj_t* ta; lv_obj_t* status; };
+static BtPinCtx s_bpCtx;
+
+static void _bpClose()
+{
+    _delModal(s_bpCtx.modal);
+    s_bpCtx = BtPinCtx{};
+    ScreenSettings::show();
+}
+
+static void _bpApplied(uint32_t pin)
+{
+    ops::BTCompanionService::instance().applyPin(pin);
+    OPS_LOG("Settings", "Bluetooth PIN changed; pairings removed");
+}
+
+static void _onBpSave(lv_event_t* /*e*/)
+{
+    const char* t = s_bpCtx.ta ? lv_textarea_get_text(s_bpCtx.ta) : "";
+    uint32_t pin = 0;
+    int digits = 0;
+    for (const char* c = t; c && *c; c++) {
+        if (*c < '0' || *c > '9') { digits = -1; break; }
+        pin = pin * 10 + (uint32_t)(*c - '0');
+        digits++;
+    }
+    if (digits != 6 || pin < ops::btpin::MIN_PIN) {
+        lv_label_set_text(s_bpCtx.status, "Enter 6 digits, not starting with 0.");
+        lv_obj_set_style_text_color(s_bpCtx.status, theme::RED, 0);
+        return;
+    }
+    if (pin != ops::btpin::get()) {
+        if (!ops::btpin::set(pin)) {
+            lv_label_set_text(s_bpCtx.status, "Could not save the PIN.");
+            lv_obj_set_style_text_color(s_bpCtx.status, theme::RED, 0);
+            return;
+        }
+        _bpApplied(pin);
+    }
+    _bpClose();
+}
+
+static void _onBpRandom(lv_event_t* /*e*/)
+{
+    char buf[8];
+    uint32_t pin;
+    do { pin = ops::btpin::MIN_PIN + esp_random() % (ops::btpin::MAX_PIN - ops::btpin::MIN_PIN + 1); }
+    while (pin == ops::btpin::get());
+    snprintf(buf, sizeof(buf), "%06lu", (unsigned long)pin);
+    lv_textarea_set_text(s_bpCtx.ta, buf);
+    lv_label_set_text(s_bpCtx.status, "Save to use it.");
+    lv_obj_set_style_text_color(s_bpCtx.status, theme::TEXT_MUTED, 0);
+}
+
+static void _onBpExit(lv_event_t* /*e*/) { _bpClose(); }
+static void _onBpKey(lv_event_t* e) { if (lv_event_get_key(e) == LV_KEY_ESC) _bpClose(); }
+
+static void _openBtPinDialog()
+{
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_bpCtx = BtPinCtx{};
+    s_bpCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onBpKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 280, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 5, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Bluetooth PIN");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 264);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note,
+        "The companion app pairs with this PIN. Changing it unpairs all "
+        "phones - pair again with the new PIN.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    char cur[8];
+    snprintf(cur, sizeof(cur), "%06lu", (unsigned long)ops::btpin::get());
+    s_bpCtx.ta = lv_textarea_create(panel);
+    lv_obj_set_size(s_bpCtx.ta, 140, 34);
+    lv_textarea_set_one_line(s_bpCtx.ta, true);
+    lv_textarea_set_max_length(s_bpCtx.ta, 6);
+    lv_textarea_set_accepted_chars(s_bpCtx.ta, "0123456789");
+    lv_textarea_set_text(s_bpCtx.ta, cur);
+    lv_obj_set_style_bg_color(s_bpCtx.ta, theme::BG, 0);
+    lv_obj_set_style_text_color(s_bpCtx.ta, theme::TEXT, 0);
+    lv_obj_set_style_border_color(s_bpCtx.ta, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(s_bpCtx.ta, 1, 0);
+    lv_obj_set_style_text_font(s_bpCtx.ta, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_align(s_bpCtx.ta, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_event_cb(s_bpCtx.ta, _onBpKey,  LV_EVENT_KEY,   nullptr);
+    lv_obj_add_event_cb(s_bpCtx.ta, _onBpSave, LV_EVENT_READY, nullptr);
+
+    s_bpCtx.status = lv_label_create(panel);
+    lv_obj_set_width(s_bpCtx.status, 264);
+    lv_label_set_long_mode(s_bpCtx.status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_bpCtx.status, &lv_font_montserrat_10, 0);
+    lv_label_set_text(s_bpCtx.status, ops::config::get().bluetoothEnabled
+        ? "" : "Bluetooth is off - the PIN applies when it's switched on.");
+    lv_obj_set_style_text_color(s_bpCtx.status, theme::TEXT_MUTED, 0);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 264, 30);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    struct Btn { const char* text; lv_event_cb_t cb; bool primary; };
+    const Btn btns[] = {
+        { LV_SYMBOL_OK " Save",       _onBpSave,   true  },
+        { LV_SYMBOL_SHUFFLE " Random", _onBpRandom, false },
+        { LV_SYMBOL_CLOSE " Cancel",  _onBpExit,   false },
+    };
+    lv_obj_t* made[3];
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* b = lv_btn_create(row);
+        made[i] = b;
+        lv_obj_set_size(b, 82, 26);
+        lv_obj_set_style_bg_color(b, btns[i].primary ? theme::ACCENT : theme::BG, 0);
+        lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(b, theme::BORDER, 0);
+        lv_obj_set_style_border_width(b, btns[i].primary ? 0 : 1, 0);
+        lv_obj_set_style_radius(b, 4, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_add_event_cb(b, btns[i].cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(b, _onBpKey,   LV_EVENT_KEY,     nullptr);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, btns[i].text);
+        lv_obj_set_style_text_color(l, btns[i].primary ? theme::BG : theme::TEXT, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_center(l);
+    }
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, s_bpCtx.ta);
+        for (lv_obj_t* b : made) lv_group_add_obj(g, b);
+        lv_group_focus_obj(s_bpCtx.ta);
+    }
 }
 
 // ── CPU Governor dropdown dialog ──────────────────────────────────────
@@ -4594,8 +4998,13 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openDmRetryDialog();
             return;
 
-        case 40:  // Region Scope → default flood scope dialog
-            _openScopeDialog();
+        case 41:  // Bluetooth PIN → view / change / randomise
+            _openBtPinDialog();
+            return;
+
+        case 40:  // Region Scope → 10 slots: 1 = default, 2-10 = saved regions
+            s_rsPage = 0;
+            _openRegionScopesDialog();
             return;
 
         case 32:  // Volume → slider dialog

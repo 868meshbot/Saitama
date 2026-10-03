@@ -15,6 +15,7 @@
 #include "utils/Config.h"
 #include "utils/Contacts.h"
 #include "utils/Crypto.h"
+#include "utils/BtPin.h"
 #include "utils/Regions.h"
 #include "utils/Repeaters.h"
 #include "utils/SDCard.h"
@@ -53,10 +54,13 @@ void setup() {
     ops::sdcard::init();
 
     // 3) Load persistent config and contacts from NVS (falls back to SD if NVS empty)
-    ops::config::init();
-    ops::contacts::init();
-    // Storage key must exist before repeaters::init() loads sealed secrets.
+    // Storage key first: settings.json (channel PSKs) and repeaters.json
+    // (admin passwords) hold sealed secrets.
     ops::crypto::init();
+    ops::btpin::init();
+    ops::config::init();
+    ops::config::scrubSdSecrets();
+    ops::contacts::init();
     ops::regions::init();
     ops::repeaters::init();
     {
@@ -86,7 +90,7 @@ void setup() {
     if (ops::config::get().bluetoothEnabled) {
         const auto& cfg = ops::config::get();
         ops::BTCompanionService::instance().init(
-            cfg.callsign[0] ? cfg.callsign : "OPS-NODE", 123456);
+            cfg.callsign[0] ? cfg.callsign : "OPS-NODE", ops::btpin::get());
     }
 
     // 5) Initialise UI (LVGL + screen driver) BEFORE LoRa.
@@ -118,4 +122,12 @@ void loop() {
     begin(MESH);      ops::MeshService::instance().tick();       end(MESH);
     begin(UI);        ops::ui::tick();                           end(UI);
     begin(SERIAL_IO); ops::ui::ScreenTerminal::tickSerial();     end(SERIAL_IO);
+
+    // Yield one RTOS tick (1 ms) per pass. Everything above is polled and
+    // finishes in well under a frame, so without this the loop spun at full
+    // clock between 33 ms LVGL frames; the idle task now halts the core
+    // (WAITI) instead. Not a delay() in the "no delay in loop" sense: the radio
+    // (DIO1 interrupt + RX buffer), keyboard and GPS UART all buffer for far
+    // longer than 1 ms. Screen-off light sleep in ui::tick() is unaffected.
+    vTaskDelay(1);
 }

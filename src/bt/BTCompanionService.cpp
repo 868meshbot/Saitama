@@ -3,6 +3,7 @@
 
 #include "BTCompanionService.h"
 #include "../utils/Log.h"
+#include "../utils/BtPin.h"
 #include <cstring>
 #include <BLEDevice.h>
 #include <esp_gap_ble_api.h>
@@ -48,12 +49,34 @@ void BTCompanionService::init(const char* deviceName, uint32_t pinCode)
         _ble.begin("", name, pinCode);
         BLEDevice::setCustomGattsHandler(_gattsConnectHook);
         _bleInited = true;
-        OPS_LOG("BT", "BLE stack init as '%s' (PIN: %lu)", name, (unsigned long)pinCode);
+        OPS_LOG("BT", "BLE stack init as '%s'", name);
+        if (btpin::takeBondClear()) _clearBonds();
     } else {
         BLEDevice::getAdvertising()->start();
         OPS_LOG("BT", "BLE advertising restarted");
     }
     _running = true;
+}
+
+void BTCompanionService::_clearBonds()
+{
+    int n = esp_ble_get_bond_device_num();
+    if (n <= 0) return;
+    esp_ble_bond_dev_t* list = (esp_ble_bond_dev_t*)malloc(sizeof(esp_ble_bond_dev_t) * n);
+    if (!list) return;
+    if (esp_ble_get_bond_device_list(&n, list) == ESP_OK)
+        for (int i = 0; i < n; i++) esp_ble_remove_bond_device(list[i].bd_addr);
+    free(list);
+    OPS_LOG("BT", "Removed %d pairing(s) - pair again with the new PIN", n);
+}
+
+void BTCompanionService::applyPin(uint32_t pinCode)
+{
+    if (!_bleInited) return;   // init() reads the PIN (and clears bonds) later
+    BLESecurity sec;
+    sec.setStaticPIN(pinCode);
+    btpin::takeBondClear();
+    _clearBonds();
 }
 
 void BTCompanionService::stop()

@@ -33,6 +33,10 @@ static bool             s_running    = false;
 static bool             s_everRan    = false;
 static int              s_asked      = 0;
 static uint32_t         s_until      = 0;
+// Regions discovered but not saved, offered as "+ NAME" chips.
+static constexpr int    MAX_FOUND    = 16;
+static char             s_found[MAX_FOUND][ops::regions::NAME_LEN];
+static int              s_foundCount = 0;
 static bool             s_retried    = false;
 // Repeaters that never answered, named once discovery finishes.
 static char             s_noReply[MAX_REP][32];
@@ -175,8 +179,43 @@ void ScreenRegions::_rebuildRepeaters()
 }
 
 // ── Saved-regions chips ───────────────────────────────────────────────
-// "Off" plus every catalog name; the current default is filled in. Tapping
+// "Off" plus every saved name; the current default is filled in. Tapping
 // one makes it the default scope. user_data = catalog index + 1 (0 = Off).
+// Then a dashed "+ NAME" chip for every discovered region not saved yet;
+// tapping one saves it. user_data = s_found index.
+
+static bool _isSaved(const char* name)
+{
+    for (int i = 0; i < ops::regions::count(); i++)
+        if (strcmp(ops::regions::get(i), name) == 0) return true;
+    return false;
+}
+
+// Collects the discovered region names that aren't saved ("*" isn't a region).
+static void _collectFound()
+{
+    s_foundCount = 0;
+    for (int r = 0; r < s_repCount; r++) {
+        const char* p = s_reps[r].regions;
+        while (*p) {
+            const char* end = strchr(p, ',');
+            size_t n = end ? (size_t)(end - p) : strlen(p);
+            while (n && *p == '#') { p++; n--; }
+            if (n > 0 && n < ops::regions::NAME_LEN && !(n == 1 && *p == '*')) {
+                char nm[ops::regions::NAME_LEN];
+                memcpy(nm, p, n);
+                nm[n] = '\0';
+                bool dup = _isSaved(nm);
+                for (int k = 0; k < s_foundCount && !dup; k++)
+                    if (strcmp(s_found[k], nm) == 0) dup = true;
+                if (!dup && s_foundCount < MAX_FOUND)
+                    memcpy(s_found[s_foundCount++], nm, n + 1);
+            }
+            if (!end) break;
+            p = end + 1;
+        }
+    }
+}
 
 void ScreenRegions::_rebuildChips()
 {
@@ -210,9 +249,36 @@ void ScreenRegions::_rebuildChips()
         lv_obj_center(l);
     }
 
-    if (ops::regions::count() == 0) {
+    _collectFound();
+    for (int i = 0; i < s_foundCount; i++) {
+        lv_obj_t* b = lv_btn_create(_chips);
+        lv_obj_set_height(b, 24);
+        lv_obj_set_style_pad_hor(b, 10, 0);
+        lv_obj_set_style_radius(b, 12, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_border_width(b, 2, LV_STATE_FOCUSED);
+        lv_obj_set_style_border_color(b, theme::TEXT, LV_STATE_FOCUSED);
+        lv_obj_add_event_cb(b, _onAddChipClick, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(b, _onKey,          LV_EVENT_KEY,     nullptr);
+        if (g) lv_group_add_obj(g, b);
+
+        char txt[ops::regions::NAME_LEN + 4];
+        snprintf(txt, sizeof(txt), LV_SYMBOL_PLUS " %s", s_found[i]);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, txt);
+        lv_obj_set_style_text_color(l, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_center(l);
+    }
+
+    if (ops::regions::count() == 0 && s_foundCount == 0) {
         lv_obj_t* l = lv_label_create(_chips);
-        lv_label_set_text(l, "Discovered and used regions appear here.");
+        lv_label_set_text(l, "Saved regions appear here. Discover offers new ones to add.");
         lv_obj_set_style_text_color(l, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
     }
@@ -244,6 +310,23 @@ void ScreenRegions::_onChipClick(lv_event_t* e)
     else         snprintf(msg, sizeof(msg), "Default scope off - floods unscoped.");
     _setStatus(msg, theme::GREEN);
     _refreshDefault();
+    // Rebuilding deletes the chip whose handler is running — defer it.
+    lv_async_call([](void*) { _rebuildChips(); }, nullptr);
+}
+
+void ScreenRegions::_onAddChipClick(lv_event_t* e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i >= s_foundCount) return;
+    char msg[64];
+    if (ops::regions::count() >= ops::regions::MAX_REGIONS) {
+        snprintf(msg, sizeof(msg), "Saved regions are full (9). Remove one in Settings.");
+        _setStatus(msg, theme::ORANGE);
+        return;
+    }
+    ops::regions::add(s_found[i]);
+    snprintf(msg, sizeof(msg), "Saved %s. Tap it to make it the default.", s_found[i]);
+    _setStatus(msg, theme::GREEN);
     // Rebuilding deletes the chip whose handler is running — defer it.
     lv_async_call([](void*) { _rebuildChips(); }, nullptr);
 }
@@ -431,7 +514,7 @@ void ScreenRegions::_build()
     _section(_body, "Nearby repeaters");
     _repList = _flexBox(_body, LV_FLEX_FLOW_COLUMN);
 
-    _section(_body, "Saved regions - tap to use");
+    _section(_body, "Saved regions - tap to use, + to save");
     _chips = _flexBox(_body, LV_FLEX_FLOW_ROW_WRAP);
 
     lv_group_t* g = lv_group_get_default();

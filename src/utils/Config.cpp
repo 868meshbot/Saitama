@@ -5,9 +5,9 @@
 // touching the LittleFS/spiffs partition that MeshCore owns.
 
 #include "Config.h"
-#include "Regions.h"
 #include "SDCard.h"
 #include "Log.h"
+#include "Crypto.h"
 #include <Preferences.h>
 #include <SD.h>
 #include <ArduinoJson.h>
@@ -83,6 +83,14 @@ static void setDefaults(Config& c) {
 
 // ── SD JSON helpers ────────────────────────────────────────────────
 
+// Channel PSKs go to /ops/settings.json sealed with the storage password
+// (ops::crypto) — never in the clear (docs/STORED_SECRETS.md). AAD = "ch" +
+// slot, so a blob can't be moved onto another channel by editing the file.
+static void _pskAad(int slot, uint8_t aad[3])
+{
+    aad[0] = 'c'; aad[1] = 'h'; aad[2] = (uint8_t)slot;
+}
+
 static void _saveToSD() {
     if (!sdcard::isMounted()) return;
     JsonDocument doc;
@@ -142,7 +150,16 @@ static void _saveToSD() {
         JsonObject ch = chArr.add<JsonObject>();
         ch["name"]   = s_cfg.channels[i].name;
         ch["sn"]     = s_cfg.channels[i].shortname;
-        ch["psk"]    = s_cfg.channels[i].psk;
+        if (s_cfg.channels[i].psk[0]) {
+            // Sealed or not written at all: a PSK is never stored in the clear.
+            uint8_t aad[3], blob[crypto::BLOB_LEN];
+            _pskAad(i, aad);
+            if (crypto::seal(s_cfg.channels[i].psk, aad, sizeof(aad), blob)) {
+                char hex[crypto::BLOB_HEX_LEN];
+                crypto::toHex(blob, sizeof(blob), hex, sizeof(hex));
+                ch["pskEnc"] = hex;
+            }
+        }
         ch["notify"] = s_cfg.channels[i].notify;
         ch["scope"]  = s_cfg.channels[i].scope;
         ch["icon"]   = s_cfg.channelIcon[i];
@@ -230,7 +247,23 @@ static bool _loadFromSD() {
             if (i >= 10) break;
             const char* n  = ch["name"] | s_cfg.channels[i].name;
             const char* sn = ch["sn"]   | s_cfg.channels[i].shortname;
-            const char* pk = ch["psk"]  | s_cfg.channels[i].psk;
+            // "pskEnc" = sealed; "psk" = plaintext from older firmware (the
+            // next save seals it). A blob the storage password can't open
+            // leaves the PSK empty: the channel falls back to #name.
+            char pkBuf[sizeof(s_cfg.channels[i].psk)] = {};
+            const char* pk = ch["psk"] | s_cfg.channels[i].psk;
+            const char* pkHex = ch["pskEnc"] | "";
+            if (pkHex[0]) {
+                uint8_t aad[3], blob[crypto::BLOB_LEN];
+                _pskAad(i, aad);
+                if (crypto::fromHex(pkHex, blob, sizeof(blob)) &&
+                    crypto::unseal(blob, aad, sizeof(aad), pkBuf, sizeof(pkBuf))) {
+                    pk = pkBuf;
+                } else {
+                    pk = "";
+                    OPS_LOG("Config", "Channel %d PSK: storage password can't open it", i + 1);
+                }
+            }
             const char* sc = ch["scope"] | "";
             strncpy(s_cfg.channels[i].name,      n,  sizeof(s_cfg.channels[i].name)      - 1);
             strncpy(s_cfg.channels[i].shortname, sn, sizeof(s_cfg.channels[i].shortname) - 1);
@@ -423,6 +456,19 @@ void config::init() {
     save();
 }
 
+void config::scrubSdSecrets() {
+    // settings.json from older firmware holds plaintext "psk" fields: reseal.
+    if (!sdcard::isMounted()) return;
+    File f = SD.open("/ops/settings.json", FILE_READ);
+    if (!f) return;
+    bool plain = f.find("\"psk\":");
+    f.close();
+    if (plain) {
+        _saveToSD();
+        OPS_LOG("Config", "settings.json: channel PSKs now sealed");
+    }
+}
+
 int config::reloadFromSD() {
     if (!_loadFromSD()) return -1;
     save();
@@ -479,7 +525,6 @@ void config::setChannelIcon(int idx, const char* icon) {
 }
 
 void config::setChannel(int idx, const char* name, const char* psk, const char* shortname, const char* scope) {
-    if (scope && scope[0]) ops::regions::add(scope);   // offer it in region pickers
     if (idx < 0 || idx > 9) return;
     strncpy(s_cfg.channels[idx].name,      name,      sizeof(s_cfg.channels[idx].name)      - 1);
     strncpy(s_cfg.channels[idx].psk,       psk,       sizeof(s_cfg.channels[idx].psk)       - 1);

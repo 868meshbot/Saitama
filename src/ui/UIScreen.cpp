@@ -917,7 +917,9 @@ void tick() {
                 ScreenLauncher::refreshUnreadDot();
                 ScreenLauncher::noteDirectMessage(msg.senderName);
                 ops::sound::playNotification();
-                lv_refr_now(nullptr);
+                // No lv_refr_now() here: a forced full redraw inside the
+                // message drain stalled the mesh loop ~150-200 ms per DM; the
+                // regular 30 fps refresh shows it a frame later.
             } else {
                 snprintf(line, sizeof(line),
                          "[#%s] %s: %s  (h:%u rssi:%.0fdBm snr:%.0f)",

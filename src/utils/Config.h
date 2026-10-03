@@ -112,6 +112,9 @@ namespace config {
     void save();
     // Reload from /ops/settings.json and resave to NVS. Returns 1 on success, -1 on failure.
     int  reloadFromSD();
+    // Rewrites /ops/settings.json if it still holds plaintext channel PSKs
+    // (older firmware). Call once crypto is ready.
+    void scrubSdSecrets();
     const Config& get();
 
     void setCallsign(const char* cs);

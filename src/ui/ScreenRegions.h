@@ -35,6 +35,7 @@ private:
     static void _onHomeClick    (lv_event_t* e);
     static void _onDiscoverClick(lv_event_t* e);
     static void _onChipClick    (lv_event_t* e);
+    static void _onAddChipClick (lv_event_t* e);   // "+ NAME": save a discovered region
     static void _onKey          (lv_event_t* e);
 };
 

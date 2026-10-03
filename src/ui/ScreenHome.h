@@ -144,11 +144,19 @@ private:
     static void _onIconEmojiPick   (lv_event_t* e); // emoji grid → emoji selected
     static void _onIconPickerClose (lv_event_t* e); // icon picker → Close/Cancel
 
-    static void _onActionAdd   (lv_event_t* e);   // popup → Add
+    static void _onListAdd     (lv_event_t* e);   // list header + → Add Channel
+    static void _onActionScope (lv_event_t* e);   // popup → Configure Scope
     static void _onActionClear (lv_event_t* e);   // popup → Clear
     static void _onActionDelete(lv_event_t* e);   // popup → Delete
     static void _onActionNotify(lv_event_t* e);   // popup → Notify toggle
     static void _onActionClose (lv_event_t* e);   // popup → Close
+    // Popup buttons queue their action; this runs it next frame, after
+    // deleting the popup outside its own event handler.
+    static void _runPendingAction(void* unused);
+
+    static void _openChannelScopeDialog(int chIdx);
+    static void _onScopeSave   (lv_event_t* e);   // scope dialog → Save
+    static void _onScopeExit   (lv_event_t* e);   // scope dialog → Exit
 
     static void _onAddSave     (lv_event_t* e);   // add dialog → Save
     static void _onAddCancel   (lv_event_t* e);   // add dialog → Cancel

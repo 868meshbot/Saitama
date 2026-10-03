@@ -1,7 +1,7 @@
 # Stored Secrets
 
-Saitama keeps two kinds of secret on the SD card: remembered repeater admin
-passwords, and a backup of the node's identity (its private key). This
+Saitama keeps three kinds of secret on the SD card: remembered repeater admin
+passwords, channel PSKs, and a backup of the node's identity (its private key). This
 document says exactly what that storage protects against, because
 "encrypted" on its own does not tell you.
 
@@ -10,8 +10,10 @@ document says exactly what that storage protects against, because
 | Where | Contents |
 |---|---|
 | `/ops/repeaters.json` (SD card) | `"pwEnc"` — a 92-byte sealed blob, hex encoded. Ciphertext only. |
+| `/ops/settings.json` (SD card) | `"pskEnc"` per channel — the channel PSK as a 92-byte sealed blob, hex encoded. AAD = `"ch"` + slot index. Older files held a plaintext `"psk"`; boot rewrites them sealed (`config::scrubSdSecrets()`). |
 | `/ops/identity.enc` (SD card) | The node identity (private key), sealed. 209 bytes; header in the clear. See [Node identity](#node-identity). |
 | NVS namespace `opscrypt` (internal flash) | 16-byte random salt, and the **storage password** (default `changeme1`). |
+| NVS namespace `opsbt` (internal flash) | The **Bluetooth pairing PIN** — random 6 digits per device, generated on first boot (it was a fixed `123456` before). Never on the SD card. Settings > Bluetooth PIN shows and changes it; changing it removes every existing pairing. |
 
 The storage password deliberately does **not** live in `ops::Config`.
 `config::save()` mirrors every setting to `/ops/settings.json`, which would
@@ -65,7 +67,9 @@ Settings > Storage Password. The list row reads **Default** until you change
 it, because `changeme1` is published in the source, in this file, and in every
 release — it is a placeholder, not a secret.
 
-Changing it re-encrypts every stored secret in a single pass:
+Changing it re-encrypts every stored secret in a single pass (repeater
+passwords and the identity backup; channel PSKs are re-sealed by rewriting
+`settings.json` from the plaintext copy in NVS):
 
 1. The new password is verified against the old one and **persisted first**.
    That is the step that can fail, so it is done first and checked.

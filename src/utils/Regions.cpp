@@ -28,18 +28,26 @@ static void _save()
     p.end();
 }
 
-// Appends without saving; true if it was new.
-static bool _add(const char* name, size_t len)
+// Trims a leading '#'/spaces and trailing spaces; false if not a valid name.
+static bool _clean(const char*& name, size_t& len)
 {
     while (len && (*name == '#' || *name == ' ')) { name++; len--; }
     while (len && name[len - 1] == ' ') len--;
-    if (len == 0 || len >= NAME_LEN || name[0] == '*' || name[0] == '$') return false;
+    return !(len == 0 || len >= NAME_LEN || name[0] == '*' || name[0] == '$');
+}
+
+static int _find(const char* name, size_t len)
+{
     for (int i = 0; i < s_count; i++)
-        if (strlen(s_names[i]) == len && memcmp(s_names[i], name, len) == 0) return false;
-    if (s_count == MAX_REGIONS) {   // drop the oldest
-        memmove(s_names[0], s_names[1], (MAX_REGIONS - 1) * NAME_LEN);
-        s_count--;
-    }
+        if (strlen(s_names[i]) == len && memcmp(s_names[i], name, len) == 0) return i;
+    return -1;
+}
+
+// Appends without saving; true if it was new. Full = ignored.
+static bool _add(const char* name, size_t len)
+{
+    if (!_clean(name, len) || _find(name, len) >= 0) return false;
+    if (s_count == MAX_REGIONS) return false;
     memcpy(s_names[s_count], name, len);
     s_names[s_count][len] = '\0';
     s_count++;
@@ -63,10 +71,20 @@ void init()
     s_count = 0;
     Preferences p;
     if (!p.begin(NVS_NS, true)) return;
-    char buf[MAX_REGIONS * NAME_LEN] = {};
+    char buf[16 * NAME_LEN] = {};   // older builds kept up to 16
     p.getString(NVS_KEY, buf, sizeof(buf));
     p.end();
-    _addCsv(buf);
+    // Keep the newest MAX_REGIONS (the list is stored oldest first).
+    int total = 0;
+    for (const char* c = buf; *c; c++) if (*c == ',') total++;
+    if (buf[0]) total++;
+    const char* start = buf;
+    for (int skip = total - MAX_REGIONS; skip > 0 && start; skip--) {
+        start = strchr(start, ',');
+        if (start) start++;
+    }
+    _addCsv(start ? start : "");
+    if (total > MAX_REGIONS) _save();
 }
 
 int count() { return s_count; }
@@ -78,6 +96,32 @@ bool add(const char* name)
     if (!name || !_add(name, strlen(name))) return false;
     _save();
     OPS_LOG("Regions", "Catalog + %s (%d)", s_names[s_count - 1], s_count);
+    return true;
+}
+
+bool set(int i, const char* name)
+{
+    if (!name || i < 0 || i > s_count || i >= MAX_REGIONS) return false;
+    size_t len = strlen(name);
+    if (!_clean(name, len)) return false;
+    int at = _find(name, len);
+    if (at >= 0 && at != i) return false;   // already saved in another slot
+    memcpy(s_names[i], name, len);
+    s_names[i][len] = '\0';
+    if (i == s_count) s_count++;
+    _save();
+    OPS_LOG("Regions", "Catalog [%d] = %s", i, s_names[i]);
+    return true;
+}
+
+bool remove(int i)
+{
+    if (i < 0 || i >= s_count) return false;
+    OPS_LOG("Regions", "Catalog - %s", s_names[i]);
+    memmove(s_names[i], s_names[i + 1], (size_t)(s_count - i - 1) * NAME_LEN);
+    s_count--;
+    s_names[s_count][0] = '\0';
+    _save();
     return true;
 }
 

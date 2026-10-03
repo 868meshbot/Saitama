@@ -20,6 +20,10 @@ public:
     void init(const char* deviceName, uint32_t pinCode = 0);
     void stop();
 
+    // Uses a new pairing PIN from now on and removes every existing pairing
+    // (phones then pair again with the new PIN). No-op until init() ran.
+    void applyPin(uint32_t pinCode);
+
     // Called from UIScreen::tick() — deferred esp_ble_set_encryption().
     // Must run from the main loop, NOT inside any Bluedroid callback.
     void tick();
@@ -34,6 +38,7 @@ public:
 
 private:
     BTCompanionService() = default;
+    void _clearBonds();
     SerialBLEInterface _ble;
     bool _running    = false;
     bool _bleInited  = false;
