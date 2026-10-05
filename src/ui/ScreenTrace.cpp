@@ -42,6 +42,9 @@ static int s_numTargets = 0;
 
 // Currently selected dropdown index (0-based; -1 = nothing).
 static int s_selIdx = -1;
+// Set by showFor(): the target to preselect when the screen is built.
+static bool    s_wantSel = false;
+static uint8_t s_wantPrefix[4] = {};
 
 // Pending trace tracking.
 static uint32_t s_pendingTag = 0;
@@ -431,8 +434,13 @@ void ScreenTrace::_build() {
 
   if (s_numTargets > 0) {
     lv_dropdown_set_options(_dropdown, _buildDropOptions());
-    lv_dropdown_set_selected(_dropdown, 0);
     s_selIdx = 0;
+    if (s_wantSel) {
+      for (int i = 0; i < s_numTargets; i++)
+        if (memcmp(s_targets[i].pubKeyPrefix, s_wantPrefix, 4) == 0) { s_selIdx = i; break; }
+      s_wantSel = false;
+    }
+    lv_dropdown_set_selected(_dropdown, (uint16_t)s_selIdx);
   } else {
     lv_dropdown_set_options(_dropdown, "(no contacts)");
     s_selIdx = -1;
@@ -504,6 +512,12 @@ void ScreenTrace::_build() {
 }
 
 // ── show() ──────────────────────────────────────────────────────���────
+void ScreenTrace::showFor(const uint8_t pubKeyPrefix4[4]) {
+  memcpy(s_wantPrefix, pubKeyPrefix4, 4);
+  s_wantSel = true;
+  show();
+}
+
 void ScreenTrace::show() {
   lv_obj_t *old = _screen;
   _screen = nullptr;

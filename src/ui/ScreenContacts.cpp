@@ -7,6 +7,7 @@
 #include "ScreenTerminal.h"
 #include "QRPopup.h"
 #include "Theme.h"
+#include "ListFilter.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
 #include "../utils/Config.h"
@@ -24,6 +25,16 @@ namespace ops { namespace ui {
 lv_obj_t* ScreenContacts::_screen = nullptr;
 
 static constexpr int TOP_H = 28;
+// Type-to-filter box in the top bar: matches name or id.
+static listfilter::State s_filter;
+static void _filterRowText(int key, char* out, size_t outMax)
+{
+    Contact x;
+    if (!contacts::get(key, x)) { out[0] = '\0'; return; }
+    snprintf(out, outMax, "%s %02X%02X%02X%02X", x.name,
+             x.pubKeyPrefix[0], x.pubKeyPrefix[1], x.pubKeyPrefix[2], x.pubKeyPrefix[3]);
+}
+
 static int s_pendingContact = -1;
 
 // Dialog input widget pointers (valid only while a dialog is open)
@@ -163,9 +174,13 @@ void ScreenContacts::_build()
     lv_label_set_text(titleLbl, title);
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
+    s_filter.rowText = _filterRowText;
+    s_filter.onEsc   = [] { ScreenLauncher::show(); };
+    listfilter::create(bar, s_filter);
 
     // ── Contact list ──────────────────────────────────────────────────
     lv_obj_t* list = lv_obj_create(_screen);
+    s_filter.list = list;
     lv_obj_set_size(list, OPS_SCREEN_W, OPS_SCREEN_H - TOP_H);
     lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, TOP_H);
     lv_obj_set_style_bg_color(list, theme::BG, 0);
@@ -226,6 +241,7 @@ void ScreenContacts::_build()
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_add_event_cb(row, _onRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)si);
+        listfilter::setRowKey(row, si);
 
         // ── Avatar: auto-derived initials on a hashed-colour circle ────────
         lv_obj_t* avatar = lv_obj_create(row);
@@ -294,6 +310,9 @@ void ScreenContacts::_build()
             lv_obj_add_flag(blob, LV_OBJ_FLAG_HIDDEN);
         }
 
+        // ── Signal bars (last-heard RSSI), left of the star ───────────────
+        theme::addSignalBars(row, c.lastRssi);
+
         // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
         lv_obj_t* starLbl = lv_label_create(row);
         lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
@@ -322,6 +341,7 @@ void ScreenContacts::_build()
         }
     }
 
+    listfilter::apply(s_filter);   // keep the filter across rebuilds
     lv_scr_load(_screen);
     OPS_LOG("UI", "Contacts shown (%d)", cnt);
 }
@@ -461,7 +481,10 @@ static void _setFavAndClose(lv_event_t* e, bool fav)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     if (s_pendingContact >= 0) contacts::setFavourite(s_pendingContact, fav);
-    lv_obj_del_async(overlay);   // handler runs on one of its children
+    // Hide only: show() rebuilds the screen and deletes this overlay with it.
+    // (Deferred delete + deferred rebuild ran in the wrong order — LVGL runs
+    // the newest async call first — and freed the overlay twice: a crash.)
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
     s_pendingContact = -1;
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
 }
@@ -483,7 +506,10 @@ void ScreenContacts::_onPopupBlock(lv_event_t* e)
             ScreenLauncher::refreshRain();
         }
     }
-    lv_obj_del_async(overlay);
+    // Hide only: show() rebuilds the screen and deletes this overlay with it.
+    // (Deferred delete + deferred rebuild ran in the wrong order — LVGL runs
+    // the newest async call first — and freed the overlay twice: a crash.)
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
     s_pendingContact = -1;
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
 }
@@ -507,6 +533,7 @@ void ScreenContacts::_onPopupResetPath(lv_event_t* e)
         Contact c;
         if (contacts::get(s_pendingContact, c)) {
             ops::MeshService::instance().resetContactPath(c.pubKeyPrefix);
+            contacts::clearPath(s_pendingContact);   // or a reboot reloads the stale route
             char buf[64];
             snprintf(buf, sizeof(buf), "[contacts] Path reset: %s", c.name);
             ScreenTerminal::appendLine(buf);
@@ -526,7 +553,10 @@ void ScreenContacts::_onPopupDelete(lv_event_t* e)
         contacts::remove(s_pendingContact);
         s_pendingContact = -1;
     }
-    lv_obj_del_async(overlay);   // handler runs on one of its children
+    // Hide only: show() rebuilds the screen and deletes this overlay with it.
+    // (Deferred delete + deferred rebuild ran in the wrong order — LVGL runs
+    // the newest async call first — and freed the overlay twice: a crash.)
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
 }
 

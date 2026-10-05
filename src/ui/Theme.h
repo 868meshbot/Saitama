@@ -48,4 +48,9 @@ const lv_font_t* bodyFont12();  // replaces &lv_font_montserrat_12 in message ar
 // names/text can contain arbitrary or malformed bytes.
 void sanitizeText(char* s);
 
+// 3-bar signal icon from an RSSI: 3 green = strong (>= -80 dBm), 2 yellow =
+// medium (>= -100), 1 red = weak. rssi >= 0 means never heard: all grey.
+// Fixed colours (the green theme swaps GREEN to blue). Same bars as Show Path.
+lv_obj_t* addSignalBars(lv_obj_t* parent, float rssi);
+
 }}  // namespace ops::theme

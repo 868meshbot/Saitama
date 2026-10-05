@@ -4,7 +4,9 @@
 #include "ScreenRepeaters.h"
 #include "ScreenLauncher.h"
 #include "ScreenTerminal.h"
+#include "ScreenTrace.h"
 #include "Theme.h"
+#include "ListFilter.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Repeaters.h"
 #include "../utils/Crypto.h"
@@ -35,6 +37,16 @@ lv_obj_t* ScreenRepeaters::s_adminRespLbl     = nullptr;
 char      ScreenRepeaters::s_adminRespBuf[640] = {};
 
 static constexpr int REP_TOP_H = 28;
+// Type-to-filter box in the top bar: matches name or id.
+static listfilter::State s_filter;
+static void _filterRowText(int key, char* out, size_t outMax)
+{
+    Repeater x;
+    if (!repeaters::get(key, x)) { out[0] = '\0'; return; }
+    snprintf(out, outMax, "%s %02X%02X%02X%02X", x.name,
+             x.pubKeyPrefix[0], x.pubKeyPrefix[1], x.pubKeyPrefix[2], x.pubKeyPrefix[3]);
+}
+
 static int s_pendingRepeater = -1;
 
 // Dialog input widget pointers (valid only while a dialog is open)
@@ -142,9 +154,13 @@ void ScreenRepeaters::_build()
     lv_label_set_text(titleLbl, title);
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
+    s_filter.rowText = _filterRowText;
+    s_filter.onEsc   = [] { ScreenLauncher::show(); };
+    listfilter::create(bar, s_filter);
 
     // ── Repeater list ─────────────────────────────────────────────────
     lv_obj_t* list = lv_obj_create(_screen);
+    s_filter.list = list;
     lv_obj_set_size(list, OPS_SCREEN_W, OPS_SCREEN_H - REP_TOP_H);
     lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, REP_TOP_H);
     lv_obj_set_style_bg_color(list, theme::BG, 0);
@@ -210,6 +226,7 @@ void ScreenRepeaters::_build()
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_add_event_cb(row, _onRowClick, LV_EVENT_CLICKED, (void*)(intptr_t)si);
+        listfilter::setRowKey(row, si);
 
         // ── Icon: auto-derived initials on a hashed-colour circle ──────────
         lv_obj_t* avatar = lv_obj_create(row);
@@ -284,12 +301,16 @@ void ScreenRepeaters::_build()
         lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
 
         // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
+        // Signal bars (last-heard RSSI), left of the star
+        theme::addSignalBars(row, r.lastRssi);
+
         lv_obj_t* starLbl = lv_label_create(row);
         lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
         lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
         if (!r.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
     }
 
+    listfilter::apply(s_filter);   // keep the filter across rebuilds
     lv_scr_load(_screen);
     OPS_LOG("UI", "Repeaters shown (%d)", cnt);
 }
@@ -319,97 +340,138 @@ void ScreenRepeaters::_onRowClick(lv_event_t* e)
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(overlay, _onPopupClose, LV_EVENT_CLICKED, overlay);
 
-    // ── Action box (auto-height via LV_SIZE_CONTENT) ──────────────────
+    // ── Action box: name + id, then a 2-column grid of big buttons; Admin
+    //    Login and Close span both columns (same style as Contacts). ─────
+    static constexpr int BOX_W  = 296;
+    static constexpr int GAP    = 6;
+    static constexpr int BORDER = 1;
+    // Content width = box minus padding AND border, or two halves + the gap
+    // overflow it and flex wraps every button onto its own row.
+    static constexpr int FULL_W = BOX_W - 2 * 8 - 2 * BORDER;
+    static constexpr int HALF_W = (FULL_W - GAP) / 2;
+    static constexpr int BTN_H  = 30;
+
     lv_obj_t* box = lv_obj_create(overlay);
-    lv_obj_set_width(box, 200);
+    lv_obj_set_width(box, BOX_W);
     lv_obj_set_height(box, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_height(box, OPS_SCREEN_H - 16, 0);
     lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(box, theme::ACCENT, 0);
-    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_border_width(box, BORDER, 0);
     lv_obj_set_style_radius(box, 6, 0);
     lv_obj_set_style_pad_all(box, 8, 0);
-    lv_obj_set_style_pad_row(box, 5, 0);
-    lv_obj_set_scroll_dir(box, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(box, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(box, 4, 0);
+    lv_obj_set_style_pad_column(box, GAP, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);   // taps on the box don't close it
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Title (repeater name + key prefix)
-    char titleBuf[48];
-    snprintf(titleBuf, sizeof(titleBuf), "%s  %02X%02X%02X%02X",
-             r.name, r.pubKeyPrefix[0], r.pubKeyPrefix[1],
-             r.pubKeyPrefix[2], r.pubKeyPrefix[3]);
-    lv_obj_t* title = lv_label_create(box);
-    lv_label_set_text(title, titleBuf);
-    lv_obj_set_width(title, 180);
-    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(title, theme::TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+    // Title row: name left, id right
+    lv_obj_t* head = lv_obj_create(box);
+    lv_obj_set_size(head, FULL_W, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_pad_all(head, 0, 0);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    char shown[32];
+    snprintf(shown, sizeof(shown), "%s", r.name);
+    theme::sanitizeText(shown);
+    lv_obj_t* nameLbl = lv_label_create(head);
+    lv_label_set_text(nameLbl, shown);
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nameLbl, FULL_W - 80);
+    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+    char idBuf[12];
+    snprintf(idBuf, sizeof(idBuf), "%02X%02X%02X%02X",
+             r.pubKeyPrefix[0], r.pubKeyPrefix[1], r.pubKeyPrefix[2], r.pubKeyPrefix[3]);
+    lv_obj_t* idLbl = lv_label_create(head);
+    lv_label_set_text(idLbl, idBuf);
+    lv_obj_set_style_text_color(idLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(idLbl, &lv_font_montserrat_10, 0);
 
-    auto makeBtn = [&](const char* label, lv_color_t fg,
+    auto makeBtn = [&](const char* label, int w, lv_color_t fg,
                        lv_color_t bg, lv_color_t border,
-                       lv_event_cb_t cb)
+                       lv_event_cb_t cb, bool enabled = true)
     {
         lv_obj_t* btn = lv_btn_create(box);
         lv_group_remove_obj(btn);
-        lv_obj_set_size(btn, 184, 26);
+        lv_obj_set_size(btn, w, BTN_H);
         lv_obj_set_style_bg_color(btn, bg, 0);
         lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(btn, border, 0);
+        lv_obj_set_style_border_color(btn, enabled ? border : theme::BORDER, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, overlay);
+        lv_obj_set_style_pad_all(btn, 2, 0);
+        if (enabled) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, overlay);
+        else         lv_obj_add_state(btn, LV_STATE_DISABLED);
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, label);
-        lv_obj_set_style_text_color(lbl, fg, 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl, enabled ? fg : theme::BORDER, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
         lv_obj_center(lbl);
     };
 
     static const lv_color_t kAmber = LV_COLOR_MAKE(0xFF, 0xB3, 0x00);
-    const char* favLabel = r.favourite ? "Remove Favourite" : "Add Favourite";
-    lv_color_t  favFg    = r.favourite ? theme::TEXT_MUTED  : kAmber;
-    lv_color_t  favBd    = r.favourite ? theme::BORDER      : kAmber;
-
-    makeBtn("Admin Login",     theme::ACCENT,    theme::BG, theme::ACCENT, _onPopupAdmin);
-    makeBtn(favLabel,          favFg,            theme::BG, favBd,         _onPopupFavourite);
-    makeBtn("Set Path",        theme::TEXT,      theme::BG, theme::BORDER, _onPopupSetPath);
-    makeBtn("Reset Path",      theme::ORANGE,    theme::BG, theme::ORANGE, _onPopupResetPath);
-    makeBtn("Delete Repeater", theme::RED,       theme::BG, theme::RED,    _onPopupDelete);
-    makeBtn("Close",           theme::TEXT_MUTED,theme::BG, theme::BORDER, _onPopupClose);
+    makeBtn("Admin Login",      FULL_W, theme::TEXT,   theme::PRIMARY, theme::PRIMARY, _onPopupAdmin);
+    makeBtn("Add Favourite",    HALF_W, kAmber,        theme::BG, kAmber,        _onPopupFavourite, !r.favourite);
+    makeBtn("Remove Favourite", HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupUnfavourite, r.favourite);
+    makeBtn("Set Path",         HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupSetPath);
+    makeBtn("Reset Path",       HALF_W, theme::ORANGE, theme::BG, theme::ORANGE, _onPopupResetPath);
+    makeBtn("Trace Repeater",   HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupTrace);
+    makeBtn("Delete Repeater",  HALF_W, theme::RED,    theme::BG, theme::RED,    _onPopupDelete);
+    makeBtn("Close",            FULL_W, theme::TEXT_MUTED, theme::BG, theme::BORDER, _onPopupClose);
 }
 
 // ── _onPopupAdmin() — close popup and open admin login dialog ─────────
 void ScreenRepeaters::_onPopupAdmin(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     // s_pendingRepeater is preserved — dialog will read it
     _showAdminDialog();
 }
 
 // ── _onPopupFavourite() — toggle favourite and rebuild list ───────────
-void ScreenRepeaters::_onPopupFavourite(lv_event_t* e)
+static void _setRepFavAndClose(lv_event_t* e, bool fav)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    if (s_pendingRepeater >= 0) {
-        Repeater r;
-        if (repeaters::get(s_pendingRepeater, r))
-            repeaters::setFavourite(s_pendingRepeater, !r.favourite);
-    }
-    lv_obj_del(overlay);
+    if (s_pendingRepeater >= 0) repeaters::setFavourite(s_pendingRepeater, fav);
+    // Hide only: show() rebuilds the screen and deletes this overlay with it.
+    // (Deferred delete + deferred rebuild ran in the wrong order — LVGL runs
+    // the newest async call first — and freed the overlay twice: a crash.)
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
     s_pendingRepeater = -1;
     lv_async_call([](void*){ ScreenRepeaters::show(); }, nullptr);
+}
+
+void ScreenRepeaters::_onPopupFavourite(lv_event_t* e)   { _setRepFavAndClose(e, true); }
+void ScreenRepeaters::_onPopupUnfavourite(lv_event_t* e) { _setRepFavAndClose(e, false); }
+
+// ── _onPopupTrace() — open Trace with this repeater selected ──────────
+void ScreenRepeaters::_onPopupTrace(lv_event_t* e)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    Repeater r;
+    bool ok = s_pendingRepeater >= 0 && repeaters::get(s_pendingRepeater, r);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
+    s_pendingRepeater = -1;
+    if (!ok) return;
+    static uint8_t prefix[4];
+    memcpy(prefix, r.pubKeyPrefix, 4);
+    // Switch screens next frame, once this button's handler has returned.
+    lv_async_call([](void*) { ScreenTrace::showFor(prefix); }, nullptr);
 }
 
 // ── _onPopupSetPath() — close popup and open set-path dialog ──────────
 void ScreenRepeaters::_onPopupSetPath(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     // s_pendingRepeater is preserved — dialog will read it
     _showSetPathDialog();
 }
@@ -422,13 +484,14 @@ void ScreenRepeaters::_onPopupResetPath(lv_event_t* e)
         Repeater r;
         if (repeaters::get(s_pendingRepeater, r)) {
             ops::MeshService::instance().resetContactPath(r.pubKeyPrefix);
+            repeaters::clearPath(s_pendingRepeater);   // or a reboot reloads the stale route
             char buf[64];
             snprintf(buf, sizeof(buf), "[repeaters] Path reset: %s", r.name);
             ScreenTerminal::appendLine(buf);
             OPS_LOG("Repeaters", "Path reset for %s", r.name);
         }
     }
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingRepeater = -1;
 }
 
@@ -441,7 +504,10 @@ void ScreenRepeaters::_onPopupDelete(lv_event_t* e)
         repeaters::remove(s_pendingRepeater);
         s_pendingRepeater = -1;
     }
-    lv_obj_del(overlay);
+    // Hide only: show() rebuilds the screen and deletes this overlay with it.
+    // (Deferred delete + deferred rebuild ran in the wrong order — LVGL runs
+    // the newest async call first — and freed the overlay twice: a crash.)
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
     lv_async_call([](void*){ ScreenRepeaters::show(); }, nullptr);
 }
 
@@ -449,7 +515,7 @@ void ScreenRepeaters::_onPopupDelete(lv_event_t* e)
 void ScreenRepeaters::_onPopupClose(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingRepeater = -1;
 }
 
@@ -848,7 +914,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
 
     if (s_pendingRepeater < 0 || !s_pathInput) {
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its own Save button
         s_pendingRepeater = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -856,7 +922,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
 
     Repeater r;
     if (!repeaters::get(s_pendingRepeater, r)) {
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its own Save button
         s_pendingRepeater = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -868,7 +934,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
     // Validate: must be even, non-empty, and divisible by hash-size * 2
     if (hexLen == 0 || hexLen % 2 != 0) {
         ScreenTerminal::appendLine("[set path] Invalid hex: must be even number of chars");
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its own Save button
         s_pendingRepeater = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -883,7 +949,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
                  "[set path] Byte count (%d) not divisible by hash size (%d)",
                  byteCount, hashSzBytes);
         ScreenTerminal::appendLine(buf);
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its own Save button
         s_pendingRepeater = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -909,7 +975,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
         snprintf(buf, sizeof(buf), "[set path] FAILED — %s not in mesh table", r.name);
     ScreenTerminal::appendLine(buf);
 
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // called from its own Save button
     s_pendingRepeater = -1;
     s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
 }
@@ -918,7 +984,7 @@ void ScreenRepeaters::_onSetPathSave(lv_event_t* e)
 void ScreenRepeaters::_onSetPathCancel(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // called from its own Cancel button
     s_pendingRepeater = -1;
     s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
 }
@@ -987,7 +1053,7 @@ void ScreenRepeaters::_showAdminWaiting()
 void ScreenRepeaters::_onWaitCancel(lv_event_t* /*e*/)
 {
     s_awaitingLoginResult = false;
-    if (s_waitOverlay) { lv_obj_del(s_waitOverlay); s_waitOverlay = nullptr; }
+    if (s_waitOverlay) { lv_obj_del_async(s_waitOverlay);   /* its own Cancel button */ s_waitOverlay = nullptr; }
 }
 
 // ── tickLoginResult() — called every UIScreen tick ────────────────────
@@ -1332,7 +1398,7 @@ void ScreenRepeaters::_onAdminTerminal(lv_event_t* /*e*/)
     // Now safe to delete the admin panel — it is no longer the active screen.
     lv_obj_t* dying = s_adminScreen;
     s_adminScreen = nullptr;
-    if (dying) lv_obj_del(dying);
+    if (dying) lv_obj_del_async(dying);   // this handler runs on one of its buttons
 }
 
 // ── _onAdminReboot() — show confirmation dialog before rebooting ──────
@@ -1410,14 +1476,14 @@ void ScreenRepeaters::_onAdminReboot(lv_event_t* /*e*/)
 void ScreenRepeaters::_onAdminRebootCancel(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    if (overlay) lv_obj_del(overlay);
+    if (overlay) lv_obj_del_async(overlay);   // its own button
 }
 
 // ── _onAdminRebootConfirm() ───────────────────────────────────────────
 void ScreenRepeaters::_onAdminRebootConfirm(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    if (overlay) lv_obj_del(overlay);
+    if (overlay) lv_obj_del_async(overlay);   // its own button
 
     bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "reboot");
     OPS_LOG("Admin", "Reboot cmd %s to %s", ok ? "sent" : "FAILED", s_adminName);
@@ -1448,7 +1514,8 @@ void ScreenRepeaters::_onAdminClose(lv_event_t* /*e*/)
 
     ScreenRepeaters::show();   // loads new screen first
 
-    if (dying) lv_obj_del(dying);  // safe to delete now it's no longer active
+    // Deferred: this handler runs on a button inside the dying screen.
+    if (dying) lv_obj_del_async(dying);
 }
 
 // ── onContactResponse() — append to admin panel if open ───────────────

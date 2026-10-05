@@ -14,6 +14,8 @@ namespace ops { namespace ui {
 class ScreenTrace {
 public:
     static void show();
+    // Opens Trace with this contact/repeater already selected in the list.
+    static void showFor(const uint8_t pubKeyPrefix4[4]);
 
     // Called from UIScreen::tick() each frame.  Polls MeshService for a
     // completed TraceResult and refreshes the result area.
