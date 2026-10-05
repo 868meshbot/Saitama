@@ -7,6 +7,7 @@
 #include <Preferences.h>
 #include <SD.h>
 #include <ArduinoJson.h>
+#include "PsramJson.h"
 #include <cstring>
 #include <cstddef>
 
@@ -20,7 +21,7 @@ static int      s_count = 0;
 
 static void _saveToSD() {
     if (!sdcard::isMounted()) return;
-    JsonDocument doc;
+    JsonDocument doc(psramJson());   // PSRAM: a full list is tens of KB
     JsonArray arr = doc["contacts"].to<JsonArray>();
     for (int i = 0; i < s_count; i++) {
         JsonObject obj = arr.add<JsonObject>();
@@ -64,6 +65,11 @@ static void _saveToSD() {
             if (s_contacts[i].pathAt) obj["pathAt"] = s_contacts[i].pathAt;
         }
     }
+    // Never replace the file with a partial list.
+    if (doc.overflowed()) {
+        OPS_LOG("SD", "contacts.json NOT written: out of memory building it");
+        return;
+    }
     File f = SD.open("/ops/contacts.json", FILE_WRITE);
     if (!f) { OPS_LOG("SD", "contacts.json open failed"); return; }
     serializeJson(doc, f);
@@ -75,7 +81,7 @@ static bool _loadFromSD() {
     if (!sdcard::isMounted()) return false;
     File f = SD.open("/ops/contacts.json", FILE_READ);
     if (!f) return false;
-    JsonDocument doc;
+    JsonDocument doc(psramJson());   // PSRAM: a full list is tens of KB
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err) { OPS_LOG("SD", "contacts.json parse: %s", err.c_str()); return false; }
