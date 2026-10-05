@@ -68,6 +68,9 @@ public:
     static void noteChannelMessage(const char* sender, const char* channel,
                                    const char* text, float rssi, uint8_t hops);
 
+    // Rebuilds the home page's name list (e.g. after a contact is blocked).
+    static void refreshRain();
+
     // Called from UIScreen::tick() for each DM: line sender → this node.
     static void noteDirectMessage(const char* sender);
 

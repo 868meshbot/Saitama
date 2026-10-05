@@ -37,6 +37,8 @@ static void _saveToSD() {
             obj["unreadCnt"] = s_contacts[i].unreadCount;
         if (s_contacts[i].favourite)
             obj["fav"]  = true;
+        if (s_contacts[i].blocked)
+            obj["blocked"] = true;
         if (s_contacts[i].lat != 0 || s_contacts[i].lon != 0) {
             obj["lat"] = s_contacts[i].lat;
             obj["lon"] = s_contacts[i].lon;
@@ -106,6 +108,7 @@ static bool _loadFromSD() {
         c.hasUnread   = obj["unread"]    | false;
         c.unreadCount = (uint16_t)(obj["unreadCnt"] | (c.hasUnread ? 1 : 0));
         c.favourite = obj["fav"]       | false;
+        c.blocked   = obj["blocked"]   | false;
         c.lat       = obj["lat"]       | (int32_t)0;
         c.lon       = obj["lon"]       | (int32_t)0;
         c.outPathValid = false;
@@ -169,10 +172,12 @@ void contacts::add(const Contact& c)
     int idx;
     if (findByKey(c.pubKeyPrefix, &idx)) {
         bool     fav      = s_contacts[idx].favourite;
+        bool     blk      = s_contacts[idx].blocked;
         bool     unread   = s_contacts[idx].hasUnread;
         uint16_t unreadCnt = s_contacts[idx].unreadCount;
         s_contacts[idx] = c;
         s_contacts[idx].favourite   = fav;
+        s_contacts[idx].blocked     = blk;
         s_contacts[idx].hasUnread   = unread;
         s_contacts[idx].unreadCount = unreadCnt;
     } else if (s_count < contacts::CAPACITY) {
@@ -207,6 +212,29 @@ void contacts::setFavourite(int idx, bool fav)
     if (s_contacts[idx].favourite == fav) return;
     s_contacts[idx].favourite = fav;
     save();
+}
+
+void contacts::setBlocked(int idx, bool blocked)
+{
+    if (idx < 0 || idx >= s_count) return;
+    if (s_contacts[idx].blocked == blocked) return;
+    s_contacts[idx].blocked = blocked;
+    save();
+    OPS_LOG("Contacts", "%s %s", s_contacts[idx].name, blocked ? "blocked" : "unblocked");
+}
+
+bool contacts::isBlockedKey(const uint8_t prefix[4])
+{
+    int idx;
+    return prefix && findByKey(prefix, &idx) && s_contacts[idx].blocked;
+}
+
+bool contacts::isBlockedName(const char* name)
+{
+    if (!name || !name[0]) return false;
+    for (int i = 0; i < s_count; i++)
+        if (s_contacts[i].blocked && strcmp(s_contacts[i].name, name) == 0) return true;
+    return false;
 }
 
 void contacts::remove(int idx)

@@ -20,7 +20,8 @@ struct Contact {
     int32_t  lon;                // last-known longitude × 1 000 000 (0 = unknown)
     bool     outPathValid;       // true = outPath/outPathLen hold a usable route
     uint8_t  outPathLen;         // 0 = direct neighbour; 0xFF = unknown
-    uint8_t  _pathPad[2];
+    bool     blocked;            // messages hidden in chat; occupies former _pathPad[0]
+    uint8_t  _pathPad;
     uint8_t  outPath[64];        // MeshCore out_path bytes (MAX_PATH_SIZE = 64)
     // When outPath was confirmed (unix time): 0 = unknown age, PATH_AT_PINNED =
     // set by hand. Appended last so older NVS blobs still load as a prefix.
@@ -66,6 +67,11 @@ namespace contacts {
     void add(const Contact& c);              // insert or update by pubKeyPrefix
     void setUnread(int idx, bool unread);
     void setFavourite(int idx, bool fav);
+    void setBlocked(int idx, bool blocked);
+    // True if a saved contact with this key / name is blocked. Channel
+    // messages carry no key, so they can only be matched by name.
+    bool isBlockedKey(const uint8_t prefix[4]);
+    bool isBlockedName(const char* name);
     void remove(int idx);
     // Persist a MeshCore path for a contact. pathLen is MeshCore's encoded
     // out_path_len; learnedAt is when it was confirmed (or PATH_AT_PINNED).

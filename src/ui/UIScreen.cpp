@@ -905,6 +905,14 @@ void tick() {
         ops::RxMessage msg;
         int n = 0;
         while (n < 8 && ops::MeshService::instance().dequeueMessage(msg)) {
+            n++;
+            // Blocked contact: drop it before it is shown, logged, notified
+            // or counted. DMs match by key; channel messages (no key) by name.
+            if (msg.isDirect ? ops::contacts::isBlockedKey(msg.pubKeyPrefix)
+                             : ops::contacts::isBlockedName(msg.senderName)) {
+                OPS_LOG("Chat", "Hidden: message from blocked %s", msg.senderName);
+                continue;
+            }
             char line[220];
             if (msg.isDirect) {
                 snprintf(line, sizeof(line),
@@ -932,7 +940,6 @@ void tick() {
             ScreenTerminal::appendLine(line);
             ScreenHome::appendMessage(msg);
             if (ops::config::get().notifyPopup) _showNotifyPopup(msg);
-            n++;
         }
         ScreenHome::checkPendingAck();
     }

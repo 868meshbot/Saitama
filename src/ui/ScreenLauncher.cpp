@@ -320,6 +320,7 @@ static void _rainReloadNames()
     for (int i = 0; i < n; i++) {
         ops::PeerInfo p;
         if (!mesh.getPeer(i, p) || !p.name[0]) continue;
+        if (ops::contacts::isBlockedKey(p.pubKeyPrefix)) continue;   // hidden like their messages
         RainEntry e{};
         strncpy(e.name, p.name, sizeof(e.name) - 1);
         e.at   = p.lastSeen;
@@ -334,7 +335,7 @@ static void _rainReloadNames()
         _rainInsert(e);
     }
     for (int c = 0; c < s_chatCount; c++)
-        if (!chatMatched[c]) _rainInsert(s_chat[c]);
+        if (!chatMatched[c] && !ops::contacts::isBlockedName(s_chat[c].name)) _rainInsert(s_chat[c]);
     s_rainCount = s_rainStations;
 
     // Channels: the configured ones, most recently active first (ties keep
@@ -713,6 +714,19 @@ static void _buildHomePage(lv_obj_t* page, lv_event_cb_t onClick)
     }
 
     if (!s_rainTimer) s_rainTimer = lv_timer_create(_rainTick, RAIN_TICKMS, nullptr);
+}
+
+// ── refreshRain() ────────────────────────────────────────────────────
+void ScreenLauncher::refreshRain()
+{
+    s_rainSerial = 0xFFFFFFFFu;   // rebuild the name list on the next tick
+    for (int i = 0; i < RAIN_DROPS; i++) {
+        if (s_drops[i].src < 0 || s_drops[i].isChan) continue;
+        if (ops::contacts::isBlockedName(s_drops[i].name)) {
+            s_drops[i].src = -1;
+            lv_obj_add_flag(s_drops[i].lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 // ── Message hooks (from UIScreen::tick) ─────────────────────────────

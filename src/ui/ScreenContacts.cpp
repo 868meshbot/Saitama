@@ -298,7 +298,28 @@ void ScreenContacts::_build()
         lv_obj_t* starLbl = lv_label_create(row);
         lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
         lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
-        if (!c.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
+        if (!c.favourite || c.blocked) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
+
+        // ── Blocked: red no-entry sign in the star's place ─────────────────
+        // Drawn (red disc + white bar) — the emoji set has no no-entry glyph.
+        if (c.blocked) {
+            lv_obj_t* sign = lv_obj_create(row);
+            lv_obj_set_size(sign, 16, 16);
+            lv_obj_set_style_radius(sign, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_color(sign, theme::RED, 0);
+            lv_obj_set_style_bg_opa(sign, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(sign, 0, 0);
+            lv_obj_set_style_pad_all(sign, 0, 0);
+            lv_obj_clear_flag(sign, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t* bar = lv_obj_create(sign);
+            lv_obj_set_size(bar, 10, 3);
+            lv_obj_set_style_radius(bar, 1, 0);
+            lv_obj_set_style_bg_color(bar, lv_color_white(), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(bar, 0, 0);
+            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_center(bar);
+        }
     }
 
     lv_scr_load(_screen);
@@ -331,75 +352,98 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(overlay, _onPopupClose, LV_EVENT_CLICKED, overlay);
 
-    // ── Action box (auto-height) ──────────────────────────────────────
+    // ── Action box: name + id, then a 2-column grid of big buttons; Direct
+    //    Message and Close span both columns. ──────────────────────────
+    static constexpr int BOX_W  = 296;
+    static constexpr int GAP    = 6;
+    static constexpr int FULL_W = BOX_W - 2 * 8;              // inside padding
+    static constexpr int HALF_W = (FULL_W - GAP) / 2;
+    static constexpr int BTN_H  = 30;
+
     lv_obj_t* box = lv_obj_create(overlay);
-    lv_obj_set_width(box, 200);
+    lv_obj_set_width(box, BOX_W);
     lv_obj_set_height(box, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_height(box, OPS_SCREEN_H - 16, 0);
     lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(box, theme::ACCENT, 0);
     lv_obj_set_style_border_width(box, 1, 0);
     lv_obj_set_style_radius(box, 6, 0);
     lv_obj_set_style_pad_all(box, 8, 0);
-    lv_obj_set_style_pad_row(box, 5, 0);
-    lv_obj_set_scroll_dir(box, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(box, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(box, 4, 0);
+    lv_obj_set_style_pad_column(box, GAP, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);   // taps on the box don't close it
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Title (contact name + key prefix)
-    char titleBuf[48];
-    snprintf(titleBuf, sizeof(titleBuf), "%s  %02X%02X%02X%02X",
-             c.name, c.pubKeyPrefix[0], c.pubKeyPrefix[1],
-             c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
-    lv_obj_t* title = lv_label_create(box);
-    lv_label_set_text(title, titleBuf);
-    lv_obj_set_width(title, 180);
-    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(title, theme::TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+    // Title row: callsign left, id right
+    lv_obj_t* head = lv_obj_create(box);
+    lv_obj_set_size(head, FULL_W, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_pad_all(head, 0, 0);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    char shown[32];
+    snprintf(shown, sizeof(shown), "%s", c.name);
+    theme::sanitizeText(shown);
+    lv_obj_t* nameLbl = lv_label_create(head);
+    lv_label_set_text(nameLbl, shown);
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nameLbl, FULL_W - 80);
+    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+    char idBuf[12];
+    snprintf(idBuf, sizeof(idBuf), "%02X%02X%02X%02X",
+             c.pubKeyPrefix[0], c.pubKeyPrefix[1], c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
+    lv_obj_t* idLbl = lv_label_create(head);
+    lv_label_set_text(idLbl, idBuf);
+    lv_obj_set_style_text_color(idLbl, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(idLbl, &lv_font_montserrat_10, 0);
 
-    auto makeBtn = [&](const char* label, lv_color_t fg,
+    auto makeBtn = [&](const char* label, int w, lv_color_t fg,
                        lv_color_t bg, lv_color_t border,
-                       lv_event_cb_t cb)
+                       lv_event_cb_t cb, bool enabled = true)
     {
         lv_obj_t* btn = lv_btn_create(box);
         lv_group_remove_obj(btn);
-        lv_obj_set_size(btn, 184, 26);
+        lv_obj_set_size(btn, w, BTN_H);
         lv_obj_set_style_bg_color(btn, bg, 0);
         lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(btn, border, 0);
+        lv_obj_set_style_border_color(btn, enabled ? border : theme::BORDER, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, overlay);
+        lv_obj_set_style_pad_all(btn, 2, 0);
+        if (enabled) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, overlay);
+        else         lv_obj_add_state(btn, LV_STATE_DISABLED);
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, label);
-        lv_obj_set_style_text_color(lbl, fg, 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl, enabled ? fg : theme::BORDER, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
         lv_obj_center(lbl);
     };
 
     static const lv_color_t kAmber = LV_COLOR_MAKE(0xFF, 0xB3, 0x00);
-    const char* favLabel = c.favourite ? "Remove Favourite" : "Add Favourite";
-    lv_color_t  favFg    = c.favourite ? theme::TEXT_MUTED  : kAmber;
-    lv_color_t  favBd    = c.favourite ? theme::BORDER      : kAmber;
-
-    makeBtn("Direct Message", theme::TEXT,  theme::PRIMARY, theme::PRIMARY, _onPopupDM);
-    makeBtn(favLabel,         favFg,        theme::BG,      favBd,          _onPopupFavourite);
-    makeBtn("Share QR",       theme::ACCENT,theme::BG,      theme::ACCENT,  _onPopupShareQR);
-    makeBtn("Set Path",       theme::TEXT,  theme::BG,      theme::BORDER,  _onPopupSetPath);
-    makeBtn("Reset Path",     theme::ORANGE,theme::BG,      theme::ORANGE,  _onPopupResetPath);
-    makeBtn("Delete Contact", theme::RED,   theme::BG,      theme::RED,     _onPopupDelete);
-    makeBtn("Close",     theme::TEXT_MUTED, theme::BG,      theme::BORDER,  _onPopupClose);
+    makeBtn("Direct Message",   FULL_W, theme::TEXT,   theme::PRIMARY, theme::PRIMARY, _onPopupDM);
+    makeBtn("Share QR",         HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupShareQR);
+    makeBtn("Ping",             HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupPing);
+    makeBtn("Favourite",        HALF_W, kAmber,        theme::BG, kAmber,        _onPopupFavourite, !c.favourite);
+    makeBtn("Remove Favourite", HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupUnfavourite, c.favourite);
+    makeBtn("Set Path",         HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupSetPath);
+    makeBtn("Reset Path",       HALF_W, theme::ORANGE, theme::BG, theme::ORANGE, _onPopupResetPath);
+    makeBtn("Delete Contact",   HALF_W, theme::RED,    theme::BG, theme::RED,    _onPopupDelete);
+    makeBtn(c.blocked ? "Unblock Contact" : "Block Contact",
+                                HALF_W, theme::RED,    theme::BG, theme::RED,    _onPopupBlock);
+    makeBtn("Close",            FULL_W, theme::TEXT_MUTED, theme::BG, theme::BORDER, _onPopupClose);
 }
 
 // ── _onPopupDM() ──────────────────────────────────────────────────────
 void ScreenContacts::_onPopupDM(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     Contact c;
     bool ok = (s_pendingContact >= 0) && contacts::get(s_pendingContact, c);
     s_pendingContact = -1;
@@ -409,25 +453,45 @@ void ScreenContacts::_onPopupDM(lv_event_t* e)
         ScreenHome::show();
 }
 
-// ── _onPopupFavourite() — toggle favourite and rebuild list ───────────
-void ScreenContacts::_onPopupFavourite(lv_event_t* e)
+// ── _onPopupFavourite() / _onPopupUnfavourite() — set and rebuild list ─
+static void _setFavAndClose(lv_event_t* e, bool fav)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    if (s_pendingContact >= 0) contacts::setFavourite(s_pendingContact, fav);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
+    s_pendingContact = -1;
+    lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
+}
+
+void ScreenContacts::_onPopupUnfavourite(lv_event_t* e) { _setFavAndClose(e, false); }
+
+// ── _onPopupBlock() — toggle blocked: messages hidden in chat ─────────
+void ScreenContacts::_onPopupBlock(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     if (s_pendingContact >= 0) {
         Contact c;
-        if (contacts::get(s_pendingContact, c))
-            contacts::setFavourite(s_pendingContact, !c.favourite);
+        if (contacts::get(s_pendingContact, c)) {
+            contacts::setBlocked(s_pendingContact, !c.blocked);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "[contacts] %s %s", c.name,
+                     c.blocked ? "unblocked" : "blocked - messages hidden");
+            ScreenTerminal::appendLine(buf);
+            ScreenLauncher::refreshRain();
+        }
     }
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);
     s_pendingContact = -1;
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
 }
+
+void ScreenContacts::_onPopupFavourite(lv_event_t* e) { _setFavAndClose(e, true); }
 
 // ── _onPopupSetPath() — close popup and open set-path dialog ──────────
 void ScreenContacts::_onPopupSetPath(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     // s_pendingContact preserved — dialog reads it
     _showSetPathDialog();
 }
@@ -446,7 +510,7 @@ void ScreenContacts::_onPopupResetPath(lv_event_t* e)
             OPS_LOG("Contacts", "Path reset for %s", c.name);
         }
     }
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingContact = -1;
 }
 
@@ -459,15 +523,171 @@ void ScreenContacts::_onPopupDelete(lv_event_t* e)
         contacts::remove(s_pendingContact);
         s_pendingContact = -1;
     }
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
+}
+
+// ── Ping ─────────────────────────────────────────────────────────────
+// A TRACE along the contact's known route, out and back (see
+// MeshService::sendTrace). Shows round-trip time, hop count and the weakest
+// link's SNR. Polled by a short-lived LVGL timer while the box is open.
+
+static lv_obj_t*  s_pingBox   = nullptr;   // overlay
+static lv_obj_t*  s_pingLbl   = nullptr;
+static lv_timer_t* s_pingTimer = nullptr;
+static uint32_t   s_pingTag   = 0;
+static uint32_t   s_pingSent  = 0;
+static int        s_pingHops  = 0;
+static char       s_pingName[32];
+static constexpr uint32_t PING_TIMEOUT_MS = 20000;
+
+static void _pingStop()
+{
+    if (s_pingTimer) { lv_timer_del(s_pingTimer); s_pingTimer = nullptr; }
+    s_pingTag = 0;
+}
+
+static void _onPingClose(lv_event_t* /*e*/)
+{
+    _pingStop();
+    if (s_pingBox) lv_obj_del_async(s_pingBox);   // called from its own button
+    s_pingBox = nullptr;
+    s_pingLbl = nullptr;
+}
+
+static void _pingSet(const char* text, lv_color_t col)
+{
+    if (!s_pingLbl) return;
+    lv_label_set_text(s_pingLbl, text);
+    lv_obj_set_style_text_color(s_pingLbl, col, 0);
+}
+
+static void _pingTick(lv_timer_t*)
+{
+    // The box goes with the Contacts screen if that is rebuilt meanwhile.
+    if (!s_pingLbl || !lv_obj_is_valid(s_pingLbl)) {
+        s_pingBox = s_pingLbl = nullptr;
+        _pingStop();
+        return;
+    }
+    ops::TraceResult r;
+    while (ops::MeshService::instance().pollTraceResult(r)) {
+        if (r.tag != s_pingTag) continue;
+        uint32_t rtt = millis() - s_pingSent;
+        float worst = r.rxSnr / 4.0f;
+        for (int i = 0; i < r.numSnrs && i < 64; i++)
+            if (r.snrs[i] / 4.0f < worst) worst = r.snrs[i] / 4.0f;
+        char buf[160];
+        snprintf(buf, sizeof(buf),
+                 "%s replied in %.1f s\n%d hop%s out, back the same way\n"
+                 "Weakest link: %.1f dB SNR",
+                 s_pingName, rtt / 1000.0f, s_pingHops, s_pingHops == 1 ? "" : "s", (double)worst);
+        _pingSet(buf, theme::GREEN);
+        _pingStop();
+        return;
+    }
+    if (millis() - s_pingSent > PING_TIMEOUT_MS) {
+        char buf[120];
+        snprintf(buf, sizeof(buf),
+                 "No reply from %s in %lu s.\nThe route may have changed - try Reset Path, "
+                 "then send a DM.", s_pingName, (unsigned long)(PING_TIMEOUT_MS / 1000));
+        _pingSet(buf, theme::ORANGE);
+        _pingStop();
+    }
+}
+
+static void _openPingBox(const char* text, lv_color_t col)
+{
+    s_pingBox = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_pingBox, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(s_pingBox, 0, 0);
+    lv_obj_set_style_bg_color(s_pingBox, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_pingBox, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(s_pingBox, 0, 0);
+    lv_obj_clear_flag(s_pingBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* box = lv_obj_create(s_pingBox);
+    lv_obj_set_size(box, 270, LV_SIZE_CONTENT);
+    lv_obj_center(box);
+    lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(box, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 6, 0);
+    lv_obj_set_style_pad_all(box, 10, 0);
+    lv_obj_set_style_pad_row(box, 8, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(box);
+    lv_label_set_text(title, "Ping");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    s_pingLbl = lv_label_create(box);
+    lv_obj_set_width(s_pingLbl, 250);
+    lv_label_set_long_mode(s_pingLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_pingLbl, theme::bodyFont12(), 0);
+    _pingSet(text, col);
+
+    lv_obj_t* btn = lv_btn_create(box);
+    lv_group_remove_obj(btn);
+    lv_obj_set_size(btn, 250, 30);
+    lv_obj_set_style_bg_color(btn, theme::BG, 0);
+    lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_radius(btn, 4, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_add_event_cb(btn, _onPingClose, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(btn);
+    lv_label_set_text(l, "Close");
+    lv_obj_set_style_text_color(l, theme::TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+    lv_obj_center(l);
+}
+
+void ScreenContacts::_onPopupPing(lv_event_t* e)
+{
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
+    Contact c;
+    bool ok = s_pendingContact >= 0 && contacts::get(s_pendingContact, c);
+    s_pendingContact = -1;
+    if (!ok) return;
+
+    _pingStop();
+    snprintf(s_pingName, sizeof(s_pingName), "%s", c.name);
+    theme::sanitizeText(s_pingName);
+    auto& mesh = ops::MeshService::instance();
+    char buf[160];
+    if (!mesh.hasPathTo(c.pubKeyPrefix)) {
+        snprintf(buf, sizeof(buf),
+                 "No route to %s is known yet.\nSend a DM first (its reply sets the route), "
+                 "or use Set Path.", s_pingName);
+        _openPingBox(buf, theme::ORANGE);
+        return;
+    }
+    uint32_t tag = 0;
+    int nodes = 0;
+    if (!mesh.sendTrace(c.pubKeyPrefix, tag, nodes)) {
+        snprintf(buf, sizeof(buf), "Couldn't send a ping to %s.", s_pingName);
+        _openPingBox(buf, theme::RED);
+        return;
+    }
+    s_pingTag  = tag;
+    s_pingSent = millis();
+    s_pingHops = nodes;
+    snprintf(buf, sizeof(buf), "Pinging %s...", s_pingName);
+    _openPingBox(buf, theme::TEXT_MUTED);
+    s_pingTimer = lv_timer_create(_pingTick, 100, nullptr);
 }
 
 // ── _onPopupClose() ───────────────────────────────────────────────────
 void ScreenContacts::_onPopupClose(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingContact = -1;
 }
 
@@ -494,7 +714,7 @@ static void _urlEncode(const char* src, char* dst, int dstMax)
 void ScreenContacts::_onPopupShareQR(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
 
     Contact c;
     if (s_pendingContact < 0 || !contacts::get(s_pendingContact, c)) {
@@ -716,7 +936,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
 
     if (s_pendingContact < 0 || !s_pathInput) {
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its Save button
         s_pendingContact = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -724,7 +944,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
 
     Contact c;
     if (!contacts::get(s_pendingContact, c)) {
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its Save button
         s_pendingContact = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -735,7 +955,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
 
     if (hexLen == 0 || hexLen % 2 != 0) {
         ScreenTerminal::appendLine("[set path] Invalid hex: must be even number of chars");
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its Save button
         s_pendingContact = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -750,7 +970,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
                  "[set path] Byte count (%d) not divisible by hash size (%d)",
                  byteCount, hashSzBytes);
         ScreenTerminal::appendLine(buf);
-        lv_obj_del(overlay);
+        lv_obj_del_async(overlay);   // called from its Save button
         s_pendingContact = -1;
         s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
         return;
@@ -775,7 +995,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
         snprintf(buf, sizeof(buf), "[set path] FAILED — %s not in mesh table", c.name);
     ScreenTerminal::appendLine(buf);
 
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingContact = -1;
     s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
 }
@@ -784,7 +1004,7 @@ void ScreenContacts::_onSetPathSave(lv_event_t* e)
 void ScreenContacts::_onSetPathCancel(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // handler runs on one of its children
     s_pendingContact = -1;
     s_pathInput = s_hashSz1Btn = s_hashSz2Btn = nullptr;
 }
