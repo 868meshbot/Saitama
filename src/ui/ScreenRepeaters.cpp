@@ -1026,7 +1026,7 @@ void ScreenRepeaters::onLoginResult(bool ok)
         lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* box = lv_obj_create(overlay);
-        lv_obj_set_width(box, 210);
+        lv_obj_set_width(box, 290);
         lv_obj_set_height(box, LV_SIZE_CONTENT);
         lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
@@ -1043,20 +1043,21 @@ void ScreenRepeaters::onLoginResult(bool ok)
         snprintf(titleBuf, sizeof(titleBuf), "Admin: %s", s_adminName);
         lv_obj_t* titleLbl = lv_label_create(box);
         lv_label_set_text(titleLbl, titleBuf);
-        lv_obj_set_width(titleLbl, 188);
+        lv_obj_set_width(titleLbl, 268);
         lv_label_set_long_mode(titleLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
 
         lv_obj_t* errLbl = lv_label_create(box);
-        lv_label_set_text(errLbl, "Login failed or timed out.\nCheck password and try again.");
-        lv_obj_set_width(errLbl, 188);
+        lv_label_set_text(errLbl, "Login failed or timed out.\nCheck the password, or Reset & Retry if "
+                                  "the route may have changed (e.g. you moved).");
+        lv_obj_set_width(errLbl, 268);
         lv_label_set_long_mode(errLbl, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_color(errLbl, theme::RED, 0);
         lv_obj_set_style_text_font(errLbl, &lv_font_montserrat_10, 0);
 
         lv_obj_t* btnRow = lv_obj_create(box);
-        lv_obj_set_size(btnRow, 188, 30);
+        lv_obj_set_size(btnRow, 268, 34);
         lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(btnRow, 0, 0);
         lv_obj_set_style_pad_all(btnRow, 0, 0);
@@ -1069,7 +1070,7 @@ void ScreenRepeaters::onLoginResult(bool ok)
         {
             lv_obj_t* btn = lv_btn_create(btnRow);
             lv_group_remove_obj(btn);
-            lv_obj_set_size(btn, 88, 26);
+            lv_obj_set_size(btn, 84, 30);
             lv_obj_set_style_bg_color(btn, theme::BG, 0);
             lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
             lv_obj_set_style_border_color(btn, border, 0);
@@ -1084,18 +1085,34 @@ void ScreenRepeaters::onLoginResult(bool ok)
             lv_obj_center(lbl);
         };
 
-        makeErrBtn("OK",    theme::TEXT_MUTED, theme::BORDER, [](lv_event_t* ev){
-            lv_obj_del((lv_obj_t*)lv_event_get_user_data(ev));
+        // The handlers run on a child of the overlay: delete it async.
+        makeErrBtn("Cancel", theme::TEXT_MUTED, theme::BORDER, [](lv_event_t* ev){
+            lv_obj_del_async((lv_obj_t*)lv_event_get_user_data(ev));
         });
-        makeErrBtn("Retry", theme::ACCENT,     theme::ACCENT, _onRetryLogin);
+        makeErrBtn("Retry",         theme::ACCENT, theme::ACCENT, _onRetryLogin);
+        makeErrBtn("Reset & Retry", theme::ORANGE, theme::ORANGE, _onResetRetryLogin);
     }
+}
+
+// ── _onResetRetryLogin() — forget the route, then retry (floods) ─────
+// A stale route (moved, a hop changed) makes every retry go down the same
+// dead path. With no route the login floods, and the reply brings a new one.
+void ScreenRepeaters::_onResetRetryLogin(lv_event_t* e)
+{
+    ops::MeshService::instance().resetContactPath(s_adminPrefix);
+    int idx;
+    if (ops::repeaters::findByKey(s_adminPrefix, &idx)) ops::repeaters::clearPath(idx);
+    char buf[80];
+    snprintf(buf, sizeof(buf), "[repeaters] Path reset for %s - retrying by flood", s_adminName);
+    ScreenTerminal::appendLine(buf);
+    _onRetryLogin(e);
 }
 
 // ── _onRetryLogin() — re-attempt login with saved credentials ─────────
 void ScreenRepeaters::_onRetryLogin(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_del(overlay);
+    lv_obj_del_async(overlay);   // this handler runs on one of its buttons
 
     bool sent = ops::MeshService::instance().sendRepeaterLogin(s_adminPrefix, s_adminPass);
     if (sent) {

@@ -46,6 +46,7 @@ private:
     static void _onAdminOk      (lv_event_t* e);
     static void _onAdminCancel  (lv_event_t* e);
     static void _onRetryLogin   (lv_event_t* e);
+    static void _onResetRetryLogin(lv_event_t* e);   // reset route, then retry
 
     // Admin panel action button callbacks
     static void _onAdminClockSync    (lv_event_t* e);
