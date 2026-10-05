@@ -1265,12 +1265,41 @@ void ScreenHome::_showList()
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-        lv_obj_t* nameLbl = lv_label_create(col);
+        // Name, with the channel's flood scope stitched on the right in the
+        // subtitle's smaller font: "#Hike ↵ AU". Accent = the channel's own
+        // scope; muted = inherited default scope, or * (unscoped).
+        lv_obj_t* nameRow = lv_obj_create(col);
+        lv_obj_set_size(nameRow, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(nameRow, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(nameRow, 0, 0);
+        lv_obj_set_style_pad_all(nameRow, 0, 0);
+        lv_obj_set_style_pad_column(nameRow, 5, 0);
+        lv_obj_clear_flag(nameRow, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(nameRow, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_set_flex_flow(nameRow, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(nameRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+
+        lv_obj_t* nameLbl = lv_label_create(nameRow);
         lv_label_set_text(nameLbl, name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_obj_set_width(nameLbl, LV_SIZE_CONTENT);
+        lv_obj_set_style_max_width(nameLbl, LV_PCT(70), 0);
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+
+        if (chIdx >= 0 && chIdx < 10) {
+            const char* own = cfg.channels[chIdx].scope;
+            const char* def = cfg.scopeTag;
+            const char* eff = own[0] ? own : (def[0] ? def : "*");
+            char scopeBuf[24];
+            snprintf(scopeBuf, sizeof(scopeBuf), LV_SYMBOL_NEW_LINE " %s", eff);
+            lv_obj_t* scopeLbl = lv_label_create(nameRow);
+            lv_label_set_text(scopeLbl, scopeBuf);
+            // LV_SYMBOL_* lives in Montserrat, not the emoji-capable body font.
+            lv_obj_set_style_text_font(scopeLbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(scopeLbl, own[0] ? theme::ACCENT : theme::TEXT_MUTED, 0);
+            lv_obj_set_style_pad_bottom(scopeLbl, 1, 0);
+        }
 
         lv_obj_t* subLbl = lv_label_create(col);
         lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
@@ -2213,7 +2242,14 @@ void ScreenHome::_onScopeSave(lv_event_t* /*e*/)
         ops::MeshService::instance().syncChannel(ch);
         OPS_LOG("Chat", "Channel %d scope: %s", ch + 1, scope[0] ? scope : "(default)");
     }
-    _closeScopeDialog();
+    // Rebuild the list so the row's scope tag updates. The rebuild deletes
+    // the old screen and this dialog with it, so only hide it here (a
+    // pending lv_obj_del_async would then free it twice).
+    if (s_scopeOverlay) lv_obj_add_flag(s_scopeOverlay, LV_OBJ_FLAG_HIDDEN);
+    s_scopeOverlay = nullptr;
+    s_scopeDd      = nullptr;
+    s_scopeCh      = -1;
+    if (s_mode == MODE_LIST) lv_async_call([](void*) { _showList(); }, nullptr);
 }
 
 void ScreenHome::_onScopeExit(lv_event_t* /*e*/)
@@ -2578,41 +2614,6 @@ static bool _findRepeaterByHash(const uint8_t* hashBytes, int hashSz,
     return found;
 }
 
-// 3-bar signal icon: 3 green = strong, 2 yellow = medium, 1 red = weak.
-// Fixed colours rather than theme ones — the green theme swaps GREEN to blue.
-// Thresholds match the RSSI colouring on ScreenRepeaters.
-static void _addSignalBars(lv_obj_t* parent, float rssi)
-{
-    static constexpr int BAR_W = 4, BAR_GAP = 2, BAR_H_MAX = 14;
-    int lit;
-    lv_color_t col;
-    if      (rssi >= -80.0f)  { lit = 3; col = lv_color_hex(0x3FB950); }
-    else if (rssi >= -100.0f) { lit = 2; col = lv_color_hex(0xE3B341); }
-    else                      { lit = 1; col = lv_color_hex(0xF85149); }
-
-    lv_obj_t* icon = lv_obj_create(parent);
-    lv_obj_set_size(icon, 3 * BAR_W + 2 * BAR_GAP, BAR_H_MAX);
-    lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(icon, 0, 0);
-    lv_obj_set_style_pad_all(icon, 0, 0);
-    lv_obj_clear_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(icon, LV_ALIGN_RIGHT_MID, 0, 0);
-
-    for (int i = 0; i < 3; i++) {
-        int h = 6 + i * 4;   // 6, 10, 14 px
-        lv_obj_t* bar = lv_obj_create(icon);
-        lv_obj_set_size(bar, BAR_W, h);
-        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, i * (BAR_W + BAR_GAP), 0);
-        lv_obj_set_style_radius(bar, 1, 0);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_set_style_pad_all(bar, 0, 0);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(bar, i < lit ? col : theme::BORDER, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-    }
-}
-
 void ScreenHome::_onBubbleShowPath(lv_event_t* /*e*/)
 {
     // Deleting our own parent from its child's handler — must be async.
@@ -2711,7 +2712,7 @@ void ScreenHome::_openPathView()
         }
 
         if (rssi != 0.0f) {
-            _addSignalBars(row, rssi);
+            theme::addSignalBars(row, rssi);
             char dbm[12];
             snprintf(dbm, sizeof(dbm), "%ddBm", (int)rssi);
             lv_obj_t* dbmLbl = lv_label_create(row);
