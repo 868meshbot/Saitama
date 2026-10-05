@@ -61,7 +61,11 @@ void end(Section s)
     uint32_t ms = (micros() - s_secStartUs[s]) / 1000;
     if (ms > s_secCurMax[s]) s_secCurMax[s] = ms;
     // Serial is non-blocking (setTxTimeoutMs(0)), so this can't add a stall.
-    if (ms > 100) OPS_LOG("Loop", "slow %s: %lu ms", sectionName(s), (unsigned long)ms);
+    // UI / Draw are not logged: a screen change or full redraw routinely
+    // takes 100-200 ms and only filled the log. Their maxima are still
+    // tracked (sectionRecentMaxMs) for the Signal screen.
+    if (ms > 100 && s != UI && s != UI_DRAW)
+        OPS_LOG("Loop", "slow %s: %lu ms", sectionName(s), (unsigned long)ms);
 }
 
 uint32_t sectionRecentMaxMs(Section s)
