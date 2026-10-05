@@ -157,6 +157,7 @@ extern const lv_img_dsc_t emoji_car;
 extern const lv_img_dsc_t emoji_moto;
 extern const lv_img_dsc_t emoji_ship;
 extern const lv_img_dsc_t emoji_palm;
+extern const lv_img_dsc_t emoji_tree;
 extern const lv_img_dsc_t emoji_house;
 extern const lv_img_dsc_t emoji_house2;
 extern const lv_img_dsc_t emoji_sun;
@@ -334,6 +335,7 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F3CDu, &emoji_moto, "motorcycle bike" },
     { 0x1F6A2u, &emoji_ship, "ship boat sea" },
     { 0x1F334u, &emoji_palm, "palm tree beach" },
+    { 0x1F333u, &emoji_tree, "deciduous tree round" },
     { 0x1F3E0u, &emoji_house, "house home" },
     { 0x1F3E1u, &emoji_house2, "house garden home" },
     { 0x02600u, &emoji_sun,            "sun sunny clear sky weather" },
@@ -356,4 +358,4 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F1EEu, &emoji_ireland, "ireland flag" },
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
 };
-static const int kOpsEmojiCount = 169;
+static const int kOpsEmojiCount = 170;

@@ -188,6 +188,7 @@ EMOJI = [
     ("moto",          0x1F3CD, "1f3cd", "motorcycle bike"),
     ("ship",          0x1F6A2, "1f6a2", "ship boat sea"),
     ("palm",          0x1F334, "1f334", "palm tree beach"),
+    ("tree",          0x1F333, "1f333", "deciduous tree round"),
     ("house",         0x1F3E0, "1f3e0", "house home"),
     ("house2",        0x1F3E1, "1f3e1", "house garden home"),
     ("robot_face",    0x1F916, "1f916", "robot machine face"),  # duplicate guard handled below
