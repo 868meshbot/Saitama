@@ -202,7 +202,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.4.1** (compiled and tested on LilyGo T-Deck Plus)
+Current version: **1.4.2** (compiled and tested on LilyGo T-Deck Plus)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
