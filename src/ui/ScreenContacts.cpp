@@ -356,7 +356,10 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     //    Message and Close span both columns. ──────────────────────────
     static constexpr int BOX_W  = 296;
     static constexpr int GAP    = 6;
-    static constexpr int FULL_W = BOX_W - 2 * 8;              // inside padding
+    static constexpr int BORDER = 1;
+    // Content width = box minus padding AND border; two halves + the gap
+    // must fit in it or flex wraps every button onto its own row.
+    static constexpr int FULL_W = BOX_W - 2 * 8 - 2 * BORDER;
     static constexpr int HALF_W = (FULL_W - GAP) / 2;
     static constexpr int BTN_H  = 30;
 
@@ -366,7 +369,7 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(box, theme::ACCENT, 0);
-    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_border_width(box, BORDER, 0);
     lv_obj_set_style_radius(box, 6, 0);
     lv_obj_set_style_pad_all(box, 8, 0);
     lv_obj_set_style_pad_row(box, 4, 0);
