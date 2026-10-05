@@ -1556,6 +1556,22 @@ private:
         return 0;
     }
 
+    // Rough state of charge for a single Li-ion/LiPo cell from its voltage
+    // (typical resting discharge curve, interpolated). 4.2 V and above —
+    // full, or on external power/charging (USB reads ~4.3 V) — is 100%.
+    static int _liionPercent(uint16_t mv) {
+        static const uint16_t kMv[]  = { 3300, 3500, 3600, 3700, 3750, 3800, 3850, 3900, 4000, 4100, 4200 };
+        static const uint8_t  kPct[] = {    0,    5,   10,   20,   30,   40,   50,   60,   75,   90,  100 };
+        const int n = sizeof(kMv) / sizeof(kMv[0]);
+        if (mv >= kMv[n - 1]) return 100;
+        if (mv <= kMv[0])     return 0;
+        for (int i = 1; i < n; i++) {
+            if (mv <= kMv[i])
+                return kPct[i - 1] + (int)(mv - kMv[i - 1]) * (kPct[i] - kPct[i - 1]) / (kMv[i] - kMv[i - 1]);
+        }
+        return 100;
+    }
+
     void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override
     {
         if (_takeRegionReply(contact, data, len)) return;
@@ -1623,9 +1639,13 @@ private:
 
             snprintf(buf, sizeof(buf), "[%s] --- Status ---", contact.name);
             _enqueueResp(buf);
+            char battBuf[24];
+            if (batt_mv == 0) snprintf(battBuf, sizeof(battBuf), "n/a");   // board can't measure
+            else              snprintf(battBuf, sizeof(battBuf), "%dmV (%d%%)",
+                                       (int)batt_mv, _liionPercent(batt_mv));
             snprintf(buf, sizeof(buf),
-                "[%s] Batt:%dmV  RSSI:%d  SNR:%d.%02d  Noise:%d",
-                contact.name, (int)batt_mv, (int)rssi, snr_i, snr_f, (int)noise);
+                "[%s] Batt:%s  RSSI:%d  SNR:%d.%02d  Noise:%d",
+                contact.name, battBuf, (int)rssi, snr_i, snr_f, (int)noise);
             _enqueueResp(buf);
             snprintf(buf, sizeof(buf),
                 "[%s] Recv:%u  Sent:%u  Err:%u  Queue:%u",
