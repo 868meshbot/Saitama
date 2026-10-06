@@ -49,7 +49,7 @@ Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3,
 
 **SPI bus is shared** — TFT, LoRa, and SD all share SCK/MOSI/MISO. Never hold a CS pin low across blocking operations.
 
-**Contacts capacity** — `contacts::CAPACITY = 50` in `src/utils/Contacts.h`. Stored as NVS blobs in namespace `opsct`. Safe to raise; NVS can handle ~100 blobs per namespace on the 16 MB flash layout.
+**Contacts / repeaters capacity** — `contacts::CAPACITY` and `repeaters::CAPACITY` are 250 each, held in PSRAM. The live store is the SD JSON (`/ops/contacts.json`, `/ops/repeaters.json`); the legacy NVS blobs (namespace `opsct`) are only read as a fallback when the SD JSON cannot be loaded. `Contact` is a fixed 160-byte record (static_assert) — new fields go into its padding bytes (`blocked`, `lastHopsP1`) or need a migration case. The JSON is built with the PSRAM allocator (`utils/PsramJson.h`); in internal DRAM a long list silently truncated.
 
 ---
 
@@ -63,23 +63,29 @@ src/
   ui/UIScreen.h/cpp         — LVGL init, display/touch/trackball drivers, tick loop
   ui/ScreenBoot.h/cpp       — Splash screen
   ui/ScreenLauncher.h/cpp   — 3 swipeable pages: home (heard-station rain + Chat/Contacts/Map/Settings), two 4×3 app grids
-  ui/ScreenHome.h/cpp       — Chat screen (channel tabs + DM)
+  ui/ScreenHome.h/cpp       — Chat: channel list (scope tag per channel, + Add Channel), conversations, DMs, "repeated xN" on sent channel msgs
   ui/ScreenTerminal.h/cpp   — Serial-style terminal + CDC echo
   ui/ScreenSettings.h/cpp   — Settings
   ui/ScreenHeard.h/cpp      — Peer list (RSSI, last-seen, type badge)
-  ui/ScreenContacts.h/cpp   — Contact directory with DM / path actions
-  ui/ScreenRepeaters.h/cpp  — Repeater directory
-  ui/ScreenTrace.h/cpp      — Hop-by-hop trace tool
+  ui/ScreenContacts.h/cpp   — Contact directory: filter box, signal bars, 2-column action popup, Details, Block
+  ui/ScreenRepeaters.h/cpp  — Repeater directory: filter box, signal bars, 2-column action popup, admin login/panel
+  ui/ScreenTrace.h/cpp      — Hop-by-hop trace tool; showFor(prefix) opens with a target preselected
+  ui/ScreenRegions.h/cpp    — Region discovery (asks 0-hop repeaters) + saved-region chips
+  ui/ScopePicker.h/cpp      — Shared region-scope dropdown + "New Scope" box (Settings channels, Chat)
+  ui/ListFilter.h/cpp       — Type-to-filter box for list screens
   ui/ScreenSignal.h/cpp     — Live radio stats (RSSI/SNR/noise, packet counts, airtime, HW info)
   ui/ScreenPlaceholder.h/cpp — GPS skyplot (do not redesign)
-  ui/Theme.h/cpp            — Colour palette
+  ui/Theme.h/cpp            — Colour palette; sanitizeText() (emoji cleanup); addSignalBars()
   utils/Config.h/cpp        — Persistent config via NVS; SD backup /ops/settings.json
-  utils/Contacts.h/cpp      — 50-slot NVS contact list; SD archive /ops/contacts.json
+  utils/Contacts.h/cpp      — 250-slot contact list (PSRAM) backed by /ops/contacts.json; favourite/blocked/hops
   utils/Crypto.h/cpp        — AES-256-GCM seal/unseal for secrets written to SD; storage password in NVS namespace opscrypt (never mirrored to SD)
   utils/IdentityBackup.h/cpp — encrypted node-identity backup /ops/identity.enc (format, read/unlock, migration from plaintext)
-  utils/Repeaters.h/cpp     — Repeater list (NVS-backed)
+  utils/Repeaters.h/cpp     — 250-slot repeater list (PSRAM) backed by /ops/repeaters.json
+  utils/Regions.h/cpp       — Saved region scopes (max 9, NVS); nothing is added automatically
+  utils/BtPin.h/cpp         — Per-device random BLE pairing PIN (NVS "opsbt"); changing it clears bonds
+  utils/PsramJson.h         — ArduinoJson allocator in PSRAM (large JSON docs)
   utils/SDCard.h/cpp        — SD mount (CS=39, FSPI), /ops/ dir, binary file helpers
-  utils/Sound.h/cpp         — I2S audio (MAX98357A); playPing()
+  utils/Sound.h/cpp         — I2S audio (MAX98357A); notification/ping/jingle muted in night mode
   utils/Log.h               — OPS_LOG(tag, fmt, ...) macro → CDC serial
 lib/
   MeshCore/                 — Git submodule — never modify
@@ -96,6 +102,8 @@ lib/
 **Incoming mesh messages:** `UIScreen::tick()` drains `MeshService::dequeueMessage()` each frame (up to 8 per tick) and routes each `RxMessage` to `ScreenTerminal::appendLine()` and `ScreenHome::appendMessage()`. `ScreenTerminal::appendLine()` also echoes every line to CDC serial — it is the central logging point for received messages. If `cfg.notifyPopup` is set, `_showNotifyPopup()` overlays a dismissible toast on the current screen.
 
 **ScreenHome chat tabs:** A channel tab is shown only when the channel has both `name[0]` and `shortname[0]` set. Tabs display the shortname. The tab bar uses slots 0 (Public), 1–4 (custom channels), 5 (DM). Opening a DM or channel tab lazily loads that conversation's SD log via `_loadChannelHistory(tag)` — each tag is loaded at most once per session (tracked in `s_loadedTags[10]`). The `s_loadingFromSD` flag suppresses SD writes during replay. DM history tags use the format `DM_<contactName>`.
+
+**Emoji:** `src/ui/emoji/emoji_data.h` is hand-patched — never run `scripts/gen_emoji.py` wholesale (it would drop hand-added entries); generate one asset and patch the table. `theme::sanitizeText()` strips glyph-less modifiers (variation selectors, ZWJ + joined part, skin tones, keycaps) and keeps only known flag pairs (IE, US, FR).
 
 **Screensaver:** `UIScreen::tick()` tracks `s_lastActivityMs` (reset on any trackball/key/touch). When `cfg.screenTimeoutSec > 0` and the device is idle past that threshold, `_activateScreensaver()` saves `lv_scr_act()` to `s_prevScreen`, creates a black LVGL screen with the time in 36pt Montserrat, and loads it. Any input calls `_deactivateScreensaver()` which restores `s_prevScreen` and deletes the saver screen. Screensaver clock updates every 30 s alongside the launcher clock tick.
 
@@ -122,7 +130,7 @@ bool MeshService::pollContactResponse(char* out, int outMax);  // dequeues one r
 OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 ```
 
-**RxMessage fields:** `senderName[32]`, `text[160]`, `rssi`, `snr`, `isDirect`, `channelName[16]` (empty when isDirect), `timestamp`, `hops`, `pubKeyPrefix[4]`.
+**RxMessage fields:** `senderName[32]`, `text[160]`, `rssi`, `snr`, `isDirect`, `channelName[32]` (empty when isDirect), `timestamp`, `hops`, `pubKeyPrefix[4]`, `pathStr[36]`. Messages from blocked contacts are dropped in `UIScreen::tick()` before routing (DMs by key, channel by name); empty-text messages are dropped in MeshService.
 
 **RadioStats fields** (returned by `MeshService::radioStats()`): `packetsSent`, `packetsRecv`, `packetsRecvError`, `lastRssi`, `lastSnr`, `noiseFloor`, `radioOk`, `active` — plus per-type counters sourced from the MeshCore `Dispatcher` base class: `floodSent`, `floodRecv`, `directSent`, `directRecv`, `airtimeTxMs`, `airtimeRxMs`.
 
@@ -132,17 +140,23 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **Repeater routing table preload:** The `Repeater` struct stores a full `pubKey[32]` (populated when a repeater advert is heard). `preloadNvsRepeaters()` runs at `OPSMesh::init()` right after `preloadNvsContacts()` and inserts every saved repeater with a non-zero key into MeshCore's contact routing table. This ensures `sendRepeaterLogin()` and `sendAdminCommand()` can find the contact immediately on boot without waiting for another advert. SD JSON stores the full key as `"pubKey64"` (64 hex chars); the field is optional so old JSON files load gracefully with the key zeroed until the repeater is heard again.
 
-**ScreenRepeaters popup:** Tapping a row shows a 5-button action popup (auto-height via `LV_SIZE_CONTENT`): Admin Login, Set Path, Reset Path (orange), Delete Repeater (red), Close. Admin Login opens a password-textarea dialog with a **Remember password** tickbox — on confirm calls `sendRepeaterLogin()` and `ScreenTerminal::setAdminTarget()` so `/repadmin` picks up the target immediately, and seals or forgets the password via `repeaters::setAdminPassword()`. A remembered password is pre-filled and the box pre-ticked, so login is one keypress; untick and log in to forget it. Set Path opens a hex-input dialog with a 1-byte/2-byte hash-size toggle — on Save calls `setContactPath()` and echoes the result to Terminal. Reset Path calls `resetContactPath()` directly and echoes a confirmation.
+**ScreenRepeaters popup:** Tapping a row shows a two-column button grid (name + id header): Admin Login (full width) / Add|Remove Favourite / Set|Reset Path / Trace Repeater|Delete Repeater / Close (full width). Trace Repeater opens `ScreenTrace::showFor()` with that repeater selected. A failed login offers Cancel / Retry / Reset & Retry (clears the stored route so the login floods). Admin Login opens a password-textarea dialog with a **Remember password** tickbox — on confirm calls `sendRepeaterLogin()` and `ScreenTerminal::setAdminTarget()` so `/repadmin` picks up the target immediately, and seals or forgets the password via `repeaters::setAdminPassword()`. A remembered password is pre-filled and the box pre-ticked, so login is one keypress; untick and log in to forget it. Set Path opens a hex-input dialog with a 1-byte/2-byte hash-size toggle — on Save calls `setContactPath()` and echoes the result to Terminal. Reset Path calls `resetContactPath()` and `repeaters::clearPath()` (RAM and stored route) and echoes a confirmation.
 
-**ScreenContacts popup:** Same Set Path dialog and working Reset Path as ScreenRepeaters. Popup also uses `LV_SIZE_CONTENT` for auto-height.
+**ScreenContacts popup:** Same two-column grid: Direct Message (full) / Share QR|Details / Favourite|Remove Favourite / Set Path|Reset Path / Delete Contact|Block Contact / Close (full). Details lists id, last heard, signal, hops (session peer list → `Contact::lastHopsP1` → saved route), route, distance, position, public key. There is no contact Ping: TRACE packets are only forwarded by repeaters, so a contact never answers one.
+
+**Closing popups/dialogs (crash rules):** a button inside an overlay must close it with `lv_obj_del_async()`, never `lv_obj_del()` (deleting an ancestor of the event target corrupts LVGL). If the screen is then rebuilt (a deferred `show()` that deletes the old screen), **only hide** the overlay — LVGL runs the newest async call first, so a deferred delete plus a deferred rebuild frees the overlay twice.
+
+**Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; keyboard light off + sounds muted; moon beside the launcher clock), Speaker & Volume in one window. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
+
+**Display performance:** `LV_INV_BUF_SIZE 96` in `lib/lv_conf.h` (the home-page rain overflowed the default 32 and forced full redraws). Don't call `lv_refr_now()` from the message path.
 
 **SD card storage** — `/ops/` directory on the SD card acts as a reflash-proof backup:
-- `/ops/contacts.json` — full contact archive (ArduinoJson 7, written on every `contacts::save()`)
+- `/ops/contacts.json` — full contact archive (ArduinoJson 7, PSRAM allocator, written on every `contacts::save()`); optional `"blocked"`, `"hops"`
 - `/ops/repeaters.json` — repeater archive; includes `"pubKey64"` (64 hex chars) for full 32-byte key; field is optional for backward compatibility. `"pwEnc"` (184 hex chars, optional) is a remembered admin password sealed with AES-256-GCM — see `docs/STORED_SECRETS.md`
-- `/ops/settings.json` — config backup (written on every `config::save()`)
+- `/ops/settings.json` — config backup (written on every `config::save()`); channel PSKs only as sealed `"pskEnc"`
 - `/ops/identity.enc`  — the node identity (pub_key[32] + prv_key[64] + name[32]) sealed with `ops::crypto` (AES-256-GCM, storage password; salt + public key in a clear, authenticated header). `ops::idbackup` owns the format. Restored to LittleFS on boot if missing; if the storage password doesn't open it the node runs on an unsaved temporary identity and the boot screen asks for the password. Plaintext `identity.bin`/`.bak` from older firmware are read once and deleted — see `docs/STORED_SECRETS.md`
 - `/ops/msgs/<tag>.log` — per-channel/DM message history; one compact JSON line per message; written when `cfg.saveMsgs` is true; tag is channel name or `DM_<contactName>` for direct messages
-- `sdcard::init()` must run before `config::init()` and `contacts::init()` (see `main.cpp`)
+- `sdcard::init()` must run before `crypto::init()`, which must run before `config::init()` (settings.json holds sealed PSKs) and `contacts::init()` (see `main.cpp`)
 - ArduinoJson dependency: `bblanchon/ArduinoJson @ ^7.0` in `platformio.ini`
 
 ---
@@ -193,9 +207,9 @@ Monitor: `pio device monitor` at 115200 baud.
 
 See [docs/VERSIONING.md](docs/VERSIONING.md). Key points:
 
-- Semantic Versioning with pre-release tags: `MAJOR.MINOR.PATCH-alpha.N`
-- Current: `0.1.0-alpha.1` (first compile, not flashed)
-- Update `src/version.h` before tagging a release
+- Semantic Versioning: `MAJOR.MINOR.PATCH` (pre-release tags `-alpha.N`/`-beta.N` when needed)
+- Current: `1.4.4`
+- Update `src/version.h` and the README "Current version" line before tagging a release (`-DOPS_VERSION` in `platformio.ini` is unused)
 - Version numbers only go forward. Never re-tag.
 
 ## Firmware Variants
