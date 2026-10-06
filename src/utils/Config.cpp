@@ -69,6 +69,9 @@ static void setDefaults(Config& c) {
     c.rxBoostRev       = 1;
     c.dmDirectRetries  = 5;
     c.dmFloodRetries   = 3;
+    c.nightMode        = false;
+    c.nightStartMin    = 22 * 60;
+    c.nightEndMin      = 7 * 60;
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -137,6 +140,9 @@ static void _saveToSD() {
     doc["rxBoostRev"]   = s_cfg.rxBoostRev;
     doc["dmRetryDir"]   = s_cfg.dmDirectRetries;
     doc["dmRetryFlood"] = s_cfg.dmFloodRetries;
+    doc["night"]        = s_cfg.nightMode;
+    doc["nightStart"]   = s_cfg.nightStartMin;
+    doc["nightEnd"]     = s_cfg.nightEndMin;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
@@ -232,6 +238,9 @@ static bool _loadFromSD() {
     s_cfg.rxBoostRev    = 1;
     s_cfg.dmDirectRetries = (uint8_t)(doc["dmRetryDir"]   | 5);
     s_cfg.dmFloodRetries  = (uint8_t)(doc["dmRetryFlood"] | 3);
+    s_cfg.nightMode       = doc["night"] | false;
+    s_cfg.nightStartMin   = (uint16_t)(doc["nightStart"] | 22 * 60) % 1440;
+    s_cfg.nightEndMin     = (uint16_t)(doc["nightEnd"]   | 7 * 60) % 1440;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);
@@ -497,6 +506,18 @@ void config::setRegion(const char* reg) {
     strncpy(s_cfg.radioRegion, reg, sizeof(s_cfg.radioRegion) - 1);
     s_cfg.radioRegion[sizeof(s_cfg.radioRegion) - 1] = '\0';
     save();
+}
+
+bool config::nightModeActive() {
+    if (!s_cfg.nightMode || time(nullptr) < 1700000000) return false;   // clock not set
+    time_t t = localEpoch();
+    struct tm lt;
+    gmtime_r(&t, &lt);
+    int now = lt.tm_hour * 60 + lt.tm_min;
+    int s = s_cfg.nightStartMin % 1440, e = s_cfg.nightEndMin % 1440;
+    if (s == e) return false;
+    return (s < e) ? (now >= s && now < e)     // e.g. 01:00-06:00
+                   : (now >= s || now < e);    // wraps midnight, e.g. 22:00-07:00
 }
 
 time_t config::localEpoch() {

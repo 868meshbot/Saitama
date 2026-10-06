@@ -548,12 +548,20 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_add_flag(s_notifyPopup, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_notifyPopup, _onNotifyPopupClick, LV_EVENT_CLICKED, nullptr);
 
+    // Same cleanup as the chat bubbles: no boxes for skin tones, joiners etc.
+    char nameBuf[sizeof(msg.senderName)];
+    snprintf(nameBuf, sizeof(nameBuf), "%s", msg.senderName);
+    theme::sanitizeText(nameBuf);
+    char textBuf[sizeof(msg.text)];
+    snprintf(textBuf, sizeof(textBuf), "%s", msg.text);
+    theme::sanitizeText(textBuf);
+
     char hdr[64];
     if (msg.isDirect)
-        snprintf(hdr, sizeof(hdr), "DM from %s", msg.senderName);
+        snprintf(hdr, sizeof(hdr), "DM from %s", nameBuf);
     else
         snprintf(hdr, sizeof(hdr), "#%s  %s",
-                 msg.channelName[0] ? msg.channelName : "?", msg.senderName);
+                 msg.channelName[0] ? msg.channelName : "?", nameBuf);
 
     lv_obj_t* hdrLbl = lv_label_create(s_notifyPopup);
     lv_obj_set_style_text_font(hdrLbl, theme::bodyFont12(), LV_PART_MAIN);
@@ -566,7 +574,7 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_t* txtLbl = lv_label_create(s_notifyPopup);
     lv_obj_set_style_text_font(txtLbl, theme::bodyFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(txtLbl, lv_color_white(), LV_PART_MAIN);
-    lv_label_set_text(txtLbl, msg.text);
+    lv_label_set_text(txtLbl, textBuf);
     lv_obj_set_width(txtLbl, 244);
     lv_label_set_long_mode(txtLbl, LV_LABEL_LONG_CLIP);
     lv_obj_align(txtLbl, LV_ALIGN_TOP_LEFT, 0, 20);
@@ -876,6 +884,8 @@ void tick() {
         uint8_t desired;
         if (s_screensaverActive || s_screenOff) {
             desired = 0;  // low-power: KB off
+        } else if (ops::config::nightModeActive()) {
+            desired = 0;  // night mode: KB light off
         } else if (cfg.kbAutoNight) {
             time_t t = ops::config::localEpoch();
             struct tm lt;

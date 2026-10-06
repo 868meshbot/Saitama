@@ -192,7 +192,9 @@ static lv_obj_t* _addRow(lv_obj_t* list, const char* icon, const char* label,
     lv_obj_t* iconLbl = lv_label_create(btn);
     lv_label_set_text(iconLbl, icon);
     lv_obj_set_style_text_color(iconLbl, iconColor, 0);
-    lv_obj_set_style_text_font(iconLbl, &lv_font_montserrat_16, 0);
+    // Montserrat for LV_SYMBOL_* glyphs, with the emoji imgfont as fallback
+    // (the Night Mode row's moon).
+    lv_obj_set_style_text_font(iconLbl, ops::emoji::emojiFont(&lv_font_montserrat_16), 0);
 
     // Name: truncated so every tile stays the same height regardless of label length.
     lv_obj_t* nameLbl = lv_label_create(btn);
@@ -382,8 +384,24 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         snprintf(pinStr, sizeof(pinStr), "%06lu", (unsigned long)ops::btpin::get());
         _addRow(_list, LV_SYMBOL_BLUETOOTH, "Bluetooth PIN", pinStr, 41);
     }
-    _addRow(_list, LV_SYMBOL_VOLUME_MAX, lang::tr(lang::TR_SPEAKER),
-            cfg.speakerEnabled ? on : off, 8, cfg.speakerEnabled ? ROW_ON : ROW_OFF);
+    {
+        char spkStr[16];
+        if (cfg.speakerEnabled) snprintf(spkStr, sizeof(spkStr), "%s %d%%", on, (int)cfg.speakerVolume);
+        else                    snprintf(spkStr, sizeof(spkStr), "%s", off);
+        _addRow(_list, LV_SYMBOL_VOLUME_MAX, lang::tr(lang::TR_SPEAKER),
+                spkStr, 8, cfg.speakerEnabled ? ROW_ON : ROW_OFF);
+    }
+    {
+        char ntStr[16];
+        if (cfg.nightMode)
+            snprintf(ntStr, sizeof(ntStr), "%02u:%02u-%02u:%02u",
+                     cfg.nightStartMin / 60, cfg.nightStartMin % 60,
+                     cfg.nightEndMin / 60, cfg.nightEndMin % 60);
+        else
+            snprintf(ntStr, sizeof(ntStr), "%s", off);
+        _addRow(_list, "\xF0\x9F\x8C\x99", "Night Mode", ntStr, 42,   // U+1F319 moon
+                cfg.nightMode ? ROW_ON : ROW_OFF);
+    }
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9,
@@ -436,11 +454,6 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         char soStr[12];
         _fmtScreenOffVal(soStr, sizeof(soStr), (int)cfg.screenOffSec);
         _addRow(_list, LV_SYMBOL_POWER, lang::tr(lang::TR_SCR_OFF), soStr, 27);
-    }
-    {
-        char volStr[8];
-        snprintf(volStr, sizeof(volStr), "%d%%", (int)cfg.speakerVolume);
-        _addRow(_list, LV_SYMBOL_VOLUME_MID, lang::tr(lang::TR_VOLUME), volStr, 32);
     }
     _addRow(_list, LV_SYMBOL_BELL, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
@@ -3348,7 +3361,7 @@ static void _openKbLayoutDialog() {
 // ── Volume slider dialog ──────────────────────────────────────────────
 // Slider 0–100 (percent). Scales I2S samples at playback time.
 
-struct VolCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; };
+struct VolCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; lv_obj_t* spkLbl; bool spkOn; };
 static VolCtx s_volCtx;
 
 static void _onVolSlide(lv_event_t* /*e*/) {
@@ -3357,10 +3370,15 @@ static void _onVolSlide(lv_event_t* /*e*/) {
     snprintf(buf, sizeof(buf), "%d%%", v);
     lv_label_set_text(s_volCtx.valLbl, buf);
 }
+static void _onVolSpkToggle(lv_event_t* /*e*/) {
+    s_volCtx.spkOn = !s_volCtx.spkOn;
+    _setToggle(s_volCtx.spkLbl, s_volCtx.spkOn);
+}
 static void _onVolSave(lv_event_t* /*e*/) {
     int v = (int)lv_slider_get_value(s_volCtx.slider);
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
-    cfg.speakerVolume = (uint8_t)v;
+    cfg.speakerVolume  = (uint8_t)v;
+    cfg.speakerEnabled = s_volCtx.spkOn;
     ops::config::save();
     _delModal(s_volCtx.modal);
     ScreenSettings::show();
@@ -3384,7 +3402,7 @@ static void _openVolumeDialog() {
     lv_obj_add_event_cb(modal, _onVolKey, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 155);
+    lv_obj_set_size(panel, 240, 190);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
@@ -3397,9 +3415,12 @@ static void _openVolumeDialog() {
         LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, LV_SYMBOL_VOLUME_MAX " Volume");
+    lv_label_set_text(title, LV_SYMBOL_VOLUME_MAX " Speaker & Volume");
     lv_obj_set_style_text_color(title, theme::ACCENT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    s_volCtx.spkOn  = ops::config::get().speakerEnabled;
+    s_volCtx.spkLbl = _makeToggleRow(panel, "Speaker", s_volCtx.spkOn, _onVolSpkToggle, modal);
 
     int curVol = (int)ops::config::get().speakerVolume;
     s_volCtx.valLbl = lv_label_create(panel);
@@ -3451,6 +3472,175 @@ static void _openVolumeDialog() {
 
     lv_group_t* g = lv_group_get_default();
     if (g) { lv_group_add_obj(g, s_volCtx.slider); lv_group_focus_obj(s_volCtx.slider); }
+}
+
+// ── Night Mode dialog ─────────────────────────────────────────────────
+// On/off plus a start and end time (hour + 5-minute dropdowns). Between them
+// the keyboard light is off and notification sounds are muted; the window
+// may wrap past midnight (e.g. 22:00 to 07:00).
+
+struct NightCtx {
+    lv_obj_t* modal;
+    lv_obj_t* onLbl;
+    lv_obj_t* sh; lv_obj_t* sm;   // start hour / minute
+    lv_obj_t* eh; lv_obj_t* em;   // end hour / minute
+    bool      on;
+};
+static NightCtx s_ntCtx;
+
+static void _onNightToggle(lv_event_t* /*e*/) {
+    s_ntCtx.on = !s_ntCtx.on;
+    _setToggle(s_ntCtx.onLbl, s_ntCtx.on);
+}
+static void _onNightSave(lv_event_t* /*e*/) {
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.nightMode     = s_ntCtx.on;
+    cfg.nightStartMin = (uint16_t)(lv_dropdown_get_selected(s_ntCtx.sh) * 60 +
+                                   lv_dropdown_get_selected(s_ntCtx.sm) * 5);
+    cfg.nightEndMin   = (uint16_t)(lv_dropdown_get_selected(s_ntCtx.eh) * 60 +
+                                   lv_dropdown_get_selected(s_ntCtx.em) * 5);
+    ops::config::save();
+    OPS_LOG("Settings", "Night mode %s %02u:%02u-%02u:%02u", cfg.nightMode ? "on" : "off",
+            cfg.nightStartMin / 60, cfg.nightStartMin % 60, cfg.nightEndMin / 60, cfg.nightEndMin % 60);
+    _delModal(s_ntCtx.modal);
+    ScreenSettings::show();
+}
+static void _onNightExit(lv_event_t* /*e*/) { _delModal(s_ntCtx.modal); }
+static void _onNightKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_ntCtx.modal);
+}
+
+static void _openNightDialog() {
+    const auto& cfg = ops::config::get();
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_ntCtx = NightCtx{};
+    s_ntCtx.modal = modal;
+    s_ntCtx.on    = cfg.nightMode;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onNightKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 260, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 6, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "\xF0\x9F\x8C\x99 Night Mode");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, ops::emoji::emojiFont(&lv_font_montserrat_12), 0);
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 240);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note, "Between these times the keyboard light is off and "
+                            "notification sounds are muted.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    s_ntCtx.onLbl = _makeToggleRow(panel, "Night mode", s_ntCtx.on, _onNightToggle, modal);
+
+    static const char* kHours =
+        "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n"
+        "12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23";
+    static const char* kMins = "00\n05\n10\n15\n20\n25\n30\n35\n40\n45\n50\n55";
+
+    auto timeRow = [&](const char* label, uint16_t minutes, lv_obj_t*& hDd, lv_obj_t*& mDd) {
+        lv_obj_t* row = lv_obj_create(panel);
+        lv_obj_set_size(row, 240, 32);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_style_pad_column(row, 4, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* l = lv_label_create(row);
+        lv_label_set_text(l, label);
+        lv_obj_set_width(l, 70);
+        lv_obj_set_style_text_color(l, theme::TEXT, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+
+        auto mkDd = [&](const char* opts, uint16_t sel) {
+            lv_obj_t* dd = lv_dropdown_create(row);
+            lv_obj_set_size(dd, 70, 30);
+            lv_dropdown_set_options_static(dd, opts);
+            lv_dropdown_set_selected(dd, sel);
+            lv_obj_set_style_bg_color(dd, theme::BG, 0);
+            lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+            lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+            lv_obj_set_style_border_color(dd, theme::ACCENT, LV_STATE_FOCUSED);
+            lv_obj_set_style_text_font(dd, &lv_font_montserrat_12, 0);
+            if (lv_obj_t* list = lv_dropdown_get_list(dd)) {
+                lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+                lv_obj_set_style_text_color(list, theme::TEXT, 0);
+                lv_obj_set_style_text_font(list, &lv_font_montserrat_12, 0);
+            }
+            lv_obj_add_event_cb(dd, _onNightKey, LV_EVENT_KEY, nullptr);
+            return dd;
+        };
+        hDd = mkDd(kHours, (uint16_t)((minutes / 60) % 24));
+        lv_obj_t* colon = lv_label_create(row);
+        lv_label_set_text(colon, ":");
+        lv_obj_set_style_text_color(colon, theme::TEXT, 0);
+        mDd = mkDd(kMins, (uint16_t)((minutes % 60) / 5));
+    };
+    timeRow("Start", cfg.nightStartMin, s_ntCtx.sh, s_ntCtx.sm);
+    timeRow("End",   cfg.nightEndMin,   s_ntCtx.eh, s_ntCtx.em);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 240, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* btns[2];
+    const char*   txt[2] = { "Cancel", "Save" };
+    lv_color_t    col[2] = { theme::TEXT_MUTED, theme::ACCENT };
+    lv_event_cb_t cbs[2] = { _onNightExit, _onNightSave };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t* btn = lv_btn_create(row);
+        btns[i] = btn;
+        lv_obj_set_size(btn, 96, 28);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, col[i], 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cbs[i], LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(btn, _onNightKey, LV_EVENT_KEY, nullptr);
+        lv_obj_t* l = lv_label_create(btn);
+        lv_label_set_text(l, txt[i]);
+        lv_obj_set_style_text_color(l, col[i], 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_center(l);
+    }
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, s_ntCtx.sh); lv_group_add_obj(g, s_ntCtx.sm);
+        lv_group_add_obj(g, s_ntCtx.eh); lv_group_add_obj(g, s_ntCtx.em);
+        lv_group_add_obj(g, btns[0]);    lv_group_add_obj(g, btns[1]);
+    }
 }
 
 // ── Notification Sound dropdown dialog ───────────────────────────────
@@ -4943,10 +5133,13 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
                 ops::MeshService::instance().stopCompanionBLE();
             break;
 
-        case 8:  // Speaker
-            cfg.speakerEnabled = !cfg.speakerEnabled;
-            ops::config::save();
-            break;
+        case 8:  // Speaker → on/off + volume in one window
+            _openVolumeDialog();
+            return;
+
+        case 42:  // Night Mode → schedule window
+            _openNightDialog();
+            return;
 
         case 9:  // GPS — cycle Off → Intermittent → On
             cfg.gpsMode = (cfg.gpsMode + 1) % 3;

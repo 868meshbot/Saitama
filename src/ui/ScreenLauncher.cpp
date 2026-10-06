@@ -54,6 +54,8 @@ lv_obj_t* ScreenLauncher::_radioLbl   = nullptr;
 lv_obj_t* ScreenLauncher::_speakerLbl = nullptr;
 lv_obj_t* ScreenLauncher::_btLbl      = nullptr;
 
+static lv_obj_t* s_nightLbl = nullptr;   // moon beside the clock (night mode)
+
 // ── Home page (page 0) state ─────────────────────────────────────────
 // Four app buttons over a "rain" of stations heard this session and the
 // channels they talk on, with short-lived lines linking who talks to what.
@@ -925,6 +927,12 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
     lv_obj_set_style_text_color(_btLbl, theme::TEXT_MUTED, 0);  // grey = off
     lv_obj_set_style_pad_right(_btLbl, 2, 0);
 
+    // Night mode moon, left of the clock; shown only while night mode is active.
+    s_nightLbl = lv_label_create(bar);
+    lv_label_set_text(s_nightLbl, "\xF0\x9F\x8C\x99");   // U+1F319 crescent moon
+    lv_obj_set_style_text_font(s_nightLbl, ops::emoji::emojiFont(&lv_font_montserrat_10), 0);
+    if (!ops::config::nightModeActive()) lv_obj_add_flag(s_nightLbl, LV_OBJ_FLAG_HIDDEN);
+
     _timeLbl = lv_label_create(bar);
     lv_label_set_text(_timeLbl, "--:--");
     lv_obj_set_style_text_color(_timeLbl, theme::TEXT, 0);
@@ -1174,6 +1182,10 @@ void ScreenLauncher::_buildBottomBar(lv_obj_t* parent) {
 // ── refreshClock() ───────────────────────────────────────────────────
 void ScreenLauncher::refreshClock() {
     if (!_timeLbl) return;
+    if (s_nightLbl) {
+        if (ops::config::nightModeActive()) lv_obj_clear_flag(s_nightLbl, LV_OBJ_FLAG_HIDDEN);
+        else                                lv_obj_add_flag(s_nightLbl, LV_OBJ_FLAG_HIDDEN);
+    }
     time_t now = ops::config::localEpoch();
     if (now < 1700000000UL) {
         lv_label_set_text(_timeLbl, "--:--");

@@ -196,6 +196,8 @@ EMOJI = [
     ("wales",         0x1F3F4, "1f3f4-e0067-e0062-e0077-e006c-e0073-e007f", "wales flag"),
     ("ireland",       0x1F1EE, "1f1ee-1f1ea", "ireland flag"),
     ("us_flag",       0x1F1FA, "1f1fa-1f1f8", "usa flag united states"),
+    ("france",        0x1F1EB, "1f1eb-1f1f7", "france flag french"),
+    ("moon",          0x1F319, "1f319", "crescent moon night"),
 ]
 
 # Deduplicate by codepoint — keep first occurrence

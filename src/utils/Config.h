@@ -98,6 +98,12 @@ struct Config {
     // (0-10), then drop the path and flood up to dmFloodRetries times (0-5).
     uint8_t    dmDirectRetries;
     uint8_t    dmFloodRetries;
+    // Night mode: between nightStartMin and nightEndMin (minutes after local
+    // midnight; the window may wrap past midnight) the keyboard light is off
+    // and notification/key sounds are muted. A moon shows beside the clock.
+    bool       nightMode;
+    uint16_t   nightStartMin;
+    uint16_t   nightEndMin;
 };
 
 // Values for Config::radioPowerMode.
@@ -126,6 +132,9 @@ namespace config {
     // Returns time(nullptr) adjusted by timezoneOffsetHours.
     // Use with gmtime_r() wherever local time needs to be displayed.
     time_t localEpoch();
+    // True while night mode is on and the local time is inside its window
+    // (false until the clock is set).
+    bool   nightModeActive();
 
     // Write calibration coefficients and persist (NVS + SD).
     void setTouchCal(float xScale, float xOff, float yScale, float yOff);

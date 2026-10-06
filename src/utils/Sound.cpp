@@ -259,6 +259,7 @@ void sound::playPing()
     const auto& cfg = ops::config::get();
     // speakerEnabled is the master switch; notifySound gates DM pings
     if (!cfg.speakerEnabled || !cfg.notifySound) return;
+    if (ops::config::nightModeActive()) return;   // night mode: quiet
     if (!s_initialized) return;
 
     // I2S APB clock is only stable at ≥80 MHz CPU. Governors 0/1 can drop below
@@ -274,6 +275,7 @@ void sound::playNotification()
 {
     const auto& cfg = ops::config::get();
     if (!cfg.speakerEnabled || !cfg.notifySound) return;
+    if (ops::config::nightModeActive()) return;   // night mode: quiet
     if (!s_initialized) return;
 
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
@@ -305,6 +307,7 @@ void sound::playStartupJingle()
 {
     if (!s_initialized) return;
     if (!ops::config::get().speakerEnabled) return;
+    if (ops::config::nightModeActive()) return;   // night mode: quiet
 
     // 10240 samples at 8 kHz = ~1.3 s. Called before ui::init() — blocking is acceptable.
     _writeScaled(s_jingleBuf, JINGLE_TOTAL);

@@ -86,8 +86,22 @@ void sanitizeText(char* s)
         // placeholder box next to the emoji they modify — the classic
         // "emoji plus an extra blank square". They carry no meaning for us
         // (we render one static image per base codepoint), so drop them.
-        if (p[0] == 0xEF && p[1] == 0xB8 && p[2] == 0x8F) { p += 3; continue; }
-        if (p[0] == 0xE2 && p[1] == 0x80 && p[2] == 0x8D) { p += 3; continue; }
+        // All variation selectors U+FE00-FE0F (EF B8 80-8F), incl. U+FE0E.
+        if (p[0] == 0xEF && p[1] == 0xB8 && p[2] >= 0x80 && p[2] <= 0x8F) { p += 3; continue; }
+        // ZWJ joins a second emoji onto the first (🏃‍♂️, 👨‍👩‍👧). We draw one
+        // image per base, and the joined part (often ♂/♀) has no glyph —
+        // drop the ZWJ *and* the codepoint it joins, keeping the first emoji.
+        if (p[0] == 0xE2 && p[1] == 0x80 && p[2] == 0x8D) {
+            p += 3;
+            int jl = _utf8Len(p[0]);
+            for (int i = 0; jl > 0 && i < jl && *p; i++) p++;
+            continue;
+        }
+        // Skin-tone modifiers U+1F3FB-1F3FF (F0 9F 8F BB-BF), e.g. 👍🏽: no
+        // glyph of their own — drop, the base emoji still shows.
+        if (p[0] == 0xF0 && p[1] == 0x9F && p[2] == 0x8F && p[3] >= 0xBB && p[3] <= 0xBF) { p += 4; continue; }
+        // Combining keycap U+20E3 (E2 83 A3), as in 1️⃣ — keep the digit only.
+        if (p[0] == 0xE2 && p[1] == 0x83 && p[2] == 0xA3) { p += 3; continue; }
         if (p[0] == 0xE2 && p[1] == 0x80) {
             unsigned char sub = p[2];
             if (sub == 0x98 || sub == 0x99) { *w++ = '\''; p += 3; continue; }
@@ -101,7 +115,8 @@ void sanitizeText(char* s)
         // else becomes its ISO letters, e.g. "GB", rather than two boxes.
         if (char a = _riLetter(p)) {
             char b = _riLetter(p + 4);
-            bool known = (a == 'I' && b == 'E') || (a == 'U' && b == 'S');
+            bool known = (a == 'I' && b == 'E') || (a == 'U' && b == 'S') ||
+                         (a == 'F' && b == 'R');
             if (known) {
                 memmove(w, p, 4); w += 4;
             } else {

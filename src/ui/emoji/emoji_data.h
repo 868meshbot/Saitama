@@ -179,6 +179,8 @@ extern const lv_img_dsc_t emoji_fog;
 extern const lv_img_dsc_t emoji_wales;
 extern const lv_img_dsc_t emoji_ireland;
 extern const lv_img_dsc_t emoji_us_flag;
+extern const lv_img_dsc_t emoji_france;
+extern const lv_img_dsc_t emoji_moon;
 
 #ifdef __cplusplus
 }
@@ -357,5 +359,7 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F3F4u, &emoji_wales, "wales flag" },
     { 0x1F1EEu, &emoji_ireland, "ireland flag" },
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
+    { 0x1F1EBu, &emoji_france, "france flag french" },
+    { 0x1F319u, &emoji_moon, "crescent moon night" },
 };
-static const int kOpsEmojiCount = 170;
+static const int kOpsEmojiCount = 172;
