@@ -451,7 +451,7 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     static const lv_color_t kAmber = LV_COLOR_MAKE(0xFF, 0xB3, 0x00);
     makeBtn("Direct Message",   FULL_W, theme::TEXT,   theme::PRIMARY, theme::PRIMARY, _onPopupDM);
     makeBtn("Share QR",         HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupShareQR);
-    makeBtn("Ping",             HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupPing);
+    makeBtn("Details",          HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupDetails);
     makeBtn("Favourite",        HALF_W, kAmber,        theme::BG, kAmber,        _onPopupFavourite, !c.favourite);
     makeBtn("Remove Favourite", HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupUnfavourite, c.favourite);
     makeBtn("Set Path",         HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupSetPath);
@@ -560,119 +560,176 @@ void ScreenContacts::_onPopupDelete(lv_event_t* e)
     lv_async_call([](void*){ ScreenContacts::show(); }, nullptr);
 }
 
-// ── Ping ─────────────────────────────────────────────────────────────
-// A TRACE along the contact's known route, out and back (see
-// MeshService::sendTrace). Shows round-trip time, hop count and the weakest
-// link's SNR. Polled by a short-lived LVGL timer while the box is open.
+// ── Details ──────────────────────────────────────────────────────────
+// Everything known about a contact, most useful first: name and id, when it
+// was last heard, signal, how far away (hops, distance), position, telemetry
+// and finally the full public key.
 
-static lv_obj_t*  s_pingBox   = nullptr;   // overlay
-static lv_obj_t*  s_pingLbl   = nullptr;
-static lv_timer_t* s_pingTimer = nullptr;
-static uint32_t   s_pingTag   = 0;
-static uint32_t   s_pingSent  = 0;
-static int        s_pingHops  = 0;
-static char       s_pingName[32];
-static constexpr uint32_t PING_TIMEOUT_MS = 20000;
-
-static void _pingStop()
+static void _onDetailsClose(lv_event_t* e)
 {
-    if (s_pingTimer) { lv_timer_del(s_pingTimer); s_pingTimer = nullptr; }
-    s_pingTag = 0;
+    lv_obj_del_async((lv_obj_t*)lv_event_get_user_data(e));   // its own button
 }
 
-static void _onPingClose(lv_event_t* /*e*/)
+static void _fmtAgo(uint32_t ts, char* buf, size_t len)
 {
-    _pingStop();
-    if (s_pingBox) lv_obj_del_async(s_pingBox);   // called from its own button
-    s_pingBox = nullptr;
-    s_pingLbl = nullptr;
+    uint32_t now = (uint32_t)time(nullptr);
+    if (!ts || now < 1700000000UL || ts > now) { buf[0] = '\0'; return; }
+    uint32_t d = now - ts;
+    if      (d < 60)     snprintf(buf, len, "just now");
+    else if (d < 3600)   snprintf(buf, len, "%lu min ago", (unsigned long)(d / 60));
+    else if (d < 86400)  snprintf(buf, len, "%lu h ago",   (unsigned long)(d / 3600));
+    else                 snprintf(buf, len, "%lu days ago",(unsigned long)(d / 86400));
 }
 
-static void _pingSet(const char* text, lv_color_t col)
+static void _openDetailsBox(const Contact& c)
 {
-    if (!s_pingLbl) return;
-    lv_label_set_text(s_pingLbl, text);
-    lv_obj_set_style_text_color(s_pingLbl, col, 0);
-}
+    lv_obj_t* overlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(overlay, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
 
-static void _pingTick(lv_timer_t*)
-{
-    // The box goes with the Contacts screen if that is rebuilt meanwhile.
-    if (!s_pingLbl || !lv_obj_is_valid(s_pingLbl)) {
-        s_pingBox = s_pingLbl = nullptr;
-        _pingStop();
-        return;
-    }
-    ops::TraceResult r;
-    while (ops::MeshService::instance().pollTraceResult(r)) {
-        if (r.tag != s_pingTag) continue;
-        uint32_t rtt = millis() - s_pingSent;
-        float worst = r.rxSnr / 4.0f;
-        for (int i = 0; i < r.numSnrs && i < 64; i++)
-            if (r.snrs[i] / 4.0f < worst) worst = r.snrs[i] / 4.0f;
-        char buf[160];
-        snprintf(buf, sizeof(buf),
-                 "%s replied in %.1f s\n%d hop%s out, back the same way\n"
-                 "Weakest link: %.1f dB SNR",
-                 s_pingName, rtt / 1000.0f, s_pingHops, s_pingHops == 1 ? "" : "s", (double)worst);
-        _pingSet(buf, theme::GREEN);
-        _pingStop();
-        return;
-    }
-    if (millis() - s_pingSent > PING_TIMEOUT_MS) {
-        char buf[120];
-        snprintf(buf, sizeof(buf),
-                 "No reply from %s in %lu s.\nThe route may have changed - try Reset Path, "
-                 "then send a DM.", s_pingName, (unsigned long)(PING_TIMEOUT_MS / 1000));
-        _pingSet(buf, theme::ORANGE);
-        _pingStop();
-    }
-}
-
-static void _openPingBox(const char* text, lv_color_t col)
-{
-    s_pingBox = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(s_pingBox, OPS_SCREEN_W, OPS_SCREEN_H);
-    lv_obj_set_pos(s_pingBox, 0, 0);
-    lv_obj_set_style_bg_color(s_pingBox, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_pingBox, LV_OPA_50, 0);
-    lv_obj_set_style_border_width(s_pingBox, 0, 0);
-    lv_obj_clear_flag(s_pingBox, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* box = lv_obj_create(s_pingBox);
-    lv_obj_set_size(box, 270, LV_SIZE_CONTENT);
+    lv_obj_t* box = lv_obj_create(overlay);
+    lv_obj_set_size(box, 300, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(box, OPS_SCREEN_H - 8, 0);
     lv_obj_center(box);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(box, theme::ACCENT, 0);
     lv_obj_set_style_border_width(box, 1, 0);
     lv_obj_set_style_radius(box, 6, 0);
-    lv_obj_set_style_pad_all(box, 10, 0);
-    lv_obj_set_style_pad_row(box, 8, 0);
-    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 3, 0);
+    lv_obj_set_scroll_dir(box, LV_DIR_VER);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t* title = lv_label_create(box);
-    lv_label_set_text(title, "Ping");
-    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    // Name (full, may wrap) and id
+    char shown[32];
+    snprintf(shown, sizeof(shown), "%s", c.name);
+    theme::sanitizeText(shown);
+    lv_obj_t* nameLbl = lv_label_create(box);
+    lv_obj_set_width(nameLbl, 282);
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(nameLbl, shown);
+    lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
 
-    s_pingLbl = lv_label_create(box);
-    lv_obj_set_width(s_pingLbl, 250);
-    lv_label_set_long_mode(s_pingLbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(s_pingLbl, theme::bodyFont12(), 0);
-    _pingSet(text, col);
+    auto row = [&](const char* label, const char* value, lv_color_t col, lv_obj_t** valOut = nullptr,
+                   bool fitValue = false) {
+        lv_obj_t* r = lv_obj_create(box);
+        lv_obj_set_size(r, 282, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(r, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(r, 0, 0);
+        lv_obj_set_style_pad_all(r, 0, 0);
+        lv_obj_set_style_pad_column(r, 6, 0);
+        lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+        lv_obj_t* l = lv_label_create(r);
+        lv_label_set_text(l, label);
+        lv_obj_set_width(l, 72);
+        lv_obj_set_style_text_color(l, theme::TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_t* v = lv_label_create(r);
+        lv_label_set_text(v, value);
+        lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(v, fitValue ? LV_SIZE_CONTENT : 204);   // fit: room for an icon after it
+        lv_obj_set_style_text_color(v, col, 0);
+        lv_obj_set_style_text_font(v, &lv_font_montserrat_12, 0);
+        if (valOut) *valOut = r;
+    };
+
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%02X%02X%02X%02X",
+             c.pubKeyPrefix[0], c.pubKeyPrefix[1], c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
+    row("ID", buf, theme::TEXT);
+
+    // Last heard
+    char when[24], ago[20];
+    fmtDateTime(c.lastSeen, when, sizeof(when));
+    _fmtAgo(c.lastSeen, ago, sizeof(ago));
+    if (ago[0]) snprintf(buf, sizeof(buf), "%s  (%s)", when, ago);
+    else        snprintf(buf, sizeof(buf), "%s", c.lastSeen ? when : "never");
+    row("Last heard", buf, theme::TEXT);
+
+    // Signal: RSSI + bars
+    lv_obj_t* sigRow = nullptr;
+    // Coloured like the bars: green >= -80, yellow >= -100, red below.
+    lv_color_t sigCol = theme::TEXT_MUTED;
+    if (c.lastRssi < 0.0f) {
+        snprintf(buf, sizeof(buf), "%.0f dBm", (double)c.lastRssi);
+        sigCol = c.lastRssi >= -80.0f  ? lv_color_hex(0x3FB950)
+               : c.lastRssi >= -100.0f ? lv_color_hex(0xE3B341)
+                                       : lv_color_hex(0xF85149);
+    } else {
+        snprintf(buf, sizeof(buf), "not heard yet");
+    }
+    row("Signal", buf, sigCol, &sigRow, true);
+    if (sigRow && c.lastRssi < 0.0f) theme::addSignalBars(sigRow, c.lastRssi);
+
+    // Hops away: heard this session (peer list), else the saved route
+    ops::PeerInfo p;
+    bool heard = ops::MeshService::instance().findPeerByKey(c.pubKeyPrefix, p);
+    if (heard && p.hops != 0xFF)
+        snprintf(buf, sizeof(buf), p.hops == 0 ? "direct (0 hops)" : "%u hop%s", p.hops, p.hops == 1 ? "" : "s");
+    else if (c.lastHopsP1) {   // saved from the last time it was heard
+        uint8_t h = c.lastHopsP1 - 1;
+        snprintf(buf, sizeof(buf), h == 0 ? "direct (when last heard)" : "%u hop%s (when last heard)",
+                 h, h == 1 ? "" : "s");
+    } else if (c.outPathValid && c.outPathLen != 0xFF)
+        snprintf(buf, sizeof(buf), (c.outPathLen & 63) == 0 ? "direct (saved route)"
+                                                             : "%u hops (saved route)", c.outPathLen & 63);
+    else
+        snprintf(buf, sizeof(buf), "unknown");
+    row("Hops away", buf, theme::TEXT);
+
+    // Saved route, as repeater codes
+    if (c.outPathValid && c.outPathLen != 0xFF && (c.outPathLen & 63) > 0) {
+        int hops = c.outPathLen & 63, sz = (c.outPathLen >> 6) + 1, pos = 0;
+        buf[0] = '\0';
+        for (int h = 0; h < hops && pos < (int)sizeof(buf) - 8; h++) {
+            if (h) pos += snprintf(buf + pos, sizeof(buf) - pos, ">");
+            for (int b = 0; b < sz; b++)
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X", c.outPath[h * sz + b]);
+        }
+        row("Route", buf, theme::TEXT_MUTED);
+    }
+
+    // Distance and position
+    char dist[16];
+    fmtDistance(c, dist, sizeof(dist));
+    row("Distance", strcmp(dist, "--") ? dist : "unknown", theme::TEXT);
+    if (c.lat != 0 || c.lon != 0)
+        snprintf(buf, sizeof(buf), "%.5f, %.5f", c.lat / 1e6, c.lon / 1e6);
+    else
+        snprintf(buf, sizeof(buf), "not shared");
+    row("Position", buf, theme::TEXT);
+
+    // Telemetry: none is requested from contacts, so none is stored
+    row("Telemetry", "none received", theme::TEXT_MUTED);
+
+    // Full public key — least used, last
+    bool hasKey = false;
+    for (int i = 0; i < 32; i++) if (c.pubKey[i]) { hasKey = true; break; }
+    if (hasKey) {
+        for (int i = 0; i < 32; i++) snprintf(buf + i * 2, 3, "%02X", c.pubKey[i]);
+    } else {
+        snprintf(buf, sizeof(buf), "not known yet");
+    }
+    row("Public key", buf, theme::TEXT_MUTED);
 
     lv_obj_t* btn = lv_btn_create(box);
     lv_group_remove_obj(btn);
-    lv_obj_set_size(btn, 250, 30);
+    lv_obj_set_size(btn, 282, 30);
     lv_obj_set_style_bg_color(btn, theme::BG, 0);
     lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, theme::BORDER, 0);
     lv_obj_set_style_border_width(btn, 1, 0);
     lv_obj_set_style_radius(btn, 4, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_add_event_cb(btn, _onPingClose, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(btn, _onDetailsClose, LV_EVENT_CLICKED, overlay);
     lv_obj_t* l = lv_label_create(btn);
     lv_label_set_text(l, "Close");
     lv_obj_set_style_text_color(l, theme::TEXT, 0);
@@ -680,40 +737,14 @@ static void _openPingBox(const char* text, lv_color_t col)
     lv_obj_center(l);
 }
 
-void ScreenContacts::_onPopupPing(lv_event_t* e)
+void ScreenContacts::_onPopupDetails(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     lv_obj_del_async(overlay);   // handler runs on one of its children
     Contact c;
     bool ok = s_pendingContact >= 0 && contacts::get(s_pendingContact, c);
     s_pendingContact = -1;
-    if (!ok) return;
-
-    _pingStop();
-    snprintf(s_pingName, sizeof(s_pingName), "%s", c.name);
-    theme::sanitizeText(s_pingName);
-    auto& mesh = ops::MeshService::instance();
-    char buf[160];
-    if (!mesh.hasPathTo(c.pubKeyPrefix)) {
-        snprintf(buf, sizeof(buf),
-                 "No route to %s is known yet.\nSend a DM first (its reply sets the route), "
-                 "or use Set Path.", s_pingName);
-        _openPingBox(buf, theme::ORANGE);
-        return;
-    }
-    uint32_t tag = 0;
-    int nodes = 0;
-    if (!mesh.sendTrace(c.pubKeyPrefix, tag, nodes)) {
-        snprintf(buf, sizeof(buf), "Couldn't send a ping to %s.", s_pingName);
-        _openPingBox(buf, theme::RED);
-        return;
-    }
-    s_pingTag  = tag;
-    s_pingSent = millis();
-    s_pingHops = nodes;
-    snprintf(buf, sizeof(buf), "Pinging %s...", s_pingName);
-    _openPingBox(buf, theme::TEXT_MUTED);
-    s_pingTimer = lv_timer_create(_pingTick, 100, nullptr);
+    if (ok) _openDetailsBox(c);
 }
 
 // ── _onPopupClose() ───────────────────────────────────────────────────

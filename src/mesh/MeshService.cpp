@@ -466,24 +466,7 @@ class OMSMesh : public BaseChatMesh {
                 _peers[i].lat      = contact.gps_lat;
                 _peers[i].lon      = contact.gps_lon;
                 _peerSerial++;
-                // Update position in stored contact/repeater without triggering
-                // a full NVS save — position persists on the next natural save().
-                int idx = -1;
-                uint32_t now = (uint32_t)getRTCClock()->getCurrentTime();
-                float    rssi = radio_driver.getLastRSSI();
-                if (contact.type == 2) {
-                    if (ops::repeaters::findByKey(contact.id.pub_key, &idx)) {
-                        ops::repeaters::setLiveData(idx, contact.name, now, rssi);
-                        ops::repeaters::setPosition(idx, contact.gps_lat, contact.gps_lon);
-                        ops::repeaters::setFullKey(idx, contact.id.pub_key);
-                    }
-                } else {
-                    if (ops::contacts::findByKey(contact.id.pub_key, &idx)) {
-                        ops::contacts::setLiveData(idx, contact.name, now, rssi);
-                        ops::contacts::setPosition(idx, contact.gps_lat, contact.gps_lon);
-                        ops::contacts::setFullKey(idx, contact.id.pub_key);
-                    }
-                }
+                _updateStoredLive(contact, hops);
                 return;
             }
         }
@@ -513,6 +496,30 @@ class OMSMesh : public BaseChatMesh {
             p.hops     = hops;
             _peerSerial++;
             _autoAddPeer(p);
+        }
+        // First time heard this session: refresh the saved entry too (it was
+        // only updated on later hearings, so a reboot-old lastSeen stuck).
+        _updateStoredLive(contact, hops);
+    }
+
+    // Live data (name, time, RSSI, hops, position) into the saved contact or
+    // repeater, without a save — it persists on the next natural save().
+    void _updateStoredLive(const ContactInfo& contact, uint8_t hops) {
+        int idx = -1;
+        uint32_t now = (uint32_t)getRTCClock()->getCurrentTime();
+        float    rssi = radio_driver.getLastRSSI();
+        if (contact.type == 2) {
+            if (ops::repeaters::findByKey(contact.id.pub_key, &idx)) {
+                ops::repeaters::setLiveData(idx, contact.name, now, rssi);
+                ops::repeaters::setPosition(idx, contact.gps_lat, contact.gps_lon);
+                ops::repeaters::setFullKey(idx, contact.id.pub_key);
+            }
+        } else {
+            if (ops::contacts::findByKey(contact.id.pub_key, &idx)) {
+                ops::contacts::setLiveData(idx, contact.name, now, rssi, hops);
+                ops::contacts::setPosition(idx, contact.gps_lat, contact.gps_lon);
+                ops::contacts::setFullKey(idx, contact.id.pub_key);
+            }
         }
     }
 
@@ -1265,8 +1272,14 @@ private:
                 else _applyReverseOutPath(*ci, pkt->path, pkt->path_len);
             }
         }
+        if (_blankText(text)) {   // nothing to show; still ACKed by BaseChatMesh
+            OPS_LOG("RX", "[DM] empty message from %s dropped", from.name);
+            _compQueueContactMsg(from, pkt, sender_timestamp, text);
+            return;
+        }
         RxMessage msg{};
-        msg.timestamp = sender_timestamp;
+        // No sender clock: show when we received it rather than "--:--".
+        msg.timestamp = sender_timestamp ? sender_timestamp : getRTCClock()->getCurrentTime();
         strncpy(msg.senderName, from.name, 31);
         strncpy(msg.text, text, 159);
         msg.rssi     = radio_driver.getLastRSSI();
@@ -1517,6 +1530,12 @@ private:
         }
     }
 
+    // True if text has nothing to show (empty or only whitespace).
+    static bool _blankText(const char* t) {
+        for (; t && *t; t++) if (!isspace((unsigned char)*t)) return false;
+        return true;
+    }
+
     void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* pkt,
                               uint32_t timestamp, const char* text) override {
         RxMessage msg{};
@@ -1544,6 +1563,16 @@ private:
             ChannelDetails cd;
             if (getChannel(idx, cd)) strncpy(msg.channelName, cd.name, sizeof(msg.channelName) - 1);
         }
+        // Some senders (bots, clients without a clock) send empty text with a
+        // zero timestamp: nothing to show, so no alert / "?" bubble.
+        if (_blankText(msg.text)) {
+            OPS_LOG("RX", "[#%s] empty message from %s dropped",
+                    msg.channelName[0] ? msg.channelName : "?", msg.senderName);
+            _compQueueChannelMsg(channel, pkt, timestamp, text);   // the phone app still gets it
+            return;
+        }
+        // No sender clock: show when we received it rather than "--:--".
+        if (msg.timestamp == 0) msg.timestamp = getRTCClock()->getCurrentTime();
         OPS_LOG("RX", "[#%s] %s: %.100s  rssi:%.0f snr:%.0f",
                 msg.channelName[0] ? msg.channelName : "?",
                 msg.senderName, msg.text, (double)msg.rssi, (double)msg.snr);

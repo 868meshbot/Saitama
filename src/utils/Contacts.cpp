@@ -40,6 +40,8 @@ static void _saveToSD() {
             obj["fav"]  = true;
         if (s_contacts[i].blocked)
             obj["blocked"] = true;
+        if (s_contacts[i].lastHopsP1)
+            obj["hops"] = s_contacts[i].lastHopsP1 - 1;
         if (s_contacts[i].lat != 0 || s_contacts[i].lon != 0) {
             obj["lat"] = s_contacts[i].lat;
             obj["lon"] = s_contacts[i].lon;
@@ -115,6 +117,7 @@ static bool _loadFromSD() {
         c.unreadCount = (uint16_t)(obj["unreadCnt"] | (c.hasUnread ? 1 : 0));
         c.favourite = obj["fav"]       | false;
         c.blocked   = obj["blocked"]   | false;
+        c.lastHopsP1 = obj["hops"].is<int>() ? (uint8_t)((int)obj["hops"] + 1) : 0;
         c.lat       = obj["lat"]       | (int32_t)0;
         c.lon       = obj["lon"]       | (int32_t)0;
         c.outPathValid = false;
@@ -423,7 +426,8 @@ void contacts::setPosition(int idx, int32_t lat, int32_t lon)
     s_contacts[idx].lon = lon;
 }
 
-void contacts::setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi)
+void contacts::setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi,
+                           uint8_t hops)
 {
     if (idx < 0 || idx >= s_count) return;
     if (name && name[0]) {
@@ -432,6 +436,7 @@ void contacts::setLiveData(int idx, const char* name, uint32_t lastSeen, float l
     }
     s_contacts[idx].lastSeen = lastSeen;
     s_contacts[idx].lastRssi = lastRssi;
+    if (hops != 0xFF) s_contacts[idx].lastHopsP1 = (uint8_t)(hops < 254 ? hops + 1 : 255);
 }
 
 void contacts::setFullKey(int idx, const uint8_t* pubKey32)

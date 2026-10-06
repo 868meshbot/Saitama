@@ -21,7 +21,8 @@ struct Contact {
     bool     outPathValid;       // true = outPath/outPathLen hold a usable route
     uint8_t  outPathLen;         // 0 = direct neighbour; 0xFF = unknown
     bool     blocked;            // messages hidden in chat; occupies former _pathPad[0]
-    uint8_t  _pathPad;
+    uint8_t  lastHopsP1;         // hops of the last packet heard from it, PLUS ONE;
+                                 // 0 = unknown (older saves held 0 here)
     uint8_t  outPath[64];        // MeshCore out_path bytes (MAX_PATH_SIZE = 64)
     // When outPath was confirmed (unix time): 0 = unknown age, PATH_AT_PINNED =
     // set by hand. Appended last so older NVS blobs still load as a prefix.
@@ -88,7 +89,9 @@ namespace contacts {
     void setFullKey(int idx, const uint8_t* pubKey32);
     // Update name, lastSeen, and lastRssi from a live advert/packet without
     // triggering a full NVS save. Persisted on the next natural save() call.
-    void setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi);
+    // hops: how far the packet that brought it travelled (0xFF = not known).
+    void setLiveData(int idx, const char* name, uint32_t lastSeen, float lastRssi,
+                     uint8_t hops = 0xFF);
 }
 
 }  // namespace ops
