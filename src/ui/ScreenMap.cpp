@@ -10,8 +10,10 @@
 // Markers:           NavBoxLib MarkerLayer — single-char label (first letter of name)
 
 #include "ScreenMap.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
+#include "Emoji.h"
 #include "../mesh/MeshService.h"
 #include "../hardware/Board.h"
 #include "../utils/Log.h"
@@ -42,10 +44,15 @@ static constexpr int ZOOM_DEF = 10;
 // Pre-set into mempool_ before begin() so NavBoxLib's alloc() uses PSRAM.
 static constexpr size_t POOL_SZ = (TILECACHE_SIZE + 1) * 256 * 256 * 2;
 
-// Marker colours (RGB24)
-static constexpr uint32_t COL_REPEATER = 0x9400D3;  // purple
-static constexpr uint32_t COL_CONTACT  = 0x24B4D7;  // cyan-blue
-static constexpr uint32_t COL_SELF     = 0x00C850;  // green
+// Marker colours (RGB24) — day tiles are light, night tiles dark, so each
+// set is picked to read on its own background.
+static constexpr uint32_t COL_REPEATER       = 0x9400D3;  // day: purple
+static constexpr uint32_t COL_CONTACT        = 0xE02020;  // day: red
+static constexpr uint32_t COL_SELF           = 0x1E5AFF;  // day: blue
+static constexpr uint32_t COL_REPEATER_NIGHT = 0xFFC107;  // night: golden yellow
+static constexpr uint32_t COL_CONTACT_NIGHT  = 0x24B4D7;  // night: cyan-blue
+static constexpr uint32_t COL_SELF_NIGHT     = 0xFF3B30;  // night: red
+static bool s_markersStale = false;   // style changed: rebuild markers in tick()
 
 // Name label records — one lv_label per marker, positioned via renderer.project()
 struct NameLabel {
@@ -60,7 +67,7 @@ static void _repositionLabels();
 // ── File-scope state ──────────────────────────────────────────────────
 static MapRenderer s_renderer;
 static uint16_t    s_markerIds[64];
-static NameLabel   s_nameLabels[64];
+static NameLabel   (&s_nameLabels)[64] = ops::psram::array<NameLabel[64]>();
 static int         s_markerCount = 0;
 
 // ── Static member definitions ─────────────────────────────────────────
@@ -73,6 +80,54 @@ float ScreenMap::_centerLng   = -0.12f;
 int   ScreenMap::_zoom        = ZOOM_DEF;
 bool  ScreenMap::_gpsCentered = false;
 
+// ── Map style: day / night tile folders ───────────────────────────────
+//   /maps/osm/day/{z}/{x}/{y}.png     standard OSM
+//   /maps/osm/night/{z}/{x}/{y}.png   dark style (e.g. Thunderforest Transport Dark)
+//   /maps/osm/{z}/{x}/{y}.png         old flat layout — used as "day"
+// Day is the default; Auto shows night tiles while night mode is active; the
+// top-bar moon/sun button switches day <-> night by hand. With no night
+// tiles, night shows the day tiles colour-inverted (NavBoxLib smart invert).
+// NavBoxLib keeps a pointer to the path pattern, so s_tileFmt is rewritten in
+// place and the tile cache flushed when the style changes.
+
+static char s_tileFmt[40] = "/maps/osm/%d/%d/%d.png";
+static lv_obj_t* s_styleLbl = nullptr;   // top-bar day/night button label
+static void _updateStyleBtn();
+static bool s_tileInvert  = false;
+static uint32_t s_styleCheckMs = 0;
+
+static bool _hasLegacyTiles()
+{
+    char p[24];
+    for (int z = 1; z <= 19; z++) {
+        snprintf(p, sizeof(p), "/maps/osm/%d", z);
+        if (SD.exists(p)) return true;
+    }
+    return false;
+}
+
+static void _resolveTiles(char* fmt, size_t n, bool& invert)
+{
+    const auto& cfg = ops::config::get();
+    bool wantNight = cfg.mapStyle == 1 || (cfg.mapStyle == 2 && ops::config::nightModeActive());
+    bool hasDay    = SD.exists("/maps/osm/day");
+    bool hasNight  = SD.exists("/maps/osm/night");
+    const char* dayRoot = hasDay ? "/maps/osm/day" : (_hasLegacyTiles() ? "/maps/osm" : nullptr);
+
+    const char* root;
+    invert = false;
+    if (wantNight) {
+        if (hasNight)     root = "/maps/osm/night";
+        else if (dayRoot) { root = dayRoot; invert = true; }   // no night tiles: invert day
+        else              root = "/maps/osm";
+    } else {
+        if (dayRoot)       root = dayRoot;
+        else if (hasNight) root = "/maps/osm/night";             // only night tiles exist
+        else               root = "/maps/osm";
+    }
+    snprintf(fmt, n, "%s/%%d/%%d/%%d.png", root);
+}
+
 // ── Tile availability check ───────────────────────────────────────────
 static bool _hasTiles()
 {
@@ -80,6 +135,49 @@ static bool _hasTiles()
 }
 
 // ── show() ───────────────────────────────────────────────────────────
+// Re-resolves the tile folder (style setting / night mode may have changed)
+// and, if it differs, switches: rewrite the pattern NavBoxLib points at, then
+// flush its cache — setSmartInvert(false) clears and reloads every tile.
+static void _applyMapStyle()
+{
+    if (!ops::sdcard::isMounted()) return;
+    char fmt[sizeof(s_tileFmt)];
+    bool inv;
+    _resolveTiles(fmt, sizeof(fmt), inv);
+    if (strcmp(fmt, s_tileFmt) == 0 && inv == s_tileInvert) return;
+    strncpy(s_tileFmt, fmt, sizeof(s_tileFmt) - 1);
+    s_tileFmt[sizeof(s_tileFmt) - 1] = '\0';
+    s_tileInvert = inv;
+    s_renderer.setSmartInvert(false);          // drop cached tiles, reload
+    if (inv) s_renderer.setSmartInvert(true);  // new tiles load inverted
+    OPS_LOG("Map", "Map style -> %s%s", s_tileFmt, inv ? " (inverted)" : "");
+    _updateStyleBtn();
+    s_markersStale = true;   // marker colours follow day/night
+}
+
+// The button shows what a tap switches TO: moon while showing day tiles,
+// sun while showing night (night folder or inverted day).
+static bool _showingNight()
+{
+    return s_tileInvert || strstr(s_tileFmt, "/night/") != nullptr;
+}
+
+static void _updateStyleBtn()
+{
+    if (!s_styleLbl) return;
+    lv_label_set_text(s_styleLbl, _showingNight() ? "\xE2\x98\x80"            // U+2600 sun
+                                                  : "\xF0\x9F\x8C\x99");     // U+1F319 moon
+}
+
+static void _onStyleToggle(lv_event_t*)
+{
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.mapStyle = _showingNight() ? 0 : 1;   // manual day or night
+    ops::config::save();
+    _applyMapStyle();
+    _updateStyleBtn();
+}
+
 void ScreenMap::show()
 {
     if (!_gpsCentered) {
@@ -100,6 +198,7 @@ void ScreenMap::show()
         _showMountDialog();
     } else {
         if (_mountOverlay) { lv_obj_del(_mountOverlay); _mountOverlay = nullptr; }
+        _applyMapStyle();
         s_renderer.setCenter(GeoPoint(_centerLat, _centerLng), _zoom);
         s_renderer.invalidate();
         _repositionLabels();
@@ -118,7 +217,17 @@ bool ScreenMap::isActive()
 void ScreenMap::tick()
 {
     if (!isActive()) return;
-    s_renderer.iterate(millis());
+    uint32_t now = millis();
+    if (now - s_styleCheckMs > 30000) {   // night mode starting/ending while open
+        s_styleCheckMs = now;
+        _applyMapStyle();
+    }
+    if (s_markersStale) {
+        s_markersStale = false;
+        _refreshMarkers();
+        _repositionLabels();
+    }
+    s_renderer.iterate(now);
 }
 
 void ScreenMap::navigate(int dxPx, int dyPx)
@@ -153,7 +262,7 @@ void ScreenMap::_build()
     lv_obj_set_flex_align(bar,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    auto mkBarBtn = [&](const char* label, lv_event_cb_t cb)
+    auto mkBarBtn = [&](const char* label, lv_event_cb_t cb) -> lv_obj_t*
     {
         lv_obj_t* btn = lv_btn_create(bar);
         lv_group_remove_obj(btn);
@@ -171,6 +280,7 @@ void ScreenMap::_build()
         lv_obj_set_style_text_color(lbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
         lv_obj_center(lbl);
+        return lbl;
     };
 
     mkBarBtn(LV_SYMBOL_HOME,  _onHomeClick);
@@ -180,6 +290,10 @@ void ScreenMap::_build()
     lv_obj_set_style_text_color(title, theme::TEXT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_flex_grow(title, 1);
+
+    // Day/night switch, left of Close
+    s_styleLbl = mkBarBtn("\xF0\x9F\x8C\x99", _onStyleToggle);
+    lv_obj_set_style_text_font(s_styleLbl, ops::emoji::emojiFont(&lv_font_montserrat_10), 0);
 
     mkBarBtn(LV_SYMBOL_CLOSE, _onExitClick);
 
@@ -200,13 +314,16 @@ void ScreenMap::_build()
         }
     }
 
-    bool ok = s_renderer.begin(_screen, MAP_W, MAP_H,
-                                "/maps/osm/%d/%d/%d.png");
+    if (ops::sdcard::isMounted()) _resolveTiles(s_tileFmt, sizeof(s_tileFmt), s_tileInvert);
+    OPS_LOG("Map", "Tiles %s%s", s_tileFmt, s_tileInvert ? " (inverted)" : "");
+    bool ok = s_renderer.begin(_screen, MAP_W, MAP_H, s_tileFmt);   // keeps the pointer
     if (!ok) {
         OPS_LOG("Map", "NavBoxLib begin() failed — map unavailable");
         return;
     }
     s_renderer.setXY(0, TOP_H);
+    if (s_tileInvert) s_renderer.setSmartInvert(true);
+    _updateStyleBtn();
     s_renderer.colBg_     = 0x1A1A2E;  // dark slate background for missing tiles
     s_renderer.colAccent_ = 0x24B4D7;  // default dot colour (overridden per marker)
     s_renderer.colHome_   = 0x00C850;  // home/self marker colour
@@ -290,6 +407,12 @@ void ScreenMap::_refreshMarkers()
         }
     }
     s_markerCount = 0;
+    s_markersStale = false;
+
+    const bool night = _showingNight();
+    const uint32_t colRepeater = night ? COL_REPEATER_NIGHT : COL_REPEATER;
+    const uint32_t colContact  = night ? COL_CONTACT_NIGHT  : COL_CONTACT;
+    const uint32_t colSelf     = night ? COL_SELF_NIGHT     : COL_SELF;
 
     auto addMark = [&](double lat, double lon, uint32_t col, const char* name)
     {
@@ -316,18 +439,18 @@ void ScreenMap::_refreshMarkers()
         s_markerCount++;
     };
 
-    // Saved repeaters → purple
+    // Saved repeaters
     for (int i = 0; i < ops::repeaters::count(); i++) {
         ops::Repeater r;
         if (!ops::repeaters::get(i, r)) continue;
-        addMark((double)r.lat / 1e6, (double)r.lon / 1e6, COL_REPEATER, r.name);
+        addMark((double)r.lat / 1e6, (double)r.lon / 1e6, colRepeater, r.name);
     }
 
-    // Saved contacts → blue
+    // Saved contacts
     for (int i = 0; i < ops::contacts::count(); i++) {
         ops::Contact c;
         if (!ops::contacts::get(i, c)) continue;
-        addMark((double)c.lat / 1e6, (double)c.lon / 1e6, COL_CONTACT, c.name);
+        addMark((double)c.lat / 1e6, (double)c.lon / 1e6, colContact, c.name);
     }
 
     // Live peers not yet persisted in NVS stores
@@ -340,10 +463,10 @@ void ScreenMap::_refreshMarkers()
         if (p.type == 2 && ops::repeaters::findByKey(p.pubKeyPrefix, &dummy)) continue;
         if (p.type != 2 && ops::contacts::findByKey(p.pubKeyPrefix, &dummy)) continue;
         addMark((double)p.lat / 1e6, (double)p.lon / 1e6,
-                p.type == 2 ? COL_REPEATER : COL_CONTACT, p.name);
+                p.type == 2 ? colRepeater : colContact, p.name);
     }
 
-    // Self position → green
+    // Self position
     {
         auto& b = Board::instance();
         double slat = 0.0, slng = 0.0;
@@ -352,7 +475,7 @@ void ScreenMap::_refreshMarkers()
             const auto& cfg = ops::config::get();
             slat = cfg.manualLat; slng = cfg.manualLon;
         }
-        addMark(slat, slng, COL_SELF, ops::config::get().callsign);
+        addMark(slat, slng, colSelf, ops::config::get().callsign);
     }
 }
 

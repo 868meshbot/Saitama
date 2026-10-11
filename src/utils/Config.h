@@ -104,6 +104,10 @@ struct Config {
     bool       nightMode;
     uint16_t   nightStartMin;
     uint16_t   nightEndMin;
+    // Map tiles: 0 = day (/maps/osm/day, default), 1 = night (/maps/osm/night),
+    // 2 = auto — night tiles while night mode is active. The Map app's
+    // moon/sun button switches between day and night.
+    uint8_t    mapStyle;
 };
 
 // Values for Config::radioPowerMode.

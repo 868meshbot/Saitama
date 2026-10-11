@@ -402,6 +402,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, "\xF0\x9F\x8C\x99", "Night Mode", ntStr, 42,   // U+1F319 moon
                 cfg.nightMode ? ROW_ON : ROW_OFF);
     }
+    {
+        static const char* kMapStyle[] = { "Day", "Night", "Auto" };
+        _addRow(_list, LV_SYMBOL_IMAGE, "Map Style", kMapStyle[cfg.mapStyle < 3 ? cfg.mapStyle : 2], 43);
+    }
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9,
@@ -5136,6 +5140,11 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
         case 8:  // Speaker → on/off + volume in one window
             _openVolumeDialog();
             return;
+
+        case 43:  // Map Style — cycle Day → Night → Auto (auto = night tiles in night mode)
+            cfg.mapStyle = (uint8_t)((cfg.mapStyle + 1) % 3);
+            ops::config::save();
+            break;
 
         case 42:  // Night Mode → schedule window
             _openNightDialog();

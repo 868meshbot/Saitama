@@ -3,20 +3,28 @@
 Saitama Map Tile Downloader
 
 Downloads OpenStreetMap tiles for offline use on a LilyGo T-Deck Plus.
-Tiles are saved to the SD card path the firmware expects: /ops/maps/{z}/{x}/{y}.png
+Tiles are saved where the firmware looks: /maps/osm/<style>/{z}/{x}/{y}.png,
+where <style> is "day" (OpenStreetMap, default) or "night" (Thunderforest
+Transport Dark). Pass the /maps/osm folder as --output; the style subfolder is
+added. Saitama shows night tiles while night mode is on (Settings > Map Style:
+Auto), or the day tiles colour-inverted if there are no night tiles.
+
+Night tiles: need a Thunderforest API key, and Thunderforest only permits bulk
+(offline) downloading on Small Business plans or higher — confirm with
+--i-have-a-bulk-download-plan.
 
 Usage:
-    python3 download_tiles.py --output /Volumes/SD/ops/maps \
+    python3 download_tiles.py --output /Volumes/SD/maps/osm \
         --lat 49.6117 --lng 6.1300 \
         --radius 50 --zoom 8-14
 
     # Luxembourg country-wide
-    python3 download_tiles.py --output /Volumes/SD/ops/maps \
+    python3 download_tiles.py --output /Volumes/SD/maps/osm \
         --bounds 49.0,5.7 50.2,6.6 \
         --zoom 8-14
 
     # Specific city
-    python3 download_tiles.py --output /Volumes/SD/ops/maps \
+    python3 download_tiles.py --output /Volumes/SD/maps/osm \
         --lat 49.6117 --lng 6.1300 \
         --radius 10 --zoom 12-16
 
@@ -36,9 +44,27 @@ import time
 import math
 import requests
 
-TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-USER_AGENT = "Saitama-TileDownloader/0.1 (https://github.com/868-Meshbot/Saitama)"
-RATE_LIMIT_DELAY = 0.6  # seconds between requests (stay under 2/s)
+# Map styles. The firmware reads /maps/osm/day and /maps/osm/night (and the old
+# flat /maps/osm as day); --output is the /maps/osm folder, the style
+# subfolder is added automatically.
+STYLES = {
+    "day":   "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    # Thunderforest Transport Dark. Needs an API key, and Thunderforest only
+    # permits bulk (offline) downloading on Small Business plans or higher —
+    # see https://www.thunderforest.com/pricing/ . Without such a plan, use
+    # day tiles: the firmware shows them colour-inverted at night.
+    "night": "https://api.thunderforest.com/transport-dark/{z}/{x}/{y}.png?apikey={key}",
+}
+TILE_URL = STYLES["day"]
+USER_AGENT = "Saitama-TileDownloader/0.1 (https://github.com/868meshbot/Saitama)"
+API_KEY = ""
+RATE_LIMIT_DELAY = 0.6
+
+# OpenStreetMap's public servers forbid bulk/offline downloading and answer
+# with an "Access blocked" PNG (HTTP 200). Its MD5, so we stop instead of
+# saving it as every tile.
+import hashlib
+BLOCKED_TILE_MD5 = {"c069a15b2cc2d6b6f527ad09eb93c61a"}  # seconds between requests (stay under 2/s)
 
 
 def lat_lng_to_tile(lat, lng, zoom):
@@ -101,7 +127,8 @@ def download_tiles(output_dir, zoom_range, bounds=None, center=None, radius_km=0
     print(f"Area: {lat_min:.4f},{lng_min:.4f} to {lat_max:.4f},{lng_max:.4f}")
     print(f"Zoom: {zoom_range[0]}-{zoom_range[1]}")
     print(f"Total tiles to download: {total_tiles}")
-    print(f"Estimated size: ~{total_tiles * 30 // 1024}KB - {total_tiles * 50 // 1024}KB")
+    # ~30-50 KB per tile
+    print(f"Estimated size: ~{total_tiles * 30 / 1024:.1f}-{total_tiles * 50 / 1024:.1f} MB")
     print()
 
     session = requests.Session()
@@ -125,9 +152,14 @@ def download_tiles(output_dir, zoom_range, bounds=None, center=None, radius_km=0
                     continue
 
                 # Download
-                url = TILE_URL.format(z=zoom, x=x, y=y)
+                url = TILE_URL.format(z=zoom, x=x, y=y, key=API_KEY)
                 try:
                     resp = session.get(url, timeout=30)
+                    if resp.status_code == 200 and \
+                            hashlib.md5(resp.content).hexdigest() in BLOCKED_TILE_MD5:
+                        sys.exit("\nThe tile server returned its 'Access blocked' image: it does not\n"
+                                 "allow bulk/offline downloading. Use a source you are licensed to\n"
+                                 "bulk-download from, e.g. your own renderer via --url.")
                     if resp.status_code == 200:
                         os.makedirs(tile_dir, exist_ok=True)
                         with open(tile_path, "wb") as f:
@@ -137,11 +169,15 @@ def download_tiles(output_dir, zoom_range, bounds=None, center=None, radius_km=0
                         print(f"  HTTP {resp.status_code} for tile {zoom}/{x}/{y}")
                         errors += 1
                 except Exception as e:
-                    print(f"  Error downloading {zoom}/{x}/{y}: {e}")
+                    msg = str(e)
+                    if API_KEY:
+                        msg = msg.replace(API_KEY, "***")   # never print the API key
+                    print(f"  Error downloading {zoom}/{x}/{y}: {msg}")
                     errors += 1
 
                 # Rate limit
-                time.sleep(RATE_LIMIT_DELAY)
+                if RATE_LIMIT_DELAY > 0:
+                    time.sleep(RATE_LIMIT_DELAY)
 
         print(f"  Progress: {downloaded} downloaded, {skipped} cached, {errors} errors")
 
@@ -149,9 +185,10 @@ def download_tiles(output_dir, zoom_range, bounds=None, center=None, radius_km=0
     print(f"Done! {downloaded} tiles downloaded, {skipped} already cached, {errors} errors")
     print(f"Tiles saved to: {output_dir}")
     print()
-    print("Tiles are ready. If output_dir is already /ops/maps on your SD card, you're done.")
+    style = os.path.basename(output_dir.rstrip("/"))
+    print(f"Tiles are ready. If output_dir is already /maps/osm/{style} on your SD card, you're done.")
     print("Otherwise copy to SD card:")
-    print(f"  cp -r {output_dir}/* /Volumes/SD/ops/maps/")
+    print(f"  cp -r {output_dir}/* /Volumes/SD/maps/osm/{style}/")
 
 
 def main():
@@ -167,8 +204,43 @@ def main():
     parser.add_argument("--lng", type=float, help="Center longitude")
     parser.add_argument("--radius", "-r", type=float, default=50,
                         help="Radius in km around center (default: 50)")
+    parser.add_argument("--style", "-s", choices=sorted(STYLES), default="day",
+                        help="day = OpenStreetMap (default); night = Thunderforest Transport Dark")
+    parser.add_argument("--apikey", default=os.environ.get("THUNDERFOREST_API_KEY", ""),
+                        help="Thunderforest API key for --style night "
+                             "(or set THUNDERFOREST_API_KEY)")
+    parser.add_argument("--url", default="",
+                        help="Tile URL template with {z} {x} {y} (e.g. your own tile server "
+                             "http://localhost:8080/tile/{z}/{x}/{y}.png); overrides --style's source")
+    parser.add_argument("--delay", type=float, default=None,
+                        help="Seconds between requests (default 0.6 for public servers; "
+                             "use 0 for your own local server)")
+    parser.add_argument("--i-have-a-bulk-download-plan", dest="bulk_ok", action="store_true",
+                        help="Confirm your Thunderforest plan permits bulk/offline downloading "
+                             "(Small Business or higher) — required for --style night")
 
     args = parser.parse_args()
+
+    global TILE_URL, API_KEY, RATE_LIMIT_DELAY
+    TILE_URL = args.url or STYLES[args.style]
+    API_KEY = args.apikey
+    if args.delay is not None:
+        RATE_LIMIT_DELAY = max(0.0, args.delay)
+    if args.style == "night" and not args.url:
+        if not args.apikey:
+            sys.exit("--style night needs a Thunderforest API key: --apikey KEY "
+                     "or THUNDERFOREST_API_KEY")
+        if not args.bulk_ok:
+            sys.exit("Thunderforest only permits bulk/offline tile downloads on Small Business\n"
+                     "plans or higher (https://www.thunderforest.com/pricing/). If yours does,\n"
+                     "re-run with --i-have-a-bulk-download-plan. Otherwise download day tiles\n"
+                     "only — Saitama shows them inverted (dark) at night.")
+
+    # Tiles go in the style's subfolder, e.g. /Volumes/SD/maps/osm/day
+    out = args.output.rstrip("/")
+    if os.path.basename(out) not in STYLES:
+        out = os.path.join(out, args.style)
+    args.output = out
 
     # Parse zoom range
     zoom_parts = args.zoom.split("-")

@@ -90,6 +90,18 @@ void init()
                 storagePasswordIsDefault() ? " (default password)" : "");
     else
         OPS_LOG("Crypto", "Key derivation FAILED - stored secrets unavailable");
+
+    // Warm up the AES peripheral now. Its first GCM use allocates a CPU
+    // interrupt (esp_aes_intr_alloc) and abort()s if none is free — which
+    // happened when the first seal came late (SD remounted from the Map app),
+    // after the radio, display, SD and BLE had taken the free interrupts.
+    // setup() runs this before those drivers, and the interrupt is kept.
+    if (s_ready) {
+        uint8_t warm[BLOB_LEN];
+        static const uint8_t kAad[1] = { 0 };
+        seal("warmup", kAad, sizeof(kAad), warm);
+        memset(warm, 0, sizeof(warm));
+    }
 }
 
 bool ready()          { return s_ready; }

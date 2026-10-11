@@ -7,7 +7,7 @@
 [![Platform](https://img.shields.io/badge/platform-T--Deck%20Plus-orange)](https://www.lilygo.cc/products/t-deck)
 [![MeshCore](https://img.shields.io/badge/mesh-MeshCore-green)](https://github.com/meshcore-dev/MeshCore)
 
-Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.com/meshcore-dev/MeshCore) messenger for the LilyGo T-Deck and T-Deck Plus: encrypted channels and DMs, a live view of every station around you, offline maps, and repeater and region tools, all on the device. No phone, no internet, no subscription. Free and open source.
+Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.com/meshcore-dev/MeshCore) messenger for the LilyGo T-Deck and T-Deck Plus: encrypted channels and DMs, a live view of every station around you, offline maps, and repeater and region tools, all on the device, with **full touchscreen support** alongside the keyboard and trackball. No phone, no internet, no subscription. Free and open source.
 
 **A phone in your pocket, without the phone, and without the paywall.**
 
@@ -31,6 +31,7 @@ Saitama is a community project. Development tooling includes AI coding assistant
 
 ## Features
 
+- **Full touchscreen support**: every screen works by touch as well as by keyboard and trackball. Tap tiles, buttons and list rows, swipe between launcher pages, scroll lists and chats, and use dropdowns and sliders by finger. Popups use large two-column buttons sized for fingers. GT911 capacitive touch, with the controller address detected automatically at boot and a calibration routine (`touch-cali` in the Terminal).
 - **Home screen**: the stations heard this session fall like rain behind Chat / Contacts / Map / Settings — coloured by signal strength, channels in blue, with lines linking each new message to its channel, reply target or DM recipient. Swipe (or trackball past the edge) for the full app grids.
 - **Chat**: Public plus up to 9 private channels, and direct messages, in a speech-bubble UI; unread counts and last-message previews; replies (`@[Name]`); DM auto-retries with delivery ticks; history saved to SD.
 - **Region scopes**: a default flood scope plus up to 9 saved regions (Settings > Region Scope), a per-channel scope, and a **Regions** app that asks nearby repeaters which regions they serve — for meshes whose repeaters only forward scoped traffic.
@@ -98,13 +99,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for firmware variant details.
 
 ### Map Tiles
 
-Map tiles go on a FAT32-formatted SD card:
+Map tiles go on a FAT32-formatted SD card, one folder per style:
 
 ```
-/maps/osm/{zoom}/{z}/{y}/{x}.png
+/maps/osm/day/{z}/{x}/{y}.png      # standard OpenStreetMap
+/maps/osm/night/{z}/{x}/{y}.png    # optional dark style (Thunderforest Transport Dark)
 ```
 
-Example: `/maps/osm/10/529/340.png`
+Tiles use the standard "slippy map" layout: zoom, then x, then y. Example (London, zoom 10): `/maps/osm/day/10/511/340.png`. Cards with the older flat layout (`/maps/osm/{z}/{x}/{y}.png`) still work and are used as day tiles.
+
+**Settings > Map Style** chooses Day, Night or **Auto** (default): Auto shows night tiles while Night Mode is active. With no night tiles, the day tiles are shown colour-inverted at night, so a dark map needs no extra download.
 
 **Option 1 — included CLI script:**
 
@@ -114,14 +118,16 @@ python3 scripts/download_tiles.py \
     --lat 51.5 --lng -0.1 --radius 20 --zoom 10-14
 ```
 
-See `scripts/download_tiles.py --help` for full options. Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — rate-limited to 2 req/s.
+`--output` is the `maps/osm` folder; the script adds `day/` (or `night/` with `--style night`). See `scripts/download_tiles.py --help` for full options. Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — rate-limited to 2 req/s.
+
+Night tiles (`--style night`) come from Thunderforest and need an API key (`--apikey` or `THUNDERFOREST_API_KEY`). Thunderforest only permits bulk/offline downloading on its [Small Business or higher plans](https://www.thunderforest.com/pricing/), so the script also requires `--i-have-a-bulk-download-plan`. Without such a plan, rely on the inverted day tiles.
 
 **Option 2 — GUI tool ([map-tiles-downloader](https://github.com/tekk/map-tiles-downloader)):**
 
-A graphical downloader with a map preview. Draw a bounding box, pick zoom levels, and it exports tiles in the correct `{z}/{y}/{x}.png` layout.
+A graphical downloader with a map preview. Draw a bounding box, pick zoom levels, and export standard OSM tiles; make sure the result is laid out as `{z}/{x}/{y}.png` under `maps/osm/day`.
 
 ```
-Output path: /Volumes/SD/maps/osm
+Output path: /Volumes/SD/maps/osm/day
 ```
 
 ## Project Structure
@@ -129,41 +135,68 @@ Output path: /Volumes/SD/maps/osm
 ```
 Saitama/
 ├── src/
-│   ├── main.cpp              # Entry point: setup() + loop()
-│   ├── version.h             # Release version
+│   ├── main.cpp                  # Entry point: setup() + loop()
+│   ├── version.h                 # Release version
 │   ├── hardware/
-│   │   └── Board.h/cpp       # T-Deck hardware abstraction (display, keyboard, trackball, GPS, LoRa)
+│   │   └── Board.h/cpp           # T-Deck hardware: power, display, keyboard, trackball, touch, GPS, battery
 │   ├── mesh/
-│   │   ├── MeshService.h/cpp # MeshCore bridge: messages, contacts, routes, scopes, BLE companion
-│   │   └── Fhss.h/cpp        # Frequency hopping
-│   ├── map/
-│   │   └── MapEngine.h/cpp   # Tile renderer
+│   │   ├── MeshService.h/cpp     # MeshCore bridge: messages, contacts, routes, region scopes, BLE companion
+│   │   └── Fhss.h/cpp            # Frequency hopping
 │   ├── bt/
-│   │   └── BTCompanionService.h/cpp  # BLE companion transport
+│   │   └── BTCompanionService.h/cpp  # BLE companion transport (MeshCore apps)
+│   ├── map/
+│   │   └── MapEngine.h/cpp       # Offline tile renderer
+│   ├── games/                    # Game logic: 2048, tic-tac-toe
 │   ├── ui/
-│   │   ├── UIScreen.h/cpp    # LVGL init, input drivers, tick loop, screensaver
-│   │   ├── ScreenLauncher    # Home page (heard rain) + app grids
-│   │   ├── ScreenHome        # Chat (channel list, conversations, DMs)
-│   │   ├── ScreenSettings    # Settings
-│   │   ├── ScreenRegions     # Region discovery
-│   │   ├── ScopePicker       # Shared region-scope dropdown
-│   │   ├── Screen*           # Contacts, Repeaters, Heard, Finder, Trace, Map, Terminal, tools…
-│   │   └── Theme.h/cpp       # Colour palette and fonts
+│   │   ├── UIScreen.h/cpp        # LVGL init, input drivers, main UI tick, screensaver, notifications
+│   │   ├── ScreenBoot            # Splash screen
+│   │   ├── ScreenLauncher        # Home page (heard-station rain) + two app grids
+│   │   ├── ScreenHome            # Chat: channel list, conversations, DMs
+│   │   ├── ScreenContacts        # Contacts: filter, signal bars, actions, Details, Block
+│   │   ├── ScreenRepeaters       # Repeaters: filter, signal bars, actions, admin login/panel
+│   │   ├── ScreenHeard           # Stations heard this session
+│   │   ├── ScreenRegions         # Region discovery + saved regions
+│   │   ├── ScreenFinder          # Zero-hop neighbour scan
+│   │   ├── ScreenTrace           # Hop-by-hop route trace
+│   │   ├── ScreenMap             # Offline map with node positions
+│   │   ├── ScreenSettings        # Settings
+│   │   ├── ScreenTerminal        # Terminal + USB serial console
+│   │   ├── ScreenSignal          # Radio stats: RSSI/SNR/noise, packets, airtime
+│   │   ├── ScreenPower           # Battery history and power estimates
+│   │   ├── ScreenSpectrum, ScreenChanScan, ScreenSigGen, ScreenPcap, ScreenFoxhunt  # Radio tools
+│   │   ├── ScreenMP3Player, ScreenPicViewer, ScreenFileManager                    # Media and files
+│   │   ├── Screen2048, ScreenZeroXZero                                           # Games
+│   │   ├── ScreenPlaceholder     # GPS skyplot
+│   │   ├── ScopePicker           # Shared region-scope dropdown
+│   │   ├── ListFilter            # Type-to-filter box for lists
+│   │   ├── QRPopup               # QR code sharing
+│   │   ├── Emoji.h/cpp, emoji/   # Emoji image font (172 emoji)
+│   │   ├── font_montserrat_*_ext.c  # Extended-Latin fonts
+│   │   └── Theme.h/cpp           # Colours, fonts, text cleanup, signal bars
 │   └── utils/
-│       ├── Config.h/cpp      # Persistent settings (NVS + /ops/settings.json)
-│       ├── Contacts / Repeaters / Regions  # Saved lists
-│       ├── Crypto.h/cpp      # AES-256-GCM sealing for SD secrets
-│       ├── IdentityBackup    # Encrypted node identity backup
-│       ├── BtPin.h/cpp       # Bluetooth pairing PIN
-│       ├── SDCard.h/cpp      # SD mount, /ops/ files, message logs
-│       └── Log.h             # Serial logger
+│       ├── Config.h/cpp          # Settings (NVS + /ops/settings.json)
+│       ├── ConfigExport.h/cpp    # MeshCore-format import/export
+│       ├── Contacts.h/cpp        # Saved contacts (/ops/contacts.json)
+│       ├── Repeaters.h/cpp       # Saved repeaters (/ops/repeaters.json)
+│       ├── Regions.h/cpp         # Saved region scopes
+│       ├── Crypto.h/cpp          # AES-256-GCM sealing for secrets on SD
+│       ├── IdentityBackup.h/cpp  # Encrypted node identity backup
+│       ├── BtPin.h/cpp           # Bluetooth pairing PIN
+│       ├── SDCard.h/cpp          # SD mount, /ops/ files, message logs
+│       ├── Sound.h/cpp, MP3Player.h/cpp  # Speaker: notification sounds, MP3 playback
+│       ├── GpsMgr.h/cpp          # GPS power modes
+│       ├── Keymap.h/cpp, Lang.h/cpp  # Keyboard layouts, UI languages
+│       ├── LoopStats.h/cpp       # Main-loop timing
+│       ├── PsramJson.h           # PSRAM allocator for large JSON files
+│       └── Log.h                 # Serial logger
 ├── lib/
-│   └── MeshCore/             # Git submodule (mesh protocol)
-├── docs/                     # ARCHITECTURE, HARDWARE, STORED_SECRETS, SECURITY, FHSS, VERSIONING, …
-├── scripts/                  # download_tiles.py and helpers
+│   ├── MeshCore/                 # Git submodule (mesh protocol) — not modified
+│   └── lv_conf.h                 # LVGL configuration (the one the build uses)
+├── docs/                         # ARCHITECTURE, HARDWARE, STORED_SECRETS, SECURITY, FHSS, MAP_SYSTEM, VERSIONING, …
+├── scripts/                      # download_tiles.py (map tiles), gen_emoji.py (emoji assets)
 ├── platformio.ini
 ├── partitions.csv
-└── LICENSE                   # GPL-3.0
+└── LICENSE                       # GPL-3.0
 ```
 
 ## Architecture
