@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenLauncher.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenPlaceholder.h"
 #include "ScreenHome.h"
 #include "ScreenTerminal.h"
@@ -29,6 +30,7 @@
 #include "Emoji.h"
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
+#include "../utils/AutoAdvert.h"
 #include "../utils/Log.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -119,18 +121,18 @@ static lv_obj_t*   s_homeUnreadDot       = nullptr;
 static int8_t      s_selHome             = 0;
 static lv_obj_t*   s_rainArea            = nullptr;
 static lv_obj_t*   s_rainEmpty           = nullptr;
-static RainDrop    s_drops[RAIN_DROPS]   = {};
+static RainDrop    (&s_drops)[RAIN_DROPS] = ops::psram::array<RainDrop[RAIN_DROPS]>();
 static RainLink    s_links[RAIN_LINKS]     = {};
 
 // Rebuilt from peers + chat senders + channels: stations newest first
 // [0, s_rainStations), then channels, then this node last.
-static RainEntry   s_rain[RAIN_MAX + CHAN_MAX + 1];
+static RainEntry   (&s_rain)[RAIN_MAX + CHAN_MAX + 1] = ops::psram::array<RainEntry[RAIN_MAX + CHAN_MAX + 1]>();
 static int         s_rainCount           = 0;
 static int         s_rainStations        = 0;
 static int         s_rainSpawnable       = 0;   // stations + channels
 // Channel-message senders. Channel packets carry no public key, so these
 // are names only, matched to heard stations by name.
-static RainEntry   s_chat[RAIN_MAX];
+static RainEntry   (&s_chat)[RAIN_MAX] = ops::psram::array<RainEntry[RAIN_MAX]>();
 static int         s_chatCount           = 0;
 // When each channel last carried a message (by name, leading '#' stripped).
 struct ChanAct { char name[32]; uint32_t at; };
@@ -166,6 +168,9 @@ static lv_obj_t* s_advertScreen       = nullptr;
 static lv_obj_t* s_advertTimeLbl      = nullptr;
 static lv_obj_t* s_advertList         = nullptr;
 static lv_obj_t* s_advertModeDropdown = nullptr;
+static lv_obj_t* s_advertLocLbl       = nullptr;
+static lv_obj_t* s_autoAdvDropdown    = nullptr;
+static lv_obj_t* s_autoAdvSaveLbl     = nullptr;
 static uint32_t  s_advertSentAt       = 0;
 
 // ── App grid descriptors ─────────────────────────────────────────────
@@ -1380,6 +1385,46 @@ static void _advertRebuildList()
     }
 }
 
+// Location line: green when sharing (and what is shared), muted when off.
+static void _advertUpdateLocation()
+{
+    if (!s_advertLocLbl) return;
+    const auto& cfg = ops::config::get();
+    auto& board = Board::instance();
+    if (!cfg.locationSharing) {
+        lv_label_set_text(s_advertLocLbl, LV_SYMBOL_GPS " Location OFF");
+        lv_obj_set_style_text_color(s_advertLocLbl, theme::TEXT_MUTED, 0);
+    } else if (board.hasGPSFix()) {
+        lv_label_set_text(s_advertLocLbl, LV_SYMBOL_GPS " Location ON (GPS)");
+        lv_obj_set_style_text_color(s_advertLocLbl, theme::GREEN, 0);
+    } else if (cfg.manualLat != 0.0f || cfg.manualLon != 0.0f) {
+        lv_label_set_text(s_advertLocLbl, LV_SYMBOL_GPS " Location ON (manual)");
+        lv_obj_set_style_text_color(s_advertLocLbl, theme::GREEN, 0);
+    } else {
+        // Sharing on, but nothing to share: adverts go out without a position.
+        lv_label_set_text(s_advertLocLbl, LV_SYMBOL_GPS " Location ON (no fix)");
+        lv_obj_set_style_text_color(s_advertLocLbl, theme::ORANGE, 0);
+    }
+}
+
+static void _autoAdvSetSaveText(const char* txt)
+{
+    if (s_autoAdvSaveLbl) lv_label_set_text(s_autoAdvSaveLbl, txt);
+}
+
+static void _onAutoAdvChanged(lv_event_t* /*e*/)
+{
+    _autoAdvSetSaveText(LV_SYMBOL_SAVE " Save");
+}
+
+static void _onAutoAdvSave(lv_event_t* /*e*/)
+{
+    if (!s_autoAdvDropdown) return;
+    int idx = (int)lv_dropdown_get_selected(s_autoAdvDropdown);
+    bool ok = ops::autoadvert::setChoice(idx);
+    _autoAdvSetSaveText(ok ? LV_SYMBOL_OK " Saved" : LV_SYMBOL_WARNING " No SD");
+}
+
 static void _onAdvertSend(lv_event_t* /*e*/)
 {
     bool flood = s_advertModeDropdown &&
@@ -1387,6 +1432,7 @@ static void _onAdvertSend(lv_event_t* /*e*/)
     s_advertSentAt = (uint32_t)time(nullptr);
     ops::MeshService::instance().sendAdvert(0, flood);
     _advertUpdateTime();
+    _advertUpdateLocation();
     _advertRebuildList();
 }
 
@@ -1459,6 +1505,10 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_color(csLbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(csLbl, &lv_font_montserrat_14, 0);
 
+        s_advertLocLbl = lv_label_create(infoRow);
+        lv_obj_set_style_text_font(s_advertLocLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_pad_left(s_advertLocLbl, 8, 0);
+
         lv_obj_t* iSpacer = lv_obj_create(infoRow);
         lv_obj_set_size(iSpacer, 1, 1);
         lv_obj_set_style_bg_opa(iSpacer, LV_OPA_TRANSP, 0);
@@ -1472,9 +1522,53 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_font(s_advertTimeLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_pad_right(s_advertTimeLbl, 2, 0);
 
+        // Auto advertise: [label] [interval dropdown] [Save]
+        lv_obj_t* autoRow = lv_obj_create(s_advertScreen);
+        lv_obj_set_size(autoRow, OPS_SCREEN_W, 40);
+        lv_obj_align(autoRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 24);
+        lv_obj_set_style_bg_color(autoRow, theme::BG, 0);
+        lv_obj_set_style_border_width(autoRow, 0, 0);
+        lv_obj_set_style_radius(autoRow, 0, 0);
+        lv_obj_set_style_pad_hor(autoRow, 10, 0);
+        lv_obj_set_style_pad_ver(autoRow, 4, 0);
+        lv_obj_set_style_pad_column(autoRow, 8, 0);
+        lv_obj_clear_flag(autoRow, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(autoRow, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(autoRow,
+            LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* autoLbl = lv_label_create(autoRow);
+        lv_label_set_text(autoLbl, "Auto advertise");
+        lv_obj_set_style_text_color(autoLbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(autoLbl, &lv_font_montserrat_12, 0);
+
+        s_autoAdvDropdown = lv_dropdown_create(autoRow);
+        lv_obj_set_size(s_autoAdvDropdown, 90, 30);
+        lv_dropdown_set_options(s_autoAdvDropdown, ops::autoadvert::OPTIONS);
+        lv_obj_set_style_text_font(s_autoAdvDropdown, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_bg_color(s_autoAdvDropdown, theme::BG_CARD, 0);
+        lv_obj_set_style_border_color(s_autoAdvDropdown, theme::BORDER, 0);
+        lv_obj_set_style_text_color(s_autoAdvDropdown, theme::TEXT, 0);
+        lv_obj_add_event_cb(s_autoAdvDropdown, _onAutoAdvChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        lv_obj_t* saveBtn = lv_btn_create(autoRow);
+        lv_obj_set_size(saveBtn, 90, 30);
+        lv_obj_set_style_bg_color(saveBtn, theme::BG_CARD, 0);
+        lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(saveBtn, theme::BORDER, 0);
+        lv_obj_set_style_border_width(saveBtn, 1, 0);
+        lv_obj_set_style_radius(saveBtn, 6, 0);
+        lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+        lv_obj_add_event_cb(saveBtn, _onAutoAdvSave, LV_EVENT_CLICKED, nullptr);
+        s_autoAdvSaveLbl = lv_label_create(saveBtn);
+        lv_label_set_text(s_autoAdvSaveLbl, LV_SYMBOL_SAVE " Save");
+        lv_obj_set_style_text_color(s_autoAdvSaveLbl, theme::TEXT, 0);
+        lv_obj_set_style_text_font(s_autoAdvSaveLbl, &lv_font_montserrat_12, 0);
+        lv_obj_center(s_autoAdvSaveLbl);
+
         lv_obj_t* btnRow = lv_obj_create(s_advertScreen);
         lv_obj_set_size(btnRow, OPS_SCREEN_W, 40);
-        lv_obj_align(btnRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 24);
+        lv_obj_align(btnRow, LV_ALIGN_TOP_LEFT, 0, TOP_H + 24 + 40);
         lv_obj_set_style_bg_color(btnRow, theme::BG, 0);
         lv_obj_set_style_border_width(btnRow, 0, 0);
         lv_obj_set_style_radius(btnRow, 0, 0);
@@ -1509,7 +1603,7 @@ static void _showAdvertiseScreen()
         lv_obj_set_style_text_font(sendLbl, &lv_font_montserrat_12, 0);
         lv_obj_center(sendLbl);
 
-        static constexpr lv_coord_t LIST_Y = TOP_H + 24 + 40;
+        static constexpr lv_coord_t LIST_Y = TOP_H + 24 + 40 + 40;
         s_advertList = lv_obj_create(s_advertScreen);
         lv_obj_set_size(s_advertList, OPS_SCREEN_W, OPS_SCREEN_H - LIST_Y);
         lv_obj_align(s_advertList, LV_ALIGN_TOP_LEFT, 0, LIST_Y);
@@ -1524,6 +1618,12 @@ static void _showAdvertiseScreen()
         lv_obj_set_scrollbar_mode(s_advertList, LV_SCROLLBAR_MODE_AUTO);
     }
 
+    // Show the saved choice (and the current location state) on every open.
+    if (s_autoAdvDropdown) {
+        lv_dropdown_set_selected(s_autoAdvDropdown, (uint16_t)ops::autoadvert::choice());
+    }
+    _autoAdvSetSaveText(LV_SYMBOL_SAVE " Save");
+    _advertUpdateLocation();
     _advertRebuildList();
     lv_scr_load(s_advertScreen);
     OPS_LOG("UI", "Advertise screen shown");

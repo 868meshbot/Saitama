@@ -17,6 +17,7 @@
 #include "utils/Crypto.h"
 #include "utils/BtPin.h"
 #include "utils/Regions.h"
+#include "utils/AutoAdvert.h"
 #include "utils/Repeaters.h"
 #include "utils/SDCard.h"
 #include "utils/Sound.h"
@@ -62,6 +63,7 @@ void setup() {
     ops::config::scrubSdSecrets();
     ops::contacts::init();
     ops::regions::init();
+    ops::autoadvert::init();     // /ops/advert_config.json
     ops::repeaters::init();
     {
         // NVS is 16 KB: a full partition makes config/contact saves fail.
