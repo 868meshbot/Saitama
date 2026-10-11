@@ -47,6 +47,7 @@
 //   | 12 seen - pick a target  |          +--------------------------+
 
 #include "ScreenFoxhunt.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "Emoji.h"
@@ -202,7 +203,7 @@ static const char* _addrKindText(AddrKind k)
     }
 }
 
-static FoxDevice     s_dev[MAX_DEVICES];
+static FoxDevice     (&s_dev)[MAX_DEVICES] = ops::psram::array<FoxDevice[MAX_DEVICES]>();
 static volatile int  s_devCount = 0;
 static volatile bool s_dirty    = false;   // list needs a rebuild
 
@@ -275,7 +276,7 @@ static const char* _proximityWord(int rssi)
 // (screen open) and on an explicit rename.
 static constexpr int MAX_ALIASES = 64;
 struct FoxAlias { char mac[18]; char name[24]; };
-static FoxAlias s_alias[MAX_ALIASES];
+static FoxAlias (&s_alias)[MAX_ALIASES] = ops::psram::array<FoxAlias[MAX_ALIASES]>();
 static int      s_aliasCount  = 0;
 static bool     s_aliasLoaded = false;
 

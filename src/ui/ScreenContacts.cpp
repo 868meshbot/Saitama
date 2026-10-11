@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenContacts.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
 #include "ScreenTerminal.h"
@@ -202,7 +203,7 @@ void ScreenContacts::_build()
     }
 
     // Build display order: favourites first, then the rest
-    static int s_order[contacts::CAPACITY];
+    static int (&s_order)[contacts::CAPACITY] = ops::psram::array<int[contacts::CAPACITY]>();
     int j = 0;
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && c.favourite)  s_order[j++] = i; }
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && !c.favourite) s_order[j++] = i; }
@@ -860,7 +861,26 @@ void ScreenContacts::_showSetPathDialog()
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
 
     lv_obj_t* hintLbl = lv_label_create(box);
-    lv_label_set_text(hintLbl, "Hex path bytes (e.g. AABBCCDD):");
+    // Show the current route, and pre-fill it below so it can be edited.
+    ops::PathInfo curPath{};
+    bool havePath = ops::MeshService::instance().getContactPath(c.pubKeyPrefix, curPath)
+                    && curPath.known;
+    char curHex[129] = {};
+    char curLine[96];
+    if (!havePath) {
+        snprintf(curLine, sizeof(curLine), "Current: none (messages flood)\nHex path bytes, e.g. AABBCCDD:");
+    } else if (curPath.direct) {
+        snprintf(curLine, sizeof(curLine), "Current: direct (0 hops)\nHex path bytes, e.g. AABBCCDD:");
+    } else {
+        int nb = curPath.hopCount * curPath.hashSz;
+        if (nb > 64) nb = 64;
+        for (int b = 0; b < nb; b++) snprintf(curHex + b * 2, 3, "%02X", curPath.bytes[b]);
+        snprintf(curLine, sizeof(curLine), "Current: %u hop%s, %u-byte hashes - edit below:",
+                 curPath.hopCount, curPath.hopCount == 1 ? "" : "s", curPath.hashSz);
+    }
+    lv_label_set_text(hintLbl, curLine);
+    lv_obj_set_width(hintLbl, 220);
+    lv_label_set_long_mode(hintLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(hintLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(hintLbl, &lv_font_montserrat_10, 0);
 
@@ -868,7 +888,7 @@ void ScreenContacts::_showSetPathDialog()
     s_pathInput = lv_textarea_create(box);
     lv_obj_set_size(s_pathInput, 220, 30);
     lv_textarea_set_one_line(s_pathInput, true);
-    lv_textarea_set_max_length(s_pathInput, 32);
+    lv_textarea_set_max_length(s_pathInput, 128);  // up to 64 bytes = 128 hex chars
     lv_textarea_set_accepted_chars(s_pathInput, "0123456789ABCDEFabcdef");
     lv_textarea_set_placeholder_text(s_pathInput, "AABBCCDD...");
     lv_obj_set_style_bg_color(s_pathInput, theme::BG, 0);
@@ -923,6 +943,11 @@ void ScreenContacts::_showSetPathDialog()
     lv_obj_set_style_text_color(sz2Lbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(sz2Lbl, &lv_font_montserrat_10, 0);
     lv_obj_center(sz2Lbl);
+
+    if (curHex[0]) {
+        lv_textarea_set_text(s_pathInput, curHex);
+        if (curPath.hashSz == 2) _onHashSz2Click(nullptr);   // select the matching size
+    }
 
     // Save / Cancel button row
     lv_obj_t* btnRow = lv_obj_create(box);

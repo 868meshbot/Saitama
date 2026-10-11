@@ -51,6 +51,7 @@ struct PathInfo {
     bool    direct;      // true when known path has 0 hops (direct neighbour)
     uint8_t hopCount;    // number of relay hops (0 when direct)
     uint8_t hashSz;      // bytes per hash (1 or 2)
+    uint8_t bytes[64];   // the route: hopCount * hashSz bytes (when known, not direct)
 };
 
 struct RadioStats {

@@ -32,6 +32,7 @@
 #include "../utils/Regions.h"
 #include "../utils/BtPin.h"
 #include "../utils/Crypto.h"
+#include "../utils/AutoAdvert.h"
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 #include <SHA256.h>
@@ -2203,7 +2204,8 @@ public:
                                   ? chCfg.channels[i].name : "Public";
             char psk64[28] = {};
             if (chCfg.channels[i].psk[0]) {
-                strncpy(psk64, chCfg.channels[i].psk, sizeof(psk64) - 1);
+                // normalise: keys saved before padding was restored may lack "=="
+                MeshService::normalizePsk(chCfg.channels[i].psk, psk64, sizeof(psk64));
             } else if (i == 0) {
                 strncpy(psk64, PUBLIC_GROUP_PSK, sizeof(psk64) - 1);
             } else {
@@ -2430,7 +2432,7 @@ public:
         if (!chName) { _channels[cfgSlot] = nullptr; return; }
         char psk64[28] = {};
         if (ch.psk[0]) {
-            strncpy(psk64, ch.psk, sizeof(psk64) - 1);
+            MeshService::normalizePsk(ch.psk, psk64, sizeof(psk64));
         } else if (cfgSlot == 0) {
             strncpy(psk64, PUBLIC_GROUP_PSK, sizeof(psk64) - 1);
         } else {
@@ -2882,6 +2884,9 @@ public:
         if (out.known && !out.direct) {
             out.hashSz   = (ci->out_path_len >> 6) + 1;
             out.hopCount = ci->out_path_len & 63;
+            int n = out.hopCount * out.hashSz;
+            if (n > (int)sizeof(out.bytes)) n = sizeof(out.bytes);
+            memcpy(out.bytes, ci->out_path, n);
         }
         return true;
     }
@@ -3066,8 +3071,17 @@ void MeshService::normalizePsk(const char* in, char* out, int outSize)
             return;
         }
     }
-    strncpy(out, in, outSize - 1);
-    out[outSize - 1] = '\0';
+    // Base64: drop spaces/newlines and restore missing '=' padding. A key
+    // typed or pasted as "rgOBOcovX2u4LE16oFwwxA" (no "==") otherwise decodes
+    // to 15 bytes and the channel is silently dead.
+    int j = 0;
+    for (int i = 0; i < inLen && j < outSize - 1; i++) {
+        char c = in[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        out[j++] = c;
+    }
+    while (j > 0 && (j % 4) != 0 && j < outSize - 1) out[j++] = '=';
+    out[j] = '\0';
 }
 
 // ── FHSS state ──────────────────────────────────────────────────────
@@ -3357,7 +3371,9 @@ bool MeshService::sendDirect(const uint8_t* pubKeyPrefix4, const char* text) {
 }
 
 bool MeshService::sendAdvert(int delayMs, bool flood) {
-    return _initialized && the_mesh.sendSelfAdvert(delayMs, flood);
+    if (!_initialized || !the_mesh.sendSelfAdvert(delayMs, flood)) return false;
+    autoadvert::noteAdvertSent();   // any advert restarts the auto-advert countdown
+    return true;
 }
 
 bool MeshService::dequeueMessage(RxMessage& out) {

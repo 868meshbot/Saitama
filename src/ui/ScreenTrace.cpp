@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenTrace.h"
+#include "../utils/PsramAlloc.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
@@ -37,7 +38,7 @@ struct TraceTarget {
   bool isRepeater;
 };
 
-static TraceTarget s_targets[MAX_TARGETS];
+static TraceTarget (&s_targets)[MAX_TARGETS] = ops::psram::array<TraceTarget[MAX_TARGETS]>();
 static int s_numTargets = 0;
 
 // Currently selected dropdown index (0-based; -1 = nothing).
@@ -116,7 +117,7 @@ static void _buildTargetList() {
 // ── Dropdown options string ─────────────────────────��─────────────────
 // lv_dropdown requires a single "\n"-separated string of options.
 static char *_buildDropOptions() {
-  static char buf[MAX_TARGETS * 40];
+  static char (&buf)[MAX_TARGETS * 40] = ops::psram::array<char[MAX_TARGETS * 40]>();
   buf[0] = '\0';
   for (int i = 0; i < s_numTargets; i++) {
     if (i > 0)

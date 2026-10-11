@@ -15,6 +15,7 @@
 //   └──────────────────────────────────────┘  y = 240
 
 #include "ScreenFileManager.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenPicViewer.h"
 #include "Theme.h"
@@ -54,7 +55,7 @@ char    ScreenFileManager::s_curPath[128]                    = "/";
 char    ScreenFileManager::s_clipboard[128]                  = {};
 bool    ScreenFileManager::s_pickMode                        = false;
 char    ScreenFileManager::s_pickPath[128]                   = "/";
-char    ScreenFileManager::s_entries[MAX_ENTRIES][64]        = {};
+char    (&ScreenFileManager::s_entries)[MAX_ENTRIES][64]     = ops::psram::array<char[MAX_ENTRIES][64]>();
 bool    ScreenFileManager::s_isDir[MAX_ENTRIES]              = {};
 size_t  ScreenFileManager::s_sizes[MAX_ENTRIES]              = {};
 int     ScreenFileManager::s_entryCount                      = 0;

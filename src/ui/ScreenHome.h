@@ -59,7 +59,7 @@ private:
     static constexpr int CHANNEL_HISTORY_MAX = 20;
     static MsgEntry*  s_history;    // allocated by _ensureHistoryAlloc()
     static int        s_histCount;
-    static lv_obj_t*  s_metaLabels[HISTORY_MAX];
+    static lv_obj_t*  (&s_metaLabels)[HISTORY_MAX];   // PSRAM
 
     // ── Mode state ────────────────────────────────────────────────────
     static Mode     s_mode;

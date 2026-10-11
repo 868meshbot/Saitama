@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenFinder.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "Emoji.h"
@@ -33,7 +34,7 @@ lv_obj_t* ScreenFinder::_scanBtnLbl = nullptr;
 
 // ── Module-level state ───────────────────────────────────────────────
 static constexpr int    MAX_RESULTS = 20;
-static ops::DiscoverEntry s_results[MAX_RESULTS];
+static ops::DiscoverEntry (&s_results)[MAX_RESULTS] = ops::psram::array<ops::DiscoverEntry[MAX_RESULTS]>();
 static int                s_resultCount    = 0;
 static uint32_t           s_scanDeadlineMs = 0;
 static lv_obj_t*          s_popup          = nullptr;

@@ -45,3 +45,31 @@ if os.path.exists(libdeps_dir):
                         print("Removed incompatible assembly: " + filepath)
                     except OSError as e:
                         print("Warning: could not remove %s: %s" % (filepath, e))
+# NavBoxLib keeps its PNG decoder as a static object (~45 KB) in internal DRAM
+# for the whole uptime, even if the Map is never opened. Internal RAM is what
+# BLE pairing and hardware AES allocate from, so put the decoder in PSRAM,
+# created on first use. Patched in place (idempotent) after each lib download.
+navbox_px = os.path.join(libdeps_dir, "NavBoxLib", "src", "navboxlib", "PixelBuffer.cpp")
+if os.path.exists(navbox_px):
+    with open(navbox_px) as fh:
+        src = fh.read()
+    marker = "// Saitama patch: PNG decoder in PSRAM"
+    old = "static PNG _png;\n"
+    if marker not in src and old in src:
+        new = (marker + "\n"
+               "#include <new>\n"
+               "#include <esp_heap_caps.h>\n"
+               "static PNG* _pngPtr = nullptr;\n"
+               "static PNG& _pngInst() {\n"
+               "    if (!_pngPtr) {\n"
+               "        void* m = heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);\n"
+               "        _pngPtr = m ? new (m) PNG() : new PNG();\n"
+               "    }\n"
+               "    return *_pngPtr;\n"
+               "}\n"
+               "#define _png (_pngInst())\n")
+        with open(navbox_px, "w") as fh:
+            fh.write(src.replace(old, new, 1))
+        print("Patched NavBoxLib: PNG decoder moved to PSRAM")
+    elif marker not in src:
+        print("Warning: NavBoxLib PixelBuffer.cpp changed - PNG PSRAM patch not applied")

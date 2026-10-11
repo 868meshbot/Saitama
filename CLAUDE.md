@@ -62,6 +62,7 @@ src/
   mesh/MeshService.h/cpp    — MeshCore bridge, RxMessage queue, RadioStats
   ui/UIScreen.h/cpp         — LVGL init, display/touch/trackball drivers, tick loop
   ui/ScreenBoot.h/cpp       — Splash screen
+  ui/BootAnim.h/cpp         — Animated boot-screen concept (mesh + "S" packet); test only, via /saitama-test (screensaver)
   ui/ScreenLauncher.h/cpp   — 3 swipeable pages: home (heard-station rain + Chat/Contacts/Map/Settings), two 4×3 app grids
   ui/ScreenHome.h/cpp       — Chat: channel list (scope tag per channel, + Add Channel), conversations, DMs, "repeated xN" on sent channel msgs
   ui/ScreenTerminal.h/cpp   — Serial-style terminal + CDC echo
@@ -82,7 +83,9 @@ src/
   utils/IdentityBackup.h/cpp — encrypted node-identity backup /ops/identity.enc (format, read/unlock, migration from plaintext)
   utils/Repeaters.h/cpp     — 250-slot repeater list (PSRAM) backed by /ops/repeaters.json
   utils/Regions.h/cpp       — Saved region scopes (max 9, NVS); nothing is added automatically
+  utils/AutoAdvert.h/cpp    — Periodic flood advert (Off/3/6/12/24 h, Advertise screen) → /ops/advert_config.json
   utils/BtPin.h/cpp         — Per-device random BLE pairing PIN (NVS "opsbt"); changing it clears bonds
+  utils/PsramAlloc.h        — psram::array<T[N]>() binds a large static buffer to zeroed PSRAM (keeps internal DRAM free)
   utils/PsramJson.h         — ArduinoJson allocator in PSRAM (large JSON docs)
   utils/SDCard.h/cpp        — SD mount (CS=39, FSPI), /ops/ dir, binary file helpers
   utils/Sound.h/cpp         — I2S audio (MAX98357A); notification/ping/jingle muted in night mode
@@ -148,6 +151,8 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; keyboard light off + sounds muted; moon beside the launcher clock), Speaker & Volume in one window. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
 
+**Internal DRAM is the scarce resource:** BLE pairing, hardware AES (channel decrypt) and the SD driver allocate from it at runtime; when it runs out BLE fails ("BLE_INIT: Malloc failed") and channel packets decrypt to empty "?" messages ("esp-aes: Failed to allocate memory"). Static arrays over ~500 B go to PSRAM via `static T (&s_x)[N] = ops::psram::array<T[N]>();`. `pre_build.py` patches NavBoxLib so its 45 KB PNG decoder lives in PSRAM. `UIScreen::tick()` logs `[OPS] Heap:` every 10 s.
+
 **Display performance:** `LV_INV_BUF_SIZE 96` in `lib/lv_conf.h` (the home-page rain overflowed the default 32 and forced full redraws). Don't call `lv_refr_now()` from the message path.
 
 **SD card storage** — `/ops/` directory on the SD card acts as a reflash-proof backup:
@@ -155,6 +160,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 - `/ops/repeaters.json` — repeater archive; includes `"pubKey64"` (64 hex chars) for full 32-byte key; field is optional for backward compatibility. `"pwEnc"` (184 hex chars, optional) is a remembered admin password sealed with AES-256-GCM — see `docs/STORED_SECRETS.md`
 - `/ops/settings.json` — config backup (written on every `config::save()`); channel PSKs only as sealed `"pskEnc"`
 - `/ops/identity.enc`  — the node identity (pub_key[32] + prv_key[64] + name[32]) sealed with `ops::crypto` (AES-256-GCM, storage password; salt + public key in a clear, authenticated header). `ops::idbackup` owns the format. Restored to LittleFS on boot if missing; if the storage password doesn't open it the node runs on an unsaved temporary identity and the boot screen asks for the password. Plaintext `identity.bin`/`.bak` from older firmware are read once and deleted — see `docs/STORED_SECRETS.md`
+- `/ops/advert_config.json` — `{"intervalHours": 0|3|6|12|24}` for auto advertise; any advert (manual or auto) restarts the countdown
 - `/ops/msgs/<tag>.log` — per-channel/DM message history; one compact JSON line per message; written when `cfg.saveMsgs` is true; tag is channel name or `DM_<contactName>` for direct messages
 - `sdcard::init()` must run before `crypto::init()`, which must run before `config::init()` (settings.json holds sealed PSKs) and `contacts::init()` (see `main.cpp`)
 - ArduinoJson dependency: `bblanchon/ArduinoJson @ ^7.0` in `platformio.ini`

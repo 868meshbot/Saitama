@@ -37,7 +37,7 @@ private:
     static char    s_clipboard[128];     // empty = nothing copied
     static bool    s_pickMode;           // true = image picker for Pic Viewer
     static char    s_pickPath[128];      // last folder browsed in picker mode
-    static char    s_entries[MAX_ENTRIES][64];
+    static char    (&s_entries)[MAX_ENTRIES][64];   // PSRAM (utils/PsramAlloc.h)
     static bool    s_isDir[MAX_ENTRIES];
     static size_t  s_sizes[MAX_ENTRIES];
     static int     s_entryCount;

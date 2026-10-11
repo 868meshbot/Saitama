@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenRegions.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
@@ -27,7 +28,7 @@ static constexpr int TOP_H   = 28;
 static constexpr int MAX_REP = 8;   // matches MeshService's outstanding-request limit
 
 // Last discovery results — kept across visits to the screen.
-static ops::RegionReply s_reps[MAX_REP];
+static ops::RegionReply (&s_reps)[MAX_REP] = ops::psram::array<ops::RegionReply[MAX_REP]>();
 static int              s_repCount   = 0;
 static bool             s_running    = false;
 static bool             s_everRan    = false;

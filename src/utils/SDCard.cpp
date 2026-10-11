@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "SDCard.h"
+#include "PsramAlloc.h"
 #include "Log.h"
 #include <SPI.h>
 #include <SD.h>
@@ -216,7 +217,7 @@ size_t sdcard::listDir(const char* path, char* buf, size_t bufSize)
 void sdcard::clearMsgLogs()
 {
     if (!s_mounted) return;
-    static char paths[20][40];
+    static char (&paths)[20][40] = ops::psram::array<char[20][40]>();
     int count = 0;
     File dir = SD.open("/ops/msgs");
     if (dir && dir.isDirectory()) {

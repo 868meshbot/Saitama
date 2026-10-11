@@ -27,6 +27,7 @@
 //   └──────────────────────────────────────┘
 
 #include "ScreenHome.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "Emoji.h"
@@ -81,12 +82,12 @@ lv_obj_t* ScreenHome::_emojiPanel  = nullptr;
 
 // Emoji picker internals (file-scope — not class state)
 static lv_obj_t* s_emojiGrid      = nullptr;
-static lv_obj_t* s_emojiBtns[200] = {};
+static lv_obj_t* (&s_emojiBtns)[200] = ops::psram::array<lv_obj_t*[200]>();
 static int       s_emojiBtnCount  = 0;
 
 ScreenHome::MsgEntry* ScreenHome::s_history = nullptr;
 int                  ScreenHome::s_histCount = 0;
-lv_obj_t*            ScreenHome::s_metaLabels[ScreenHome::HISTORY_MAX] = {};
+lv_obj_t*            (&ScreenHome::s_metaLabels)[ScreenHome::HISTORY_MAX] = ops::psram::array<lv_obj_t*[ScreenHome::HISTORY_MAX]>();
 
 char ScreenHome::s_loadedTags[10][32] = {};
 int  ScreenHome::s_loadedTagCnt = 0;
@@ -105,7 +106,7 @@ struct RowPreview {
     char     sender[32];
     uint32_t ts;
 };
-static RowPreview s_chPreview[10] = {};
+static RowPreview (&s_chPreview)[10] = ops::psram::array<RowPreview[10]>();
 static RowPreview s_dmPreview     = {};
 
 static void _notePreview(RowPreview& p, const char* tag, const char* sender, uint32_t ts)
@@ -137,7 +138,7 @@ static int       s_iconChIdx         = -1;
 static lv_obj_t* s_iconInitialsTa    = nullptr;
 static lv_obj_t* s_iconEmojiOverlay  = nullptr;
 static lv_obj_t* s_iconEmojiGrid     = nullptr;
-static lv_obj_t* s_iconEmojiBtns[200] = {};
+static lv_obj_t* (&s_iconEmojiBtns)[200] = ops::psram::array<lv_obj_t*[200]>();
 static int       s_iconEmojiBtnCount = 0;
 // Captured when the user taps a received bubble; consumed by _onAddContactSave.
 static char     s_pendingContactName[32] = {};
