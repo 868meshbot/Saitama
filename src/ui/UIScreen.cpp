@@ -8,6 +8,7 @@
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 #include "ScreenBoot.h"
+#include "BootAnim.h"
 #include "ScreenRegions.h"
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
@@ -37,6 +38,7 @@
 #include "../utils/Keymap.h"
 #include "../utils/SDCard.h"
 #include "../utils/GpsMgr.h"
+#include "../utils/AutoAdvert.h"
 #include "Emoji.h"
 
 #include <lvgl.h>
@@ -117,6 +119,7 @@ static bool      s_ssAnalog          = false;  // true = analog clock screensave
 static lv_obj_t* s_ssCanvas          = nullptr;
 static void*     s_ssCanvasBuf       = nullptr;
 static bool      s_ssManual          = false;  // true = invoked via /clock, not by idle timeout
+static bool      s_ssBootAnim        = false;  // true = /saitama-test boot-animation preview
 
 // Touch calibration
 static constexpr lv_coord_t kCalTx1 = 40,  kCalTy1 = 40;
@@ -407,7 +410,7 @@ static void _drawAnalogClock()
 static void _updateSsTime()
 {
     if (s_ssAnalog) { _drawAnalogClock(); return; }
-    if (!s_ssTimeLbl) return;
+    if (!s_ssTimeLbl) return;   // also the boot-animation preview (no clock)
     time_t t = ops::config::localEpoch();
     struct tm lt;
     gmtime_r(&t, &lt);
@@ -429,6 +432,10 @@ static void _deactivateScreensaver()
     s_ssCanvas          = nullptr;
     s_ssAnalog          = false;
     s_ssManual          = false;
+    if (s_ssBootAnim) {
+        ops::bootanim::destroy();   // stop its timer before the objects go
+        s_ssBootAnim = false;
+    }
     if (s_prevScreen) {
         lv_scr_load(s_prevScreen);
         s_prevScreen = nullptr;
@@ -440,17 +447,21 @@ static void _deactivateScreensaver()
     s_govApplyPending = true;  // restore active-screen frequency via safe deferred path
 }
 
-static void _activateScreensaver(bool analog = false, bool manual = false)
+static void _activateScreensaver(bool analog = false, bool manual = false,
+                                 bool bootAnim = false)
 {
     if (s_screensaverActive) return;
     s_ssAnalog          = analog;
     s_ssManual          = manual;
+    s_ssBootAnim        = bootAnim;
     s_prevScreen        = lv_scr_act();
     s_screensaverScreen = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_screensaverScreen, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_screensaverScreen, LV_OPA_COVER, LV_PART_MAIN);
 
-    if (analog) {
+    if (bootAnim) {
+        ops::bootanim::create(s_screensaverScreen);
+    } else if (analog) {
         s_ssCanvasBuf = ps_malloc((size_t)SS_CANVAS_W * SS_CANVAS_H * sizeof(lv_color_t));
         s_ssCanvas    = lv_canvas_create(s_screensaverScreen);
         lv_canvas_set_buffer(s_ssCanvas, s_ssCanvasBuf,
@@ -684,6 +695,24 @@ void tick() {
 
     // GPS power management state machine
     ops::GpsMgr::instance().tick();
+
+    // Periodic advert (Advertise screen > Auto advertise)
+    ops::autoadvert::tick();
+
+    // Heap trace (diagnosing internal-DRAM exhaustion: BLE "Malloc failed").
+    // Logs every 10 s; read it next to the "UI: ... shown" lines to see which
+    // action eats internal RAM.
+    {
+        static uint32_t lastHeapLog = 0;
+        if (now - lastHeapLog >= 10000UL) {
+            lastHeapLog = now;
+            OPS_LOG("Heap", "internal free %u  largest %u  min-ever %u  | PSRAM free %u",
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
+    }
 
     // Trackball: consume delta + press first so we can intercept for screensaver.
     int16_t dx, dy;
@@ -1147,6 +1176,12 @@ void activateScreensaver(bool analog)
 {
     // Only reachable from /clock — always a deliberate, manual invocation.
     _activateScreensaver(analog, true);
+}
+
+void activateBootAnimTest()
+{
+    // /saitama-test: manual, so full brightness and no screen-off.
+    _activateScreensaver(false, true, true);
 }
 
 void startTouchCalibration()

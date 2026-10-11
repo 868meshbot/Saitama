@@ -15,6 +15,7 @@
 //   └──────────────────────────────────────┘  y = 240
 
 #include "ScreenTerminal.h"
+#include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenRepeaters.h"
 #include "ScreenSpectrum.h"
@@ -36,6 +37,7 @@
 #include "../hardware/Board.h"
 #include "../version.h"
 #include <cstring>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <time.h>
@@ -75,7 +77,7 @@ static const char* kCmdList[] = {
     "getpath", "gps", "help", "i2c", "identity", "import", "kbbl", "list",
     "local", "memory", "messages", "pathsize", "play", "power", "public",
     "quiet", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
-    "resetpath", "scope", "screenshot", "sd", "send", "set", "setchannel",
+    "resetpath", "saitama-test", "scope", "screenshot", "sd", "send", "set", "setchannel",
     "setpath", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
     nullptr
 };
@@ -689,6 +691,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  card");
         appendLine("  import {biz card}");
         appendLine("  clock [analog]");
+        appendLine("  saitama-test  - preview the animated boot screen");
         appendLine("  time <epoch-seconds>");
         appendLine("  memory");
         appendLine("  battery");
@@ -745,6 +748,13 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine(buf);
         bool analog = (strcmp(args, "analog") == 0);
         ops::ui::activateScreensaver(analog);
+        return;
+    }
+
+    // ── saitama-test ──────────────────────────────────────────────────
+    if (strcmp(cmd, "saitama-test") == 0) {
+        appendLine("Boot animation preview - click the trackball to exit.");
+        ops::ui::activateBootAnimTest();
         return;
     }
 
@@ -910,9 +920,15 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
         if (pskArg && pskArg[0]) {
             size_t plen = strlen(pskArg);
+            bool allHex = true;
+            for (size_t i = 0; i < plen && allHex; i++) allHex = isxdigit((unsigned char)pskArg[i]) != 0;
             if (plen == 24 && pskArg[22] == '=' && pskArg[23] == '=') {
                 memcpy(psk64, pskArg, 24);
-            } else if (plen >= 2 && plen <= 32 && (plen % 2 == 0)) {
+            } else if (plen == 22 && !allHex) {
+                // base64 typed without its "==" — restore it
+                memcpy(psk64, pskArg, 22);
+                psk64[22] = '='; psk64[23] = '=';
+            } else if (plen >= 2 && plen <= 32 && (plen % 2 == 0) && allHex) {
                 // hex bytes → 16-byte PSK (zero-padded if short) → base64
                 uint8_t pskBytes[16] = {};
                 int bc = (int)(plen / 2);
@@ -937,7 +953,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 psk64[21] = kB64[(v >> 12) & 63];
                 psk64[22] = '='; psk64[23] = '=';
             } else {
-                appendLine("PSK: use 2-32 hex chars (1-16 bytes) or 24-char base64");
+                appendLine("PSK: use 2-32 hex chars (1-16 bytes) or 22/24-char base64");
                 return;
             }
         }
@@ -1751,7 +1767,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
 
         if (strcmp(sub, "ls") == 0) {
             const char* path = sub_args[0] ? sub_args : "/ops";
-            static char lsbuf[1024];
+            static char (&lsbuf)[1024] = ops::psram::array<char[1024]>();
             size_t n = ops::sdcard::listDir(path, lsbuf, sizeof(lsbuf));
             if (n == 0) { appendLine("(empty or not found)"); return; }
             char* p = lsbuf;
