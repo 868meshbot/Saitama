@@ -214,7 +214,7 @@ Monitor: `pio device monitor` at 115200 baud.
 See [docs/VERSIONING.md](docs/VERSIONING.md). Key points:
 
 - Semantic Versioning: `MAJOR.MINOR.PATCH` (pre-release tags `-alpha.N`/`-beta.N` when needed)
-- Current: `1.5.0`
+- Current: `1.5.1`
 - Update `src/version.h` and the README "Current version" line before tagging a release (`-DOPS_VERSION` in `platformio.ini` is unused)
 - Version numbers only go forward. Never re-tag.
 
