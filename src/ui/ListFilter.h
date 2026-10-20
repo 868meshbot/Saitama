@@ -21,7 +21,9 @@ struct State {
 };
 
 // Adds the box to the end of `bar` (a flex row), focused for typing.
-lv_obj_t* create(lv_obj_t* bar, State& st);
+// insetRight keeps a full-width top bar's box clear of the panel's dead
+// pixels; a bar inside a dialog passes 0.
+lv_obj_t* create(lv_obj_t* bar, State& st, lv_coord_t width = 110, lv_coord_t insetRight = 41);
 // Tags a list row with its key (>= 0); untagged children are never hidden.
 void setRowKey(lv_obj_t* row, int key);
 // Shows/hides st.list's rows for the current text.

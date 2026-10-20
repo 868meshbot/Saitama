@@ -38,6 +38,14 @@ static void _filterRowText(int key, char* out, size_t outMax)
 
 static int s_pendingContact = -1;
 
+// Speech-bubble button on a row: straight into a DM, no popup.
+static void _onRowDmClick(lv_event_t* e)
+{
+    int si = (int)(intptr_t)lv_event_get_user_data(e);
+    Contact c;
+    if (contacts::get(si, c)) ScreenHome::openDM(c.pubKeyPrefix, c.name);
+}
+
 // Dialog input widget pointers (valid only while a dialog is open)
 static lv_obj_t* s_pathInput   = nullptr;
 static lv_obj_t* s_hashSz1Btn = nullptr;
@@ -273,12 +281,42 @@ void ScreenContacts::_build()
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-        lv_obj_t* nameLbl = lv_label_create(col);
+        // Name line: name, then the favourite star (or blocked sign) beside it.
+        lv_obj_t* nameRow = theme::addNameRow(col);
+        lv_obj_t* nameLbl = lv_label_create(nameRow);
         lv_label_set_text(nameLbl, c.name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_obj_set_width(nameLbl, LV_SIZE_CONTENT);
+        lv_obj_set_style_max_width(nameLbl, LV_PCT(85), 0);   // room for the star
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+
+        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
+        lv_obj_t* starLbl = lv_label_create(nameRow);
+        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
+        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
+        if (!c.favourite || c.blocked) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
+
+        // ── Blocked: red no-entry sign in the star's place ─────────────────
+        // Drawn (red disc + white bar) — the emoji set has no no-entry glyph.
+        if (c.blocked) {
+            lv_obj_t* sign = lv_obj_create(nameRow);
+            lv_obj_set_size(sign, 14, 14);
+            lv_obj_set_style_radius(sign, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_color(sign, theme::RED, 0);
+            lv_obj_set_style_bg_opa(sign, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(sign, 0, 0);
+            lv_obj_set_style_pad_all(sign, 0, 0);
+            lv_obj_clear_flag(sign, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t* bar = lv_obj_create(sign);
+            lv_obj_set_size(bar, 8, 3);
+            lv_obj_set_style_radius(bar, 1, 0);
+            lv_obj_set_style_bg_color(bar, lv_color_white(), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(bar, 0, 0);
+            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_center(bar);
+        }
 
         lv_obj_t* subLbl = lv_label_create(col);
         lv_label_set_text(subLbl, subtitle);
@@ -311,35 +349,14 @@ void ScreenContacts::_build()
             lv_obj_add_flag(blob, LV_OBJ_FLAG_HIDDEN);
         }
 
-        // ── Signal bars (last-heard RSSI), left of the star ───────────────
-        theme::addSignalBars(row, c.lastRssi);
-
-        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
-        lv_obj_t* starLbl = lv_label_create(row);
-        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
-        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
-        if (!c.favourite || c.blocked) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
-
-        // ── Blocked: red no-entry sign in the star's place ─────────────────
-        // Drawn (red disc + white bar) — the emoji set has no no-entry glyph.
-        if (c.blocked) {
-            lv_obj_t* sign = lv_obj_create(row);
-            lv_obj_set_size(sign, 16, 16);
-            lv_obj_set_style_radius(sign, LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_bg_color(sign, theme::RED, 0);
-            lv_obj_set_style_bg_opa(sign, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(sign, 0, 0);
-            lv_obj_set_style_pad_all(sign, 0, 0);
-            lv_obj_clear_flag(sign, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_t* bar = lv_obj_create(sign);
-            lv_obj_set_size(bar, 10, 3);
-            lv_obj_set_style_radius(bar, 1, 0);
-            lv_obj_set_style_bg_color(bar, lv_color_white(), 0);
-            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(bar, 0, 0);
-            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_center(bar);
+        // ── DM shortcut: speech bubble, opens the chat straight away ──────
+        if (!c.blocked) {
+            lv_obj_t* dmBtn = theme::addDmButton(row);
+            lv_obj_add_event_cb(dmBtn, _onRowDmClick, LV_EVENT_CLICKED, (void*)(intptr_t)si);
         }
+
+        // ── Signal bars (last-heard RSSI) ─────────────────────────────────
+        theme::addSignalBars(row, c.lastRssi);
     }
 
     listfilter::apply(s_filter);   // keep the filter across rebuilds

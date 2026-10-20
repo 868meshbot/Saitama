@@ -35,6 +35,7 @@
 #include "../utils/Config.h"
 #include "../utils/Regions.h"
 #include "ScopePicker.h"
+#include "ListFilter.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
 #include "../utils/Repeaters.h"
@@ -72,6 +73,48 @@ char     ScreenHome::s_dmName[32]  = {};
 // when the list is full).
 static constexpr int PICK_PEERS = 64;
 static uint8_t s_pickPeerKeys[PICK_PEERS][4];
+
+// DM picker filter. Row keys: contact index, or contacts::CAPACITY + peer slot.
+static ui::listfilter::State s_dmFilter;
+
+static void _dmFilterRowText(int key, char* out, size_t outMax)
+{
+    out[0] = '\0';
+    if (key < ops::contacts::CAPACITY) {
+        ops::Contact c;
+        if (!ops::contacts::get(key, c)) return;
+        snprintf(out, outMax, "%s %02X%02X%02X%02X", c.name,
+                 c.pubKeyPrefix[0], c.pubKeyPrefix[1], c.pubKeyPrefix[2], c.pubKeyPrefix[3]);
+        return;
+    }
+    int slot = key - ops::contacts::CAPACITY;
+    ops::PeerInfo p;
+    if (slot >= PICK_PEERS ||
+        !ops::MeshService::instance().findPeerByKey(s_pickPeerKeys[slot], p)) return;
+    snprintf(out, outMax, "%s %02X%02X%02X%02X", p.name,
+             p.pubKeyPrefix[0], p.pubKeyPrefix[1], p.pubKeyPrefix[2], p.pubKeyPrefix[3]);
+}
+
+// Enter in the filter box opens the first recipient still shown. Deferred:
+// opening the chat rebuilds the screen, which would free the box mid-event.
+static void _dmPickFirstVisible(void* /*unused*/)
+{
+    lv_obj_t* list = s_dmFilter.list;
+    if (!list) return;
+    uint32_t n = lv_obj_get_child_cnt(list);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* row = lv_obj_get_child(list, (int32_t)i);
+        if (lv_obj_get_user_data(row) && !lv_obj_has_flag(row, LV_OBJ_FLAG_HIDDEN)) {
+            lv_event_send(row, LV_EVENT_CLICKED, nullptr);
+            return;
+        }
+    }
+}
+
+static void _onDMFilterReady(lv_event_t* /*e*/)
+{
+    lv_async_call(_dmPickFirstVisible, nullptr);
+}
 
 lv_obj_t* ScreenHome::s_listScreen = nullptr;
 lv_obj_t* ScreenHome::_screen      = nullptr;
@@ -413,6 +456,34 @@ static void _fmtRepeatMeta(char* buf, size_t len, const char* timeBuf, int repea
     else             snprintf(buf, len, LV_SYMBOL_WARNING " not repeated  %s", timeBuf);
 }
 
+// Small padlock drawn from two objects (no lock glyph in the fonts): a
+// border-only shackle over a filled body. 9 x 11 px.
+static lv_obj_t* _addLockIcon(lv_obj_t* parent, lv_color_t c)
+{
+    lv_obj_t* box = lv_obj_create(parent);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_size(box, 9, 11);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* shackle = lv_obj_create(box);
+    lv_obj_remove_style_all(shackle);
+    lv_obj_set_size(shackle, 7, 8);
+    lv_obj_set_pos(shackle, 1, 0);
+    lv_obj_set_style_radius(shackle, 3, 0);
+    lv_obj_set_style_border_width(shackle, 2, 0);
+    lv_obj_set_style_border_color(shackle, c, 0);
+    lv_obj_set_style_border_opa(shackle, LV_OPA_COVER, 0);
+
+    lv_obj_t* body = lv_obj_create(box);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_size(body, 9, 6);
+    lv_obj_set_pos(body, 0, 5);
+    lv_obj_set_style_radius(body, 1, 0);
+    lv_obj_set_style_bg_color(body, c, 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+    return box;
+}
+
 // ── Bubble helper ──────────────────────────────────────────────────────
 
 void ScreenHome::_addBubble(int         histIdx,
@@ -468,16 +539,31 @@ void ScreenHome::_addBubble(int         histIdx,
         lv_obj_set_style_pad_column(hdr, 3, 0);
         lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN,
+        lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START,
                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
         lv_obj_t* nameLbl = lv_label_create(hdr);
         lv_label_set_text(nameLbl, (senderName && senderName[0]) ? senderName : "");
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_flex_grow(nameLbl, 1);
-        lv_obj_set_style_min_width(nameLbl, 0, 0);
+        lv_obj_set_width(nameLbl, LV_SIZE_CONTENT);
+        lv_obj_set_style_max_width(nameLbl, LV_PCT(80), 0);
         lv_obj_set_style_text_color(nameLbl, theme::ACCENT, 0);
         lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+
+        // Verified sender: a DM only decrypts with the key shared with that
+        // contact (from their signed advert), so it can only be from them.
+        // Channel messages can't be verified — anyone with the channel key
+        // can type any name — so they get no lock.
+        bool verified = histIdx >= 0 && histIdx < s_histCount &&
+                        strncmp(s_history[histIdx].channelTag, "DM_", 3) == 0;
+        if (verified) _addLockIcon(hdr, theme::GREEN);
+
+        // Spacer pushes the action button to the right edge.
+        lv_obj_t* spacer = lv_obj_create(hdr);
+        lv_obj_remove_style_all(spacer);
+        lv_obj_set_height(spacer, 1);
+        lv_obj_set_flex_grow(spacer, 1);
+        lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
 
         lv_obj_t* btn = lv_btn_create(hdr);
         lv_group_remove_obj(btn);
@@ -1152,8 +1238,8 @@ void ScreenHome::_showList()
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_12, 0);
     lv_obj_set_flex_grow(titleLbl, 1);
 
-    // + Add Channel — same size and inset as the rows' edit buttons below
-    // (pulled 45px in from the right edge, clear of the panel's dead pixels).
+    // + Add Channel — pulled 45px in from the right edge; the close (X)
+    // button sits at the edge itself.
     lv_obj_t* addBtn = lv_btn_create(hdr);
     lv_obj_set_size(addBtn, 26, 22);
     lv_obj_set_style_bg_color(addBtn, theme::BG, 0);
@@ -1171,6 +1257,26 @@ void ScreenHome::_showList()
     lv_obj_set_style_text_color(addLbl, theme::ACCENT, 0);
     lv_obj_set_style_text_font(addLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(addLbl);
+
+    // Close (X) at the top right — same as Home. Floating, so the + button
+    // keeps its flex slot.
+    lv_obj_t* closeBtn = lv_btn_create(hdr);
+    lv_group_remove_obj(closeBtn);
+    lv_obj_add_flag(closeBtn, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_size(closeBtn, 30, 22);
+    lv_obj_align(closeBtn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(closeBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(closeBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(closeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(closeBtn, 1, 0);
+    lv_obj_set_style_radius(closeBtn, 4, 0);
+    lv_obj_set_style_shadow_width(closeBtn, 0, 0);
+    lv_obj_add_event_cb(closeBtn, _onListBack, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* closeLbl = lv_label_create(closeBtn);
+    lv_label_set_text(closeLbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(closeLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(closeLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(closeLbl);
 
     // ── Scrollable channel list ──────────────────────────────────────
     lv_obj_t* listBody = lv_obj_create(s_listScreen);
@@ -1328,11 +1434,6 @@ void ScreenHome::_showList()
         lv_obj_set_style_border_width(blob, 0, 0);
         lv_obj_set_style_pad_hor(blob, 4, 0);
         lv_obj_set_style_pad_ver(blob, 0, 0);
-        // The edit button is pulled 45px left of its flex slot (see actBtn below),
-        // which put it underneath the blob on channel rows. Nudge the blob clear
-        // of it. The DM row has no edit button, so it stays put (it's already
-        // flush against the row's right edge there).
-        if (hasAction) lv_obj_set_style_translate_x(blob, 30, 0);
         lv_obj_clear_flag(blob, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* blobLbl = lv_label_create(blob);
         lv_obj_set_style_text_color(blobLbl, theme::BG, 0);
@@ -1355,7 +1456,6 @@ void ScreenHome::_showList()
             lv_obj_set_style_radius(actBtn, 4, 0);
             lv_obj_set_style_shadow_width(actBtn, 0, 0);
             lv_obj_set_style_pad_all(actBtn, 2, 0);
-            lv_obj_set_style_translate_x(actBtn, -45, 0);  // pull in from the flex-pushed right edge
             lv_group_remove_obj(actBtn);
             lv_obj_add_event_cb(actBtn, _onActionBtn, LV_EVENT_CLICKED,
                                 (void*)(intptr_t)chIdx);
@@ -1408,6 +1508,7 @@ void ScreenHome::_showChat()
     s_addPskTa          = nullptr;
     s_addScopeDd        = nullptr;
     s_dmPickerOverlay   = nullptr;
+    s_dmFilter.ta = s_dmFilter.list = nullptr;
     s_addContactOverlay = nullptr;
 
     // Capture old screens — delete them AFTER loading the new one (safe LVGL pattern)
@@ -1844,15 +1945,26 @@ void ScreenHome::_openDMPicker()
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* hdr = lv_label_create(box);
-    lv_label_set_text(hdr, "Select DM recipient");
+    // Title + type-to-filter box (same filter as the Contacts app).
+    lv_obj_t* bar = lv_obj_create(box);
+    lv_obj_set_size(bar, 258, 28);
+    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 1, 1);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_pad_hor(bar, 6, 0);
+    lv_obj_set_style_pad_ver(bar, 0, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* hdr = lv_label_create(bar);
+    lv_label_set_text(hdr, "DM recipient");
     lv_obj_set_style_text_font(hdr, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(hdr, theme::ACCENT, 0);
-    lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 6);
 
     lv_obj_t* list = lv_obj_create(box);
-    lv_obj_set_size(list, 258, 162);
-    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 1, 24);
+    lv_obj_set_size(list, 258, 158);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 1, 30);
     lv_obj_set_style_bg_color(list, theme::BG, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_radius(list, 0, 0);
@@ -1863,8 +1975,7 @@ void ScreenHome::_openDMPicker()
 
     int rowIdx = 0;
     auto addPickerRow = [&](const char* name, const char* addr, int encoded) {
-        lv_obj_t* row = lv_btn_create(list);
-        lv_group_remove_obj(row);
+        lv_obj_t* row = lv_btn_create(list);   // in the group: trackball moves on from the filter
         lv_obj_set_size(row, 258, 26);
         lv_obj_set_style_bg_color(row, (rowIdx & 1) ? theme::BG_CARD : theme::BG, 0);
         lv_obj_set_style_bg_color(row, theme::PRIMARY, LV_STATE_PRESSED);
@@ -1877,6 +1988,8 @@ void ScreenHome::_openDMPicker()
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_add_event_cb(row, _onDMPickerRow, LV_EVENT_CLICKED, (void*)(intptr_t)encoded);
+        ui::listfilter::setRowKey(row, encoded >= 0 ? encoded
+                                                    : ops::contacts::CAPACITY - (encoded + 1));
 
         lv_obj_t* nameLbl = lv_label_create(row);
         lv_label_set_text(nameLbl, name);
@@ -1932,6 +2045,18 @@ void ScreenHome::_openDMPicker()
         lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(empty, 240);
     }
+
+    // Filter starts empty each time; created last so it takes focus.
+    s_dmFilter.text[0] = '\0';
+    s_dmFilter.list    = list;
+    s_dmFilter.rowText = _dmFilterRowText;
+    s_dmFilter.onEsc   = [] {
+        if (s_dmPickerOverlay) lv_obj_del_async(s_dmPickerOverlay);   // from the box's key handler
+        s_dmPickerOverlay = nullptr;
+        s_dmFilter.ta = s_dmFilter.list = nullptr;
+    };
+    lv_obj_t* fta = ui::listfilter::create(bar, s_dmFilter, 130, 0);
+    lv_obj_add_event_cb(fta, _onDMFilterReady, LV_EVENT_READY, nullptr);
 }
 
 // ── _onSend() ─────────────────────────────────────────────────────────
@@ -2349,6 +2474,7 @@ void ScreenHome::_onDMPickerRow(lv_event_t* e)
         lv_obj_del(s_dmPickerOverlay);
         s_dmPickerOverlay = nullptr;
     }
+    s_dmFilter.ta = s_dmFilter.list = nullptr;
 
     if (found) {
         s_sendMode    = 10;
@@ -2364,6 +2490,7 @@ void ScreenHome::_onDMPickerClose(lv_event_t* e)
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     lv_obj_del(overlay);
     s_dmPickerOverlay = nullptr;
+    s_dmFilter.ta = s_dmFilter.list = nullptr;
 }
 
 // ── Bubble action menu (Reply / Add Contact) ─────────────────────────

@@ -123,6 +123,35 @@ void ScreenHeard::_build() {
   lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
   lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
 
+  // Right side: Clear List, then the close X at the top-right corner.
+  lv_obj_t *spacer = lv_obj_create(bar);
+  lv_obj_set_size(spacer, 1, 1);
+  lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(spacer, 0, 0);
+  lv_obj_set_flex_grow(spacer, 1);
+  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
+
+  auto barBtn = [bar](const char *text, lv_color_t col, lv_event_cb_t cb) {
+    lv_obj_t *b = lv_btn_create(bar);
+    lv_group_remove_obj(b);
+    lv_obj_set_height(b, TOP_H - 6);
+    lv_obj_set_style_bg_color(b, theme::BG, 0);
+    lv_obj_set_style_bg_color(b, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, col, 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_radius(b, 4, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_set_style_pad_hor(b, 6, 0);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, col, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+    lv_obj_center(l);
+  };
+  barBtn("Clear List", theme::ORANGE, _onClearList);
+  barBtn(LV_SYMBOL_CLOSE, theme::TEXT_MUTED, _onHomeClick);
+
   // ── Peer list ─────────────────────────────────────────────────────
   lv_obj_t *list = lv_obj_create(_screen);
   lv_obj_set_size(list, OPS_SCREEN_W, OPS_SCREEN_H - TOP_H);
@@ -186,19 +215,19 @@ void ScreenHeard::_build() {
     lv_obj_t *nameLbl = lv_label_create(row);
     lv_label_set_text(nameLbl, peer.name);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(nameLbl, 132);
+    lv_obj_set_width(nameLbl, 160);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
 
-    // RSSI
-    char rssiBuf[12];
-    snprintf(rssiBuf, sizeof(rssiBuf), "%ddBm", (int)peer.lastRssi);
-    lv_obj_t *rssiLbl = lv_label_create(row);
-    lv_label_set_text(rssiLbl, rssiBuf);
-    lv_obj_set_width(rssiLbl, 68);
-    lv_obj_set_style_text_color(rssiLbl, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(rssiLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_align(rssiLbl, LV_TEXT_ALIGN_RIGHT, 0);
+    // Signal bars (last-heard RSSI), as in Contacts and Repeaters. A fixed
+    // cell keeps the time column aligned; the bars sit at its right edge.
+    lv_obj_t *sigCell = lv_obj_create(row);
+    lv_obj_set_size(sigCell, 40, 16);
+    lv_obj_set_style_bg_opa(sigCell, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sigCell, 0, 0);
+    lv_obj_set_style_pad_all(sigCell, 0, 0);
+    lv_obj_clear_flag(sigCell, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    theme::addSignalBars(sigCell, peer.lastRssi);
 
     // Time
     char timeBuf[10];
@@ -221,10 +250,65 @@ void ScreenHeard::_onHomeClick(lv_event_t * /*e*/) {
   ScreenLauncher::show();
 }
 
-// ── _buildSaveDialog() — shared overlay builder ───────────────────────
-// Returns the box so caller can attach a save button with the right callback.
-static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
-                                  const char *saveLblText) {
+// ── Peer details window ──────────────────────────────────────────────
+// Name / Identity / RSSI (/ Owner for repeaters) with Save-or-Update and
+// Cancel. A repeater's owner info is asked for over the air and filled in
+// when it answers (lv_timer polls MeshService; the timer dies with the box).
+static lv_obj_t *s_ownerLbl = nullptr;
+static lv_timer_t *s_ownerTimer = nullptr;
+static uint32_t s_ownerAskedMs = 0;
+static constexpr uint32_t OWNER_TIMEOUT_MS = 20000;
+
+static void _onOwnerPoll(lv_timer_t * /*t*/) {
+  if (!s_ownerLbl) return;
+  char txt[124];
+  if (MeshService::instance().pollOwnerInfo(txt, sizeof(txt))) {
+    theme::sanitizeText(txt);
+    lv_label_set_text(s_ownerLbl, txt[0] ? txt : "(not set)");
+    lv_obj_set_style_text_color(s_ownerLbl, theme::TEXT, 0);
+  } else if (millis() - s_ownerAskedMs < OWNER_TIMEOUT_MS) {
+    return;
+  } else {
+    lv_label_set_text(s_ownerLbl, "no answer");
+  }
+  lv_timer_del(s_ownerTimer);
+  s_ownerTimer = nullptr;
+}
+
+static void _onDialogDeleted(lv_event_t * /*e*/) {
+  if (s_ownerTimer) lv_timer_del(s_ownerTimer);
+  s_ownerTimer = nullptr;
+  s_ownerLbl = nullptr;
+}
+
+// One "Key:  value" line; returns the value label.
+static lv_obj_t *_addField(lv_obj_t *box, const char *key, const char *value,
+                           lv_color_t col) {
+  lv_obj_t *row = lv_obj_create(box);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t *k = lv_label_create(row);
+  lv_label_set_text(k, key);
+  lv_obj_set_style_text_color(k, theme::TEXT_MUTED, 0);
+  lv_obj_set_style_text_font(k, &lv_font_montserrat_10, 0);
+
+  lv_obj_t *v = lv_label_create(row);
+  lv_label_set_text(v, value);
+  lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(v, 200);
+  lv_obj_set_pos(v, 56, 0);
+  lv_obj_set_style_text_color(v, col, 0);
+  lv_obj_set_style_text_font(v, theme::bodyFont10(), 0);
+  return v;
+}
+
+static void _buildPeerDialog(const PeerInfo &peer, bool isRepeater,
+                             bool already, lv_event_cb_t saveCb) {
   lv_obj_t *overlay = lv_obj_create(lv_scr_act());
   lv_obj_set_size(overlay, OPS_SCREEN_W, OPS_SCREEN_H);
   lv_obj_set_pos(overlay, 0, 0);
@@ -232,78 +316,96 @@ static lv_obj_t *_buildSaveDialog(const char *msg, lv_event_cb_t saveCb,
   lv_obj_set_style_bg_opa(overlay, LV_OPA_50, 0);
   lv_obj_set_style_border_width(overlay, 0, 0);
   lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(overlay, _onDialogDeleted, LV_EVENT_DELETE, nullptr);
 
   lv_obj_t *box = lv_obj_create(overlay);
-  lv_obj_set_size(box, 240, 128);
+  lv_obj_set_width(box, 280);
+  lv_obj_set_height(box, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(box, OPS_SCREEN_H - 8, 0);
   lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
   lv_obj_set_style_border_color(box, theme::ACCENT, 0);
   lv_obj_set_style_border_width(box, 1, 0);
   lv_obj_set_style_radius(box, 6, 0);
   lv_obj_set_style_pad_all(box, 8, 0);
-  lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_row(box, 5, 0);
+  lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(box, LV_DIR_VER);
 
-  lv_obj_t *lbl = lv_label_create(box);
-  lv_label_set_text(lbl, msg);
-  lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(lbl, 220);
-  lv_obj_set_style_text_color(lbl, theme::TEXT, 0);
-  lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
-  lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_t *title = lv_label_create(box);
+  lv_label_set_text(title, isRepeater ? "Repeater" : "Contact");
+  lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
 
-  lv_obj_t *saveBtn = lv_btn_create(box);
-  lv_group_remove_obj(saveBtn);
-  lv_obj_set_size(saveBtn, 95, 26);
-  lv_obj_align(saveBtn, LV_ALIGN_BOTTOM_LEFT, 0, -34);
-  lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, 0);
-  lv_obj_set_style_bg_color(saveBtn, theme::ACCENT, LV_STATE_PRESSED);
-  lv_obj_set_style_radius(saveBtn, 4, 0);
-  lv_obj_set_style_shadow_width(saveBtn, 0, 0);
-  lv_obj_add_event_cb(saveBtn, saveCb, LV_EVENT_CLICKED, overlay);
-  lv_obj_t *saveTxt = lv_label_create(saveBtn);
-  lv_label_set_text(saveTxt, saveLblText);
-  lv_obj_set_style_text_color(saveTxt, theme::TEXT, 0);
-  lv_obj_set_style_text_font(saveTxt, &lv_font_montserrat_10, 0);
-  lv_obj_center(saveTxt);
+  _addField(box, "Name:", peer.name, theme::TEXT);
 
-  lv_obj_t *cancelBtn = lv_btn_create(box);
-  lv_group_remove_obj(cancelBtn);
-  lv_obj_set_size(cancelBtn, 95, 26);
-  lv_obj_align(cancelBtn, LV_ALIGN_BOTTOM_RIGHT, 0, -34);
-  lv_obj_set_style_bg_color(cancelBtn, theme::BG, 0);
-  lv_obj_set_style_bg_color(cancelBtn, theme::RED, LV_STATE_PRESSED);
-  lv_obj_set_style_border_color(cancelBtn, theme::BORDER, 0);
-  lv_obj_set_style_border_width(cancelBtn, 1, 0);
-  lv_obj_set_style_radius(cancelBtn, 4, 0);
-  lv_obj_set_style_shadow_width(cancelBtn, 0, 0);
-  lv_obj_add_event_cb(cancelBtn, ScreenHeard::_onSaveCancel, LV_EVENT_CLICKED,
-                      overlay);
-  lv_obj_t *cancelTxt = lv_label_create(cancelBtn);
-  lv_label_set_text(cancelTxt, "Cancel");
-  lv_obj_set_style_text_color(cancelTxt, theme::TEXT_MUTED, 0);
-  lv_obj_set_style_text_font(cancelTxt, &lv_font_montserrat_10, 0);
-  lv_obj_center(cancelTxt);
+  // Full public key when the advert carried it, else the 4-byte prefix.
+  static const uint8_t kZero[32] = {};
+  char idBuf[65];
+  bool fullKey = memcmp(peer.pubKey, kZero, 32) != 0;
+  int n = fullKey ? 32 : 4;
+  const uint8_t *k = fullKey ? peer.pubKey : peer.pubKeyPrefix;
+  for (int i = 0; i < n; i++) snprintf(&idBuf[i * 2], 3, "%02X", k[i]);
+  _addField(box, "Identity:", idBuf, theme::TEXT_MUTED);
 
-  lv_obj_t *clearBtn = lv_btn_create(box);
-  lv_group_remove_obj(clearBtn);
-  lv_obj_set_size(clearBtn, 224, 26);
-  lv_obj_align(clearBtn, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_color(clearBtn, theme::BG, 0);
-  lv_obj_set_style_bg_color(clearBtn, theme::ORANGE, LV_STATE_PRESSED);
-  lv_obj_set_style_border_color(clearBtn, theme::ORANGE, 0);
-  lv_obj_set_style_border_width(clearBtn, 1, 0);
-  lv_obj_set_style_radius(clearBtn, 4, 0);
-  lv_obj_set_style_shadow_width(clearBtn, 0, 0);
-  lv_obj_add_event_cb(clearBtn, ScreenHeard::_onClearList, LV_EVENT_CLICKED,
-                      overlay);
-  lv_obj_t *clearTxt = lv_label_create(clearBtn);
-  lv_label_set_text(clearTxt, "Clear List");
-  lv_obj_set_style_text_color(clearTxt, theme::ORANGE, 0);
-  lv_obj_set_style_text_font(clearTxt, &lv_font_montserrat_10, 0);
-  lv_obj_center(clearTxt);
+  char rssiBuf[40];
+  if (peer.hops == 0)
+    snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm (direct)", (int)peer.lastRssi);
+  else if (peer.hops == 0xFF)
+    snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm (last hop)", (int)peer.lastRssi);
+  else
+    snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm (last hop, %u hops)",
+             (int)peer.lastRssi, (unsigned)peer.hops);
+  lv_color_t rc = peer.lastRssi >= -80.0f    ? lv_color_hex(0x3FB950)
+                  : peer.lastRssi >= -100.0f ? lv_color_hex(0xE3B341)
+                                             : lv_color_hex(0xF85149);
+  _addField(box, "RSSI:", rssiBuf, rc);
+
+  if (isRepeater) {
+    bool asked = MeshService::instance().requestOwnerInfo(peer.pubKey, peer.name,
+                                                         peer.hops == 0);
+    s_ownerLbl = _addField(box, "Owner:", asked ? "asking..." : "needs a direct route",
+                           theme::TEXT_MUTED);
+    if (asked) {
+      s_ownerAskedMs = millis();
+      s_ownerTimer = lv_timer_create(_onOwnerPoll, 250, nullptr);
+    }
+  }
+
+  // Save/Update + Cancel, two columns (fat-finger popup style).
+  lv_obj_t *btnRow = lv_obj_create(box);
+  lv_obj_set_size(btnRow, LV_PCT(100), 34);
+  lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(btnRow, 0, 0);
+  lv_obj_set_style_pad_all(btnRow, 0, 0);
+  lv_obj_set_style_pad_top(btnRow, 4, 0);
+  lv_obj_set_style_pad_column(btnRow, 8, 0);
+  lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+
+  auto mkBtn = [&](const char *text, lv_color_t bg, lv_color_t fg,
+                   lv_color_t border, lv_event_cb_t cb) {
+    lv_obj_t *b = lv_btn_create(btnRow);
+    lv_group_remove_obj(b);
+    lv_obj_set_height(b, 30);
+    lv_obj_set_flex_grow(b, 1);
+    lv_obj_set_style_bg_color(b, bg, 0);
+    lv_obj_set_style_bg_color(b, theme::ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, border, 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_radius(b, 4, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, overlay);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, fg, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+    lv_obj_center(l);
+  };
+  mkBtn(already ? "Update" : "Save", theme::PRIMARY, theme::TEXT, theme::PRIMARY, saveCb);
+  mkBtn("Cancel", theme::BG, theme::TEXT_MUTED, theme::BORDER, ScreenHeard::_onSaveCancel);
 
   s_dialogOpen = true;
-  return overlay;
 }
 
 // ── _onKey() — ESC/backspace → back to launcher ───────────────────────
@@ -325,21 +427,13 @@ void ScreenHeard::_onRowClick(lv_event_t *e) {
   memcpy(s_pendingKey, peer.pubKeyPrefix, 4);
   theme::sanitizeText(peer.name);
 
-  char msg[72];
   if (peer.type == 2) {
-    // Repeater
     bool already = repeaters::findByKey(peer.pubKeyPrefix);
-    snprintf(msg, sizeof(msg),
-             already ? "Update repeater '%s'?" : "Save '%s' to repeaters?",
-             peer.name);
-    _buildSaveDialog(msg, _onSaveRepConfirm, already ? "Update" : "Save");
+    _buildPeerDialog(peer, true, already, _onSaveRepConfirm);
   } else {
-    // Client / Companion / Room — save to contacts
+    // Client / Companion / Room — saved to contacts
     bool already = contacts::findByKey(peer.pubKeyPrefix);
-    snprintf(msg, sizeof(msg),
-             already ? "Update contact '%s'?" : "Save '%s' to contacts?",
-             peer.name);
-    _buildSaveDialog(msg, _onSaveConfirm, already ? "Update" : "Save");
+    _buildPeerDialog(peer, false, already, _onSaveConfirm);
   }
 }
 
@@ -398,14 +492,14 @@ void ScreenHeard::_onSaveCancel(lv_event_t *e) {
   s_pendingPeer = -1;
 }
 
-// ── _onClearList() — wipe the in-memory Heard list ───────────────────
+// ── _onClearList() — wipe the in-memory Heard list (top-bar button) ──
 void ScreenHeard::_onClearList(lv_event_t * /*e*/) {
   MeshService::instance().clearPeers();
   OPS_LOG("Heard", "Cleared heard list");
   s_dialogOpen = false;
   s_pendingPeer = -1;
-  show();  // deletes the old screen (which owns the dialog overlay) and
-           // rebuilds it against the now-empty peer list
+  onPeersUpdated();  // rebuilds now; the old screen is deleted async (the
+                     // click is still being dispatched on its button)
 }
 
 } // namespace ui

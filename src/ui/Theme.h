@@ -53,4 +53,12 @@ void sanitizeText(char* s);
 // Fixed colours (the green theme swaps GREEN to blue). Same bars as Show Path.
 lv_obj_t* addSignalBars(lv_obj_t* parent, float rssi);
 
+// Transparent full-width flex row for a list row's name line: the name label
+// (content width, capped) followed by badges such as the favourite star.
+lv_obj_t* addNameRow(lv_obj_t* parent);
+
+// Small outlined button with a drawn speech bubble (accent colour): the
+// "message this node" shortcut on list rows. Not in the input group.
+lv_obj_t* addDmButton(lv_obj_t* parent);
+
 }}  // namespace ops::theme

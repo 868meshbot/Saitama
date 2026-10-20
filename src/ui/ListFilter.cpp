@@ -59,7 +59,7 @@ static void _onKey(lv_event_t* e)
     if (lv_event_get_key(e) == LV_KEY_ESC && st->onEsc) st->onEsc();
 }
 
-lv_obj_t* create(lv_obj_t* bar, State& st)
+lv_obj_t* create(lv_obj_t* bar, State& st, lv_coord_t width, lv_coord_t insetRight)
 {
     // Pushes the box to the right; it stops short of the right edge (clear of
     // the panel's dead pixels, like the Chat list's + button).
@@ -72,8 +72,8 @@ lv_obj_t* create(lv_obj_t* bar, State& st)
 
     lv_obj_t* ta = lv_textarea_create(bar);
     st.ta = ta;
-    lv_obj_set_size(ta, 110, 22);
-    lv_obj_set_style_translate_x(ta, -41, 0);
+    lv_obj_set_size(ta, width, 22);
+    lv_obj_set_style_translate_x(ta, -insetRight, 0);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, sizeof(st.text) - 1);
     lv_textarea_set_placeholder_text(ta, LV_SYMBOL_EYE_OPEN " filter");

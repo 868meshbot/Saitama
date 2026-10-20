@@ -258,12 +258,21 @@ void ScreenRepeaters::_build()
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-        lv_obj_t* nameLbl = lv_label_create(col);
+        // Name line: name, then the favourite star beside it.
+        lv_obj_t* nameRow = theme::addNameRow(col);
+        lv_obj_t* nameLbl = lv_label_create(nameRow);
         lv_label_set_text(nameLbl, r.name);
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_obj_set_width(nameLbl, LV_SIZE_CONTENT);
+        lv_obj_set_style_max_width(nameLbl, LV_PCT(85), 0);   // room for the star
         lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
         lv_obj_set_style_text_font(nameLbl, theme::bodyFont12(), 0);
+
+        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
+        lv_obj_t* starLbl = lv_label_create(nameRow);
+        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
+        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
+        if (!r.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
 
         lv_obj_t* line2 = lv_obj_create(col);
         lv_obj_set_width(line2, LV_PCT(100));
@@ -301,14 +310,8 @@ void ScreenRepeaters::_build()
         lv_obj_set_style_text_color(timeLbl, theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
 
-        // ── Favourite star — the compiled gold-star emoji, hidden when unset ─
-        // Signal bars (last-heard RSSI), left of the star
+        // Signal bars (last-heard RSSI)
         theme::addSignalBars(row, r.lastRssi);
-
-        lv_obj_t* starLbl = lv_label_create(row);
-        lv_label_set_text(starLbl, "\xE2\xAD\x90");  // U+2B50 — matches kOpsEmoji "star gold"
-        lv_obj_set_style_text_font(starLbl, theme::bodyFont12(), 0);
-        if (!r.favourite) lv_obj_add_flag(starLbl, LV_OBJ_FLAG_HIDDEN);
     }
 
     listfilter::apply(s_filter);   // keep the filter across rebuilds

@@ -76,6 +76,52 @@ lv_obj_t* addSignalBars(lv_obj_t* parent, float rssi)
     return icon;
 }
 
+lv_obj_t* addNameRow(lv_obj_t* parent)
+{
+    lv_obj_t* r = lv_obj_create(parent);
+    lv_obj_set_width(r, LV_PCT(100));
+    lv_obj_set_height(r, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(r, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(r, 0, 0);
+    lv_obj_set_style_pad_all(r, 0, 0);
+    lv_obj_set_style_pad_column(r, 3, 0);
+    lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    return r;
+}
+
+lv_obj_t* addDmButton(lv_obj_t* parent)
+{
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_group_remove_obj(btn);
+    lv_obj_set_size(btn, 28, 26);
+    lv_obj_set_style_bg_color(btn, BG, 0);
+    lv_obj_set_style_bg_color(btn, PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(btn, ACCENT, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_radius(btn, 4, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+
+    // Bubble: rounded body plus a square tail off its lower-left corner.
+    // Positions are inside the 1 px border (26 x 24 content area).
+    auto part = [btn](lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, lv_coord_t rad) {
+        lv_obj_t* o = lv_obj_create(btn);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_size(o, w, h);
+        lv_obj_set_style_radius(o, rad, 0);
+        lv_obj_set_style_bg_color(o, ACCENT, 0);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(o, 0, 0);
+        lv_obj_set_style_pad_all(o, 0, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    };
+    part(5, 5, 16, 11, 4);   // body
+    part(7, 14, 4, 5, 0);    // tail
+    return btn;
+}
+
 void sanitizeText(char* s)
 {
     unsigned char* p = (unsigned char*)s;
