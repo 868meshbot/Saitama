@@ -17,6 +17,10 @@
 struct SaitamaStubRadioDriver
 {
     void powerOff() {}
+    // MeshCore v1.18 CommonRadioPrefs.cpp ("set radio.rxgain", "set tx");
+    // compiled in but never called by Saitama.
+    bool setRxBoostedGainMode(bool) { return false; }
+    void setTxPower(int8_t) {}
 };
 
 struct SaitamaStubLocationProvider
