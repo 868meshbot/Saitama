@@ -30,6 +30,10 @@
 #include <cstring>
 #include <cstdio>
 
+// Sun / moon emoji images (C objects, so declared at global scope).
+extern "C" const lv_img_dsc_t emoji_sun;
+extern "C" const lv_img_dsc_t emoji_moon;
+
 namespace ops { namespace ui {
 
 // ── Layout ────────────────────────────────────────────────────────────
@@ -91,7 +95,7 @@ bool  ScreenMap::_gpsCentered = false;
 // place and the tile cache flushed when the style changes.
 
 static char s_tileFmt[40] = "/maps/osm/%d/%d/%d.png";
-static lv_obj_t* s_styleLbl = nullptr;   // top-bar day/night button label
+static lv_obj_t* s_styleImg = nullptr;   // top-bar day/night button icon
 static void _updateStyleBtn();
 static bool s_tileInvert  = false;
 static uint32_t s_styleCheckMs = 0;
@@ -164,9 +168,8 @@ static bool _showingNight()
 
 static void _updateStyleBtn()
 {
-    if (!s_styleLbl) return;
-    lv_label_set_text(s_styleLbl, _showingNight() ? "\xE2\x98\x80"            // U+2600 sun
-                                                  : "\xF0\x9F\x8C\x99");     // U+1F319 moon
+    if (!s_styleImg) return;
+    lv_img_set_src(s_styleImg, _showingNight() ? &emoji_sun : &emoji_moon);
 }
 
 static void _onStyleToggle(lv_event_t*)
@@ -292,8 +295,19 @@ void ScreenMap::_build()
     lv_obj_set_flex_grow(title, 1);
 
     // Day/night switch, left of Close
-    s_styleLbl = mkBarBtn("\xF0\x9F\x8C\x99", _onStyleToggle);
-    lv_obj_set_style_text_font(s_styleLbl, ops::emoji::emojiFont(&lv_font_montserrat_10), 0);
+    // The emoji are 16 px images; scaled to ~11 px to sit with the 10 pt
+    // bar symbols. The empty label keeps the button the same size as its
+    // neighbours.
+    {
+        lv_obj_t* lbl = mkBarBtn("", _onStyleToggle);
+        lv_obj_t* btn = lv_obj_get_parent(lbl);
+        lv_obj_set_width(lbl, 11);
+        s_styleImg = lv_img_create(btn);
+        lv_img_set_src(s_styleImg, &emoji_moon);
+        lv_img_set_zoom(s_styleImg, 176);   // 256 = 100%
+        lv_img_set_antialias(s_styleImg, true);
+        lv_obj_center(s_styleImg);
+    }
 
     mkBarBtn(LV_SYMBOL_CLOSE, _onExitClick);
 
