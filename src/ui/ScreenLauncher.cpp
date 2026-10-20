@@ -1412,9 +1412,13 @@ static void _autoAdvSetSaveText(const char* txt)
     if (s_autoAdvSaveLbl) lv_label_set_text(s_autoAdvSaveLbl, txt);
 }
 
+// Picking an interval saves it straight away; Save stays as a manual retry.
 static void _onAutoAdvChanged(lv_event_t* /*e*/)
 {
-    _autoAdvSetSaveText(LV_SYMBOL_SAVE " Save");
+    if (!s_autoAdvDropdown) return;
+    int idx = (int)lv_dropdown_get_selected(s_autoAdvDropdown);
+    bool ok = ops::autoadvert::setChoice(idx);
+    _autoAdvSetSaveText(ok ? LV_SYMBOL_OK " Saved" : LV_SYMBOL_WARNING " No SD");
 }
 
 static void _onAutoAdvSave(lv_event_t* /*e*/)

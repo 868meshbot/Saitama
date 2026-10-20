@@ -19,6 +19,7 @@ static constexpr uint32_t    CHECK_EVERY_MS = 5000;
 static int      s_choice     = 0;
 static uint32_t s_lastSentMs = 0;
 static uint32_t s_lastCheck  = 0;
+static bool     s_loaded     = false;   // false = SD was not readable yet
 
 static int _indexForHours(int hours)
 {
@@ -28,26 +29,39 @@ static int _indexForHours(int hours)
     return 0;
 }
 
-void init()
+// Reads the file into s_choice. True once the card was readable, whether or
+// not the file exists (no file = Off, not an error).
+static bool _load()
 {
-    s_choice     = 0;
-    s_lastSentMs = millis();
-    if (!sdcard::isMounted()) return;
+    if (!sdcard::isMounted() && !sdcard::tryMount()) return false;
     File f = SD.open(PATH, FILE_READ);
-    if (!f) return;
+    if (!f) {
+        OPS_LOG("AutoAdv", "%s not found - auto advert off", PATH);
+        return true;
+    }
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err) {
         OPS_LOG("AutoAdv", "%s parse: %s", PATH, err.c_str());
-        return;
+        return true;
     }
     s_choice = _indexForHours(doc["intervalHours"] | 0);
-    OPS_LOG("AutoAdv", "Interval: %d h", HOURS[s_choice]);
+    OPS_LOG("AutoAdv", "Loaded interval: %d h", HOURS[s_choice]);
+    return true;
+}
+
+void init()
+{
+    s_choice     = 0;
+    s_lastSentMs = millis();
+    s_loaded     = _load();
+    if (!s_loaded) OPS_LOG("AutoAdv", "SD not mounted - will retry");
 }
 
 int choice()
 {
+    if (!s_loaded) s_loaded = _load();   // card mounted after boot
     return s_choice;
 }
 
@@ -56,6 +70,7 @@ bool setChoice(int idx)
     if (idx < 0 || idx >= NUM_CHOICES) return false;
     s_choice     = idx;
     s_lastSentMs = millis();
+    s_loaded     = true;   // the user's choice wins over a late load
     if (!sdcard::isMounted()) return false;
     File f = SD.open(PATH, FILE_WRITE);
     if (!f) return false;
@@ -77,6 +92,14 @@ void tick()
     uint32_t now = millis();
     if (now - s_lastCheck < CHECK_EVERY_MS) return;
     s_lastCheck = now;
+    if (!s_loaded) {
+        // Retry the load at most once a minute; tryMount() touches the bus.
+        static uint32_t lastTry = 0;
+        if (now - lastTry < RETRY_MS) return;
+        lastTry = now;
+        s_loaded = _load();
+        if (!s_loaded) return;
+    }
     if (s_choice == 0) return;
 
     uint32_t intervalMs = (uint32_t)HOURS[s_choice] * 3600UL * 1000UL;
