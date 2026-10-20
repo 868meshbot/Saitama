@@ -1,6 +1,6 @@
 # CLAUDE.md — Claude Code guide for Saitama
 
-Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3, SX1262 LoRa, ST7789 320×240, BBQ10 keyboard, trackball, built-in GPS). It runs MeshCore as a git submodule and LVGL 8.3 for the UI.
+Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3, SX1262 LoRa, ST7789 320×240, BBQ10 keyboard, trackball, built-in GPS). It runs MeshCore (companion-v1.18.0) as a git submodule and LVGL 8.3 for the UI.
 
 ---
 
@@ -62,13 +62,13 @@ src/
   mesh/MeshService.h/cpp    — MeshCore bridge, RxMessage queue, RadioStats
   ui/UIScreen.h/cpp         — LVGL init, display/touch/trackball drivers, tick loop
   ui/ScreenBoot.h/cpp       — Splash screen
-  ui/BootAnim.h/cpp         — Animated boot-screen concept (mesh + "S" packet); test only, via /saitama-test (screensaver)
+  ui/BootAnim.h/cpp         — Saitama screensaver (mesh + "S" packet): Settings > Screensaver = Saitama, or /saitama-scr; boot-screen candidate
   ui/ScreenLauncher.h/cpp   — 3 swipeable pages: home (heard-station rain + Chat/Contacts/Map/Settings), two 4×3 app grids
   ui/ScreenHome.h/cpp       — Chat: channel list (scope tag per channel, + Add Channel), conversations, DMs, "repeated xN" on sent channel msgs
   ui/ScreenTerminal.h/cpp   — Serial-style terminal + CDC echo
   ui/ScreenSettings.h/cpp   — Settings
-  ui/ScreenHeard.h/cpp      — Peer list (RSSI, last-seen, type badge)
-  ui/ScreenContacts.h/cpp   — Contact directory: filter box, signal bars, 2-column action popup, Details, Block
+  ui/ScreenHeard.h/cpp      — Peer list (signal bars, last-seen, type badge); Clear List + close X top right; row → details (name, identity, RSSI, repeater owner via ANON_REQ_TYPE_OWNER) with Save/Update
+  ui/ScreenContacts.h/cpp   — Contact directory: filter box, star beside the name, speech-bubble DM button, signal bars, 2-column action popup, Details, Block
   ui/ScreenRepeaters.h/cpp  — Repeater directory: filter box, signal bars, 2-column action popup, admin login/panel
   ui/ScreenTrace.h/cpp      — Hop-by-hop trace tool; showFor(prefix) opens with a target preselected
   ui/ScreenRegions.h/cpp    — Region discovery (asks 0-hop repeaters) + saved-region chips
@@ -108,7 +108,7 @@ lib/
 
 **Emoji:** `src/ui/emoji/emoji_data.h` is hand-patched — never run `scripts/gen_emoji.py` wholesale (it would drop hand-added entries); generate one asset and patch the table. `theme::sanitizeText()` strips glyph-less modifiers (variation selectors, ZWJ + joined part, skin tones, keycaps) and keeps only known flag pairs (IE, US, FR).
 
-**Screensaver:** `UIScreen::tick()` tracks `s_lastActivityMs` (reset on any trackball/key/touch). When `cfg.screenTimeoutSec > 0` and the device is idle past that threshold, `_activateScreensaver()` saves `lv_scr_act()` to `s_prevScreen`, creates a black LVGL screen with the time in 36pt Montserrat, and loads it. Any input calls `_deactivateScreensaver()` which restores `s_prevScreen` and deletes the saver screen. Screensaver clock updates every 30 s alongside the launcher clock tick.
+**Screensaver:** `UIScreen::tick()` tracks `s_lastActivityMs` (reset on any trackball/key/touch). When `cfg.screenTimeoutSec > 0` and the device is idle past that threshold, `_activateScreensaver()` saves `lv_scr_act()` to `s_prevScreen`, creates a black LVGL screen with the time in 36pt Montserrat, and loads it. With `cfg.screensaverStyle == 1` (Settings > Screensaver = Saitama, `"ssStyle"` in settings.json) it shows the BootAnim mesh animation instead; its timer stops when the backlight goes off. Any input calls `_deactivateScreensaver()` which restores `s_prevScreen` and deletes the saver screen. Screensaver clock updates every 30 s alongside the launcher clock tick.
 
 **Key APIs:**
 ```cpp
@@ -139,7 +139,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **ScreenSignal back-navigation pattern:** The scrollable body container is added to the default LVGL input group (`lv_group_focus_obj(_body)`). The keyboard handler in `UIScreen::tick()` routes backspace → `LV_KEY_ESC` to the focused widget. `_onKey` on the body checks for `LV_KEY_ESC` and calls `ScreenLauncher::show()`. Trackball up/down scrolls via the encoder indev naturally because the body is the focused scrollable object.
 
-**Async contact response pipeline (repeater queries):** `OPSMesh::onContactResponse()` decodes repeater replies — a single `0x00` byte means login OK; any other bytes are treated as null-terminated stats text (JSON from `StatsFormatHelper`). Decoded lines are enqueued in a `_respBuf[8][132]` ring buffer inside `OPSMesh`. `UIScreen::tick()` drains the queue each frame via `MeshService::pollContactResponse()` and routes lines to `ScreenTerminal::appendLine()`. This means repeater query results always appear in the Terminal regardless of which screen is active.
+**Async contact response pipeline (repeater queries):** `OPSMesh::onContactResponse()` decodes repeater replies — a single `0x00` byte means login OK; any other bytes are treated as null-terminated stats text (JSON from `StatsFormatHelper`). Decoded lines are enqueued in a `_respBuf[8][132]` ring buffer inside `OPSMesh`. `UIScreen::tick()` drains the queue each frame via `MeshService::pollContactResponse()` and routes lines to `ScreenTerminal::appendLine()`. This means repeater query results always appear in the Terminal regardless of which screen is active. Replies to admin CLI commands (`TXT_TYPE_CLI_DATA` text) arrive in `onCommandDataRecv()` and take the same queue, one line per entry; companion-to-companion CLI commands (`onCLICommandRecv()`, MeshCore v1.18) are always ignored.
 
 **Repeater routing table preload:** The `Repeater` struct stores a full `pubKey[32]` (populated when a repeater advert is heard). `preloadNvsRepeaters()` runs at `OPSMesh::init()` right after `preloadNvsContacts()` and inserts every saved repeater with a non-zero key into MeshCore's contact routing table. This ensures `sendRepeaterLogin()` and `sendAdminCommand()` can find the contact immediately on boot without waiting for another advert. SD JSON stores the full key as `"pubKey64"` (64 hex chars); the field is optional so old JSON files load gracefully with the key zeroed until the repeater is heard again.
 
@@ -149,7 +149,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **Closing popups/dialogs (crash rules):** a button inside an overlay must close it with `lv_obj_del_async()`, never `lv_obj_del()` (deleting an ancestor of the event target corrupts LVGL). If the screen is then rebuilt (a deferred `show()` that deletes the old screen), **only hide** the overlay — LVGL runs the newest async call first, so a deferred delete plus a deferred rebuild frees the overlay twice.
 
-**Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; keyboard light off + sounds muted; moon beside the launcher clock), Speaker & Volume in one window. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
+**Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; sounds muted, keyboard light on Auto stays lit; moon beside the launcher clock), Speaker & Volume in one window. Radio Mode also holds **Routing** (1/2/3-byte path hashes, `cfg.pathHashSz`, `"pathHashSz"` in settings.json): every flood goes out through `_floodInScope()` with `config::pathHashBytes()`; BLE apps read it in device info and set it with command 61. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
 
 **Internal DRAM is the scarce resource:** BLE pairing, hardware AES (channel decrypt) and the SD driver allocate from it at runtime; when it runs out BLE fails ("BLE_INIT: Malloc failed") and channel packets decrypt to empty "?" messages ("esp-aes: Failed to allocate memory"). Static arrays over ~500 B go to PSRAM via `static T (&s_x)[N] = ops::psram::array<T[N]>();`. `pre_build.py` patches NavBoxLib so its 45 KB PNG decoder lives in PSRAM. `UIScreen::tick()` logs `[OPS] Heap:` every 10 s.
 
