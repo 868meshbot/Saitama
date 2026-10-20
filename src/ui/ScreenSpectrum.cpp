@@ -9,16 +9,22 @@
 //   ├───────────────────────────────┬────────┤  y=28
 //   │                               │ ─50    │
 //   │  waterfall  (50 rows × 2px)   │ ~~~~~  │  100px
-//   │                               │ ─140   │
+//   │                               │ ─125   │
 //   ├───────────────────────────────┼────────┤  y=128
 //   │                               │ ─50    │
-//   │  live trace + peak hold       │ ─80    │  80px
-//   │                               │ ─120   │
+//   │  live trace + peak hold       │ ─90    │  80px
+//   │                               │ ─125   │
 //   ├───────────────────────────────┴────────┤  y=208
 //   │  100kHz  29.6MHz  869.618MHz  gain:NORM│  32px  bottom bar
+//   │  NF -118.5 dBm    CH -96.0 dBm         │        (2 lines)
 //   └────────────────────────────────────────┘  y=240
 //
 //  Right 24 px of canvas = scale strip (colour ramp for WF; dBm ticks for trace)
+//
+//  dB scale: auto by default — the waterfall colours and the trace both span
+//  from just under the noise floor to just over the strongest signal (40-90 dB,
+//  5 dB steps), so the height isn't spent on -140..-120 where nothing is.
+//  'a' switches to the fixed -140..-50 dBm scale and back.
 
 #include "ScreenSpectrum.h"
 #include "ScreenLauncher.h"
@@ -45,9 +51,23 @@ static constexpr int CANVAS_H = WF_H + TRACE_H;  // 180
 static constexpr int BOT_H    = 32;
 
 // ── RSSI range ───────────────────────────────────────────────────────────────
+// Fixed scale (also the limits of the auto scale).
 static constexpr float RSSI_MIN = -140.0f;
 static constexpr float RSSI_MAX =  -50.0f;
-static constexpr float RSSI_RNG = RSSI_MAX - RSSI_MIN;  // 90 dB
+// Auto scale: span limits and how far the smoothed level must move past the
+// shown edge before the edge steps (stops the labels flickering).
+static constexpr float AUTO_MIN_SPAN = 40.0f;
+static constexpr float AUTO_MAX_SPAN = 90.0f;
+static constexpr float AUTO_HYST     = 7.5f;
+
+// Scale in use — what the waterfall colours and trace bars map to.
+static float s_lo = RSSI_MIN;
+static float s_hi = RSSI_MAX;
+static bool  s_autoScale = true;
+static float s_noiseEma  = 0.0f;   // smoothed noise floor (20th percentile)
+static float s_maxEma    = 0.0f;   // smoothed strongest bin
+static bool  s_emaValid  = false;
+static lv_obj_t* s_liveLbl = nullptr;   // bottom bar line 2: noise floor + channel
 
 // ── Zoom levels ───────────────────────────────────────────────────────────────
 struct ZoomLevel { float stepKHz; const char* label; };
@@ -80,10 +100,10 @@ lv_obj_t*   ScreenSpectrum::_cadLbl    = nullptr;
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
-// Heat map: -140 dBm → black, -50 dBm → yellow
+// Heat map: bottom of the scale → black, top → yellow
 static inline lv_color_t _rssiToWfColor(float rssi)
 {
-    float norm = (rssi - RSSI_MIN) / RSSI_RNG;
+    float norm = (rssi - s_lo) / (s_hi - s_lo);
     if (norm < 0.0f) norm = 0.0f;
     if (norm > 1.0f) norm = 1.0f;
     uint16_t v = (uint16_t)(norm * 255.0f);
@@ -104,9 +124,61 @@ static inline lv_color_t _rssiToWfColor(float rssi)
 // Pixels from bottom of trace area (0=floor, TRACE_H-1=ceiling)
 static inline int _rssiToBar(float rssi)
 {
-    if (rssi < RSSI_MIN) rssi = RSSI_MIN;
-    if (rssi > RSSI_MAX) rssi = RSSI_MAX;
-    return (int)((rssi - RSSI_MIN) / RSSI_RNG * (TRACE_H - 1));
+    if (rssi < s_lo) rssi = s_lo;
+    if (rssi > s_hi) rssi = s_hi;
+    return (int)((rssi - s_lo) / (s_hi - s_lo) * (TRACE_H - 1));
+}
+
+// Tracks the noise floor and strongest bin of each sweep (shown live in the
+// bottom bar), and in auto mode moves the scale towards them. Noise floor =
+// 20th percentile of the bins (a few strong signals don't lift it); top =
+// strongest bin. Both are smoothed, rises faster than falls; the scale edges
+// snap to 5 dB.
+static void _updateAutoScale()
+{
+    // Histogram in the radio's 0.5 dB steps, -160..-0.5 dBm — no sort, no
+    // big buffer.
+    static constexpr int H_MIN2 = -320, H_N = 320;   // half-dB units
+    uint16_t hist[H_N] = {};
+    float maxR = -200.0f;
+    for (int i = 0; i < SPEC_W; i++) {
+        float r = s_rssi[i];
+        if (r > maxR) maxR = r;
+        int b = (int)floorf(r * 2.0f) - H_MIN2;
+        if (b < 0) b = 0;
+        if (b >= H_N) b = H_N - 1;
+        hist[b]++;
+    }
+    int want = SPEC_W / 5, acc = 0, nb = 0;
+    for (; nb < H_N; nb++) { acc += hist[nb]; if (acc >= want) break; }
+    float noise = (float)(nb + H_MIN2) * 0.5f;
+
+    if (!s_emaValid) {
+        s_noiseEma = noise;
+        s_maxEma   = maxR;
+        s_emaValid = true;
+        s_lo = 1.0f;   // force the first snap below
+    } else {
+        s_noiseEma += (noise - s_noiseEma) * 0.15f;
+        s_maxEma   += (maxR - s_maxEma) * (maxR > s_maxEma ? 0.5f : 0.05f);
+    }
+
+    if (!s_autoScale) { s_lo = RSSI_MIN; s_hi = RSSI_MAX; return; }
+
+    float wantLo = floorf((s_noiseEma - 5.0f) / 5.0f) * 5.0f;
+    float wantHi = ceilf((s_maxEma + 5.0f) / 5.0f) * 5.0f;
+    if (wantLo < RSSI_MIN) wantLo = RSSI_MIN;
+    if (wantHi > RSSI_MAX) wantHi = RSSI_MAX;
+    if (wantHi - wantLo < AUTO_MIN_SPAN) wantHi = wantLo + AUTO_MIN_SPAN;
+    if (wantHi > RSSI_MAX) { wantHi = RSSI_MAX; wantLo = RSSI_MAX - AUTO_MIN_SPAN; }
+    if (wantHi - wantLo > AUTO_MAX_SPAN) wantLo = wantHi - AUTO_MAX_SPAN;
+
+    // Hysteresis: only step an edge when the smoothed level is well past it.
+    if (s_lo > 0.0f || fabsf((s_noiseEma - 5.0f) - s_lo) >= AUTO_HYST) s_lo = wantLo;
+    if (s_lo > 0.0f || fabsf((s_maxEma + 5.0f) - s_hi) >= AUTO_HYST
+                    || s_hi - s_lo < AUTO_MIN_SPAN) s_hi = wantHi;
+    if (s_hi - s_lo < AUTO_MIN_SPAN) s_hi = s_lo + AUTO_MIN_SPAN;
+    if (s_hi - s_lo > AUTO_MAX_SPAN) s_lo = s_hi - AUTO_MAX_SPAN;
 }
 
 // ── _redrawCanvas() ───────────────────────────────────────────────────────────
@@ -120,12 +192,20 @@ void ScreenSpectrum::_redrawCanvas()
     static const lv_color_t kScaleBg = lv_color_make(10, 10, 10);
     static const lv_color_t kDiv    = lv_color_make(50, 50, 50);
 
-    // Pre-compute trace grid-line canvas Y coordinates
-    const float kGridDbm[3] = { -80.0f, -100.0f, -120.0f };
-    int gridY[3];
-    for (int g = 0; g < 3; g++) {
-        int bar = _rssiToBar(kGridDbm[g]);
-        gridY[g] = WF_H + (TRACE_H - 1 - bar);
+    // Trace grid lines on round dBm values inside the current scale:
+    // every 10 dB for spans up to 60 dB, else every 20.
+    static constexpr int GRID_MAX = 5;
+    float gridDbm[GRID_MAX];
+    int   gridY[GRID_MAX];
+    int   nGrid = 0;
+    {
+        float step = (s_hi - s_lo) <= 60.0f ? 10.0f : 20.0f;
+        for (float d = ceilf((s_lo + 1.0f) / step) * step;
+             d < s_hi && nGrid < GRID_MAX; d += step) {
+            gridDbm[nGrid] = d;
+            gridY[nGrid]   = WF_H + (TRACE_H - 1 - _rssiToBar(d));
+            nGrid++;
+        }
     }
 
     // ── Waterfall ─────────────────────────────────────────────────────────────
@@ -138,7 +218,7 @@ void ScreenSpectrum::_redrawCanvas()
             _canvasBuf[(cy0 + 1) * CANVAS_W + x] = c;
         }
         // Scale strip: vertical colour-ramp (maps row top → RSSI)
-        float rowRssi = RSSI_MAX - (float)cy0 / (WF_H - 1) * RSSI_RNG;
+        float rowRssi = s_hi - (float)cy0 / (WF_H - 1) * (s_hi - s_lo);
         lv_color_t sc = _rssiToWfColor(rowRssi);
         for (int x = SPEC_W; x < CANVAS_W; x++) {
             _canvasBuf[ cy0      * CANVAS_W + x] = sc;
@@ -157,7 +237,8 @@ void ScreenSpectrum::_redrawCanvas()
         int peakTop = WF_H + (TRACE_H - 1 - peakH);
 
         for (int ty = WF_H; ty < CANVAS_H; ty++) {
-            bool isGrid = (ty == gridY[0] || ty == gridY[1] || ty == gridY[2]);
+            bool isGrid = false;
+            for (int g = 0; g < nGrid; g++) if (ty == gridY[g]) isGrid = true;
             bool inBar  = (ty >= barTop);
             bool isPeak = (ty == peakTop);
 
@@ -190,20 +271,27 @@ void ScreenSpectrum::_redrawCanvas()
     lv_draw_label_dsc_init(&ldsc);
     ldsc.font  = &lv_font_montserrat_10;
 
-    // Waterfall labels: "-50" near top, "-140" near bottom
-    ldsc.color = lv_color_make(220, 220, 220);
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, 2,            SCALE_W - 2, &ldsc, "-50");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, WF_H - 13,   SCALE_W - 2, &ldsc, "-140");
+    char hiTxt[8], loTxt[8];
+    snprintf(hiTxt, sizeof(hiTxt), "%d", (int)s_hi);
+    snprintf(loTxt, sizeof(loTxt), "%d", (int)s_lo);
 
-    // Trace dBm ticks: at -50 (top), three grid lines, -140 (bottom)
+    // Waterfall labels: top and bottom of the colour scale
+    ldsc.color = lv_color_make(220, 220, 220);
+    lv_canvas_draw_text(_canvas, SPEC_W + 1, 2,            SCALE_W - 2, &ldsc, hiTxt);
+    lv_canvas_draw_text(_canvas, SPEC_W + 1, WF_H - 13,   SCALE_W - 2, &ldsc, loTxt);
+
+    // Trace dBm ticks: top, the grid lines (unless crowding an end label), bottom
     ldsc.color = lv_color_make(140, 140, 140);
-    int traceTop    = WF_H;            // canvas Y for RSSI_MAX (-50 dBm)
-    int traceBottom = CANVAS_H - 1;    // canvas Y for RSSI_MIN (-140 dBm)
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceTop,         SCALE_W - 2, &ldsc, "-50");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[0] - 5,     SCALE_W - 2, &ldsc, "-80");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[1] - 5,     SCALE_W - 2, &ldsc, "-100");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[2] - 5,     SCALE_W - 2, &ldsc, "-120");
-    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceBottom - 12, SCALE_W - 2, &ldsc, "-140");
+    int traceTop    = WF_H;            // canvas Y for s_hi
+    int traceBottom = CANVAS_H - 1;    // canvas Y for s_lo
+    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceTop,         SCALE_W - 2, &ldsc, hiTxt);
+    for (int g = 0; g < nGrid; g++) {
+        if (gridY[g] - 5 < traceTop + 12 || gridY[g] - 5 > traceBottom - 24) continue;
+        char t[8];
+        snprintf(t, sizeof(t), "%d", (int)gridDbm[g]);
+        lv_canvas_draw_text(_canvas, SPEC_W + 1, gridY[g] - 5, SCALE_W - 2, &ldsc, t);
+    }
+    lv_canvas_draw_text(_canvas, SPEC_W + 1, traceBottom - 12, SCALE_W - 2, &ldsc, loTxt);
 
     // ── Mesh channel vertical marker (drawn last so it sits on top) ───────────
     {
@@ -230,11 +318,12 @@ void ScreenSpectrum::_updateInfo()
     float stepKHz = kZooms[s_zoom].stepKHz;
     float spanMHz = (float)SPEC_W * stepKHz / 1000.0f;
     char buf[80];
-    snprintf(buf, sizeof(buf), "%s  %.1fMHz  %.3fMHz  gain:%s",
+    snprintf(buf, sizeof(buf), "%s  %.1fMHz  %.3fMHz  gain:%s  dB:%s",
              kZooms[s_zoom].label,
              (double)spanMHz,
              (double)s_center,
-             s_gainBoost ? "+3dB" : "NORM");
+             s_gainBoost ? "+3dB" : "NORM",
+             s_autoScale ? "AUTO" : "FIX");
     lv_label_set_text(_infoLbl, buf);
 }
 
@@ -287,7 +376,25 @@ void ScreenSpectrum::update()
     }
     s_wfRow = (s_wfRow + 1) % WF_ROWS;
 
+    _updateAutoScale();
     _redrawCanvas();
+
+    // Live readout: smoothed noise floor (drops 1-3 dB with 'g' boost) and
+    // the strongest of the three bins around the mesh channel.
+    if (s_liveLbl) {
+        char ch[12] = "--";
+        int meshCol = (int)((s_meshFreqMHz - startMHz) / stepMHz + 0.5f);
+        if (meshCol >= 0 && meshCol < SPEC_W) {
+            float m = s_rssi[meshCol];
+            if (meshCol > 0          && s_rssi[meshCol - 1] > m) m = s_rssi[meshCol - 1];
+            if (meshCol < SPEC_W - 1 && s_rssi[meshCol + 1] > m) m = s_rssi[meshCol + 1];
+            snprintf(ch, sizeof(ch), "%.1f", (double)m);
+        }
+        char buf[48];
+        snprintf(buf, sizeof(buf), "NF %.1f dBm    CH %s dBm",
+                 (double)s_noiseEma, ch);
+        lv_label_set_text(s_liveLbl, buf);
+    }
 }
 
 // ── isActive() ────────────────────────────────────────────────────────────────
@@ -312,6 +419,16 @@ void ScreenSpectrum::_onKey(lv_event_t* e)
     if (*key == 'g' || *key == 'G') {
         s_gainBoost = !s_gainBoost;
         ops::MeshService::instance().setRxBoost(s_gainBoost);
+        // No scale re-fit here: the floor only moves 1-3 dB, and snapping
+        // the scale to it would hide the very change being toggled.
+        _updateInfo();
+    }
+
+    if (*key == 'a' || *key == 'A') {
+        s_autoScale = !s_autoScale;
+        s_emaValid  = false;
+        _updateAutoScale();
+        _redrawCanvas();
         _updateInfo();
     }
 }
@@ -403,7 +520,13 @@ void ScreenSpectrum::_buildScreen()
     _infoLbl = lv_label_create(bot);
     lv_obj_set_style_text_color(_infoLbl, lv_color_make(160, 160, 160), 0);
     lv_obj_set_style_text_font(_infoLbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(_infoLbl, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_align(_infoLbl, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    s_liveLbl = lv_label_create(bot);
+    lv_label_set_text(s_liveLbl, "NF --    CH --");
+    lv_obj_set_style_text_color(s_liveLbl, lv_color_make(120, 200, 230), 0);
+    lv_obj_set_style_text_font(s_liveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(s_liveLbl, LV_ALIGN_BOTTOM_LEFT, 2, 0);
 }
 
 // ── show() ────────────────────────────────────────────────────────────────────
@@ -423,6 +546,7 @@ void ScreenSpectrum::show()
     s_zoom        = 1;
     s_gainBoost   = false;
     s_cadDetected = false;
+    s_emaValid    = false;   // re-fit the auto scale from the first sweep
     ops::MeshService::instance().setRxBoost(false);  // start with normal gain
 
     if (_cadLbl) {
