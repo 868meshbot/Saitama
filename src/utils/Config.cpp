@@ -73,6 +73,7 @@ static void setDefaults(Config& c) {
     c.nightStartMin    = 22 * 60;
     c.nightEndMin      = 7 * 60;
     c.mapStyle         = 0;   // day
+    c.screensaverStyle = 0;   // clock
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -145,6 +146,7 @@ static void _saveToSD() {
     doc["nightStart"]   = s_cfg.nightStartMin;
     doc["nightEnd"]     = s_cfg.nightEndMin;
     doc["mapStyle"]     = s_cfg.mapStyle;
+    doc["ssStyle"]      = s_cfg.screensaverStyle;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
@@ -226,6 +228,7 @@ static bool _loadFromSD() {
     s_cfg.manualLon         = doc["manualLon"]    | 0.0f;
     s_cfg.autoForward       = doc["autoFwd"]      | true;
     s_cfg.pathHashSz        = doc["pathHashSz"]   | (uint8_t)0;
+    if (s_cfg.pathHashSz > 3) s_cfg.pathHashSz = 0;
     s_cfg.timezoneOffsetHours = (int8_t)(doc["tzOff"] | 0);
     strncpy(s_cfg.scopeTag, doc["scopeTag"] | "", sizeof(s_cfg.scopeTag) - 1);
     s_cfg.scopeTag[sizeof(s_cfg.scopeTag) - 1] = '\0';
@@ -245,6 +248,8 @@ static bool _loadFromSD() {
     s_cfg.nightEndMin     = (uint16_t)(doc["nightEnd"]   | 7 * 60) % 1440;
     s_cfg.mapStyle        = (uint8_t)(doc["mapStyle"] | 0);
     if (s_cfg.mapStyle > 2) s_cfg.mapStyle = 2;
+    s_cfg.screensaverStyle = (uint8_t)(doc["ssStyle"] | 0);
+    if (s_cfg.screensaverStyle > 1) s_cfg.screensaverStyle = 0;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);

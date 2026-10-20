@@ -30,6 +30,7 @@
 #include "../utils/Config.h"
 #include "../utils/Contacts.h"
 #include "../utils/Repeaters.h"
+#include "../utils/AutoAdvert.h"
 #include "../utils/SDCard.h"
 #include "../utils/IdentityBackup.h"
 #include "../utils/GpsMgr.h"
@@ -77,7 +78,7 @@ static const char* kCmdList[] = {
     "getpath", "gps", "help", "i2c", "identity", "import", "kbbl", "list",
     "local", "memory", "messages", "pathsize", "play", "power", "public",
     "quiet", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
-    "resetpath", "saitama-test", "scope", "screenshot", "sd", "send", "set", "setchannel",
+    "resetpath", "saitama-scr", "scope", "screenshot", "sd", "send", "set", "setchannel",
     "setpath", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
     nullptr
 };
@@ -102,7 +103,7 @@ static const char* kSubGps[]       = { "intermittent", "off", "on", nullptr };
 static const char* kSubClock[]     = { "analog", nullptr };
 static const char* kSubOnOff[]     = { "off", "on", nullptr };   // tbdebug
 static const char* kSubTouchCali[] = { "reset", nullptr };
-static const char* kSubPathsize[]  = { "1", "2", nullptr };
+static const char* kSubPathsize[]  = { "1", "2", "3", nullptr };
 static const char* kSubReset[]     = { "path", nullptr };
 static const char* kSubI2c[]       = { "scan", nullptr };
 
@@ -160,6 +161,14 @@ void ScreenTerminal::show() {
     }
 
     lv_scr_load(_screen);
+    // The default group is shared by every screen and keeps whatever the last
+    // one focused, so on a re-show the keys went to that (hidden) widget
+    // instead of the command line. Take focus back each time.
+    lv_group_t* g = lv_group_get_default();
+    if (g && _input) {
+        if (lv_obj_get_group(_input) != g) lv_group_add_obj(g, _input);
+        lv_group_focus_obj(_input);
+    }
     _scrollToBottom();
     OPS_LOG("UI", "Terminal shown");
 }
@@ -261,6 +270,27 @@ void ScreenTerminal::_buildTopBar(lv_obj_t* parent) {
     }
     lv_obj_set_style_text_color(title, theme::TEXT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+
+    // Close (X) top right — same action as Home/Back. Floating so the flex
+    // row doesn't place it.
+    lv_obj_t* closeBtn = lv_btn_create(bar);
+    lv_group_remove_obj(closeBtn);
+    lv_obj_add_flag(closeBtn, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_size(closeBtn, 30, TOP_H - 6);
+    lv_obj_align(closeBtn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(closeBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(closeBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(closeBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(closeBtn, 1, 0);
+    lv_obj_set_style_radius(closeBtn, 4, 0);
+    lv_obj_set_style_shadow_width(closeBtn, 0, 0);
+    lv_obj_add_event_cb(closeBtn, _onHomeClick, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* closeLbl = lv_label_create(closeBtn);
+    lv_label_set_text(closeLbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(closeLbl, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(closeLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(closeLbl);
 }
 
 // ── _buildLog() ──────────────────────────────────────────────────────
@@ -595,7 +625,8 @@ void ScreenTerminal::_onHomeClick(lv_event_t* /*e*/) {
     if (s_adminMode) {
         s_adminMode = false;
         if (_screen) {
-            lv_obj_del(_screen);
+            // Async: this runs from a button inside _screen (Back/X click).
+            lv_obj_del_async(_screen);
             _screen    = nullptr;
             _logScroll = nullptr;
             _logLabel  = nullptr;
@@ -691,7 +722,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  card");
         appendLine("  import {biz card}");
         appendLine("  clock [analog]");
-        appendLine("  saitama-test  - preview the animated boot screen");
+        appendLine("  saitama-scr   - show the Saitama screensaver");
         appendLine("  time <epoch-seconds>");
         appendLine("  memory");
         appendLine("  battery");
@@ -712,7 +743,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  adverts  |  quiet");
         appendLine("  mobrep  |  autorep  |  replist  |  clearrep");
         appendLine("  scope #<region>  |  scope clear  |  scope");
-        appendLine("  pathsize [1|2]  - 1=1-byte hashes, 2=2-byte hashes");
+        appendLine("  pathsize [1|2|3] - routing hash size (bytes)");
         appendLine("  control <hex>");
         appendLine("  repeaters [secs]  |  repeateradmin <hex> [pass]");
         appendLine("  repadmin [<hex>] <cmd>  - send admin cmd (login first)");
@@ -751,10 +782,10 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
-    // ── saitama-test ──────────────────────────────────────────────────
-    if (strcmp(cmd, "saitama-test") == 0) {
-        appendLine("Boot animation preview - click the trackball to exit.");
-        ops::ui::activateBootAnimTest();
+    // ── saitama-scr ───────────────────────────────────────────────────
+    if (strcmp(cmd, "saitama-scr") == 0) {
+        appendLine("Saitama screensaver - click the trackball to exit.");
+        ops::ui::activateSaitamaScr();
         return;
     }
 
@@ -1709,6 +1740,9 @@ void ScreenTerminal::_dispatch(const char* raw) {
                 appendLine(ops::sdcard::hasFile("/ops/repeaters.json")
                            ? "  repeaters.json FOUND"
                            : "  repeaters.json not found");
+                appendLine(ops::sdcard::hasFile("/ops/advert_config.json")
+                           ? "  advert_config.json FOUND"
+                           : "  advert_config.json not found");
                 bool complete = ops::sdcard::hasCompleteBackup();
                 appendLine(complete
                            ? "  Complete set - auto-restore active on next boot."
@@ -1744,6 +1778,11 @@ void ScreenTerminal::_dispatch(const char* raw) {
             } else {
                 snprintf(buf, sizeof(buf), "Repeaters: no SD backup found");
             }
+            appendLine(buf);
+            ops::autoadvert::init();   // /ops/advert_config.json (Off if missing)
+            int hrs = ops::autoadvert::HOURS[ops::autoadvert::choice()];
+            if (hrs) snprintf(buf, sizeof(buf), "Auto advert: every %d h", hrs);
+            else     snprintf(buf, sizeof(buf), "Auto advert: off");
             appendLine(buf);
             // Identity status
             auto& mesh = MeshService::instance();
@@ -2007,8 +2046,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
         } else {
             strncpy(pathHex, pathArg, sizeof(pathHex) - 1);
         }
-        if (hashSz < 1 || hashSz > 2) {
-            hashSz = (uint8_t)(ops::config::get().pathHashSz == 2 ? 2 : 1);
+        if (hashSz < 1 || hashSz > 3) {
+            hashSz = ops::config::pathHashBytes();
         }
         size_t hexLen2 = strlen(pathHex);
         if (hexLen2 == 0 || hexLen2 % 2 != 0) {
@@ -2039,17 +2078,17 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
-    // ── pathsize [1|2] ────────────────────────────────────────────────
+    // ── pathsize [1|2|3] ──────────────────────────────────────────────
     if (strcmp(cmd, "pathsize") == 0) {
         auto& cfg = const_cast<ops::Config&>(ops::config::get());
         if (args[0] == '\0') {
-            uint8_t cur = (cfg.pathHashSz == 2) ? 2 : 1;
+            uint8_t cur = ops::config::pathHashBytes();
             char buf[32];
             snprintf(buf, sizeof(buf), "Path hash size: %d byte(s)", cur);
             appendLine(buf);
         } else {
             int sz = atoi(args);
-            if (sz != 1 && sz != 2) { appendLine("Usage: pathsize [1|2]"); return; }
+            if (sz < 1 || sz > 3) { appendLine("Usage: pathsize [1|2|3]"); return; }
             cfg.pathHashSz = (uint8_t)sz;
             ops::config::save();
             char buf[40];

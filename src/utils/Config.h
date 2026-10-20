@@ -57,7 +57,7 @@ struct Config {
     float      manualLon;
     // Packet forwarding and path preferences
     bool       autoForward;       // forward received mesh packets (default true)
-    uint8_t    pathHashSz;        // preferred path hash size: 0/1 = 1-byte, 2 = 2-byte
+    uint8_t    pathHashSz;        // routing path hash size for our floods: 0/1 = 1-byte (default), 2 = 2-byte, 3 = 3-byte
     // Timezone: whole-hour UTC offset applied to all time displays (-11 to +11)
     int8_t     timezoneOffsetHours;
     // Scope / region tag for flood-scoped transmissions (empty = no scope)
@@ -78,7 +78,7 @@ struct Config {
     // ── fields added after v1.0.0 — MUST stay at the end so older NVS blobs ──
     // ── (which lack these bytes) can still be accepted and migrated cleanly. ──
     uint8_t    uiLanguage;       // 0=EN, 1=IT, 2=FR, 3=DE, 4=ES (ops::lang::UiLang)
-    bool       kbAutoNight;      // true = auto keyboard backlight 21:00-07:00 (at kbBrightness level), off otherwise
+    bool       kbAutoNight;      // true = auto keyboard backlight 21:00-07:00 or in night mode (at kbBrightness level), off otherwise
     // Per-channel-slot custom icon shown in the chat list: an emoji (UTF-8, up
     // to 4 bytes) or up to 2 ASCII initials. Empty = auto-derive initials from
     // the channel name. Kept as a top-level array (not a ChannelCfg field) so
@@ -108,6 +108,8 @@ struct Config {
     // 2 = auto — night tiles while night mode is active. The Map app's
     // moon/sun button switches between day and night.
     uint8_t    mapStyle;
+    // Idle screensaver: 0 = clock, 1 = Saitama mesh animation (BootAnim).
+    uint8_t    screensaverStyle;
 };
 
 // Values for Config::radioPowerMode.
@@ -126,6 +128,12 @@ namespace config {
     // (older firmware). Call once crypto is ready.
     void scrubSdSecrets();
     const Config& get();
+    // pathHashSz as a byte count (1-3); anything out of range is the 1-byte default.
+    inline uint8_t pathHashBytes()
+    {
+        uint8_t sz = get().pathHashSz;
+        return (sz >= 1 && sz <= 3) ? sz : 1;
+    }
 
     void setCallsign(const char* cs);
     void setRegion(const char* reg);

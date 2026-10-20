@@ -119,7 +119,8 @@ static bool      s_ssAnalog          = false;  // true = analog clock screensave
 static lv_obj_t* s_ssCanvas          = nullptr;
 static void*     s_ssCanvasBuf       = nullptr;
 static bool      s_ssManual          = false;  // true = invoked via /clock, not by idle timeout
-static bool      s_ssBootAnim        = false;  // true = /saitama-test boot-animation preview
+static bool      s_ssBootAnim        = false;  // true = Saitama screensaver (BootAnim)
+static bool      s_tbWakeHeld        = false;  // woke on a held click: ignore it until released
 
 // Touch calibration
 static constexpr lv_coord_t kCalTx1 = 40,  kCalTy1 = 40;
@@ -689,6 +690,25 @@ void init() {
     OPS_LOG("UI", "Display ready (%dx%d)", OPS_SCREEN_W, OPS_SCREEN_H);
 }
 
+// Trackball press / keyboard Enter on the focused widget. Sent as events
+// directly rather than through the encoder indev (see the callers), so LVGL
+// never sees a pointer release — which is where it toggles a checkable
+// widget. A checkbox therefore has to be toggled here, before CLICKED so a
+// CLICKED handler (e.g. a radio group) sees the new state.
+static void _activateFocused(lv_obj_t* obj)
+{
+    uint32_t ek = LV_KEY_ENTER;
+    if (lv_event_send(obj, LV_EVENT_KEY, &ek) != LV_RES_OK) return;   // deleted by its handler
+    if (lv_obj_is_editable(obj)) return;
+    if (lv_obj_has_flag(obj, LV_OBJ_FLAG_CHECKABLE) &&
+        !lv_obj_has_state(obj, LV_STATE_DISABLED)) {
+        if (lv_obj_has_state(obj, LV_STATE_CHECKED)) lv_obj_clear_state(obj, LV_STATE_CHECKED);
+        else                                         lv_obj_add_state(obj, LV_STATE_CHECKED);
+        lv_event_send(obj, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+    lv_event_send(obj, LV_EVENT_CLICKED, nullptr);
+}
+
 void tick() {
     auto& board  = Board::instance();
     uint32_t now = millis();
@@ -711,6 +731,13 @@ void tick() {
                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+            // Loop timing alongside: a slow loop misses short trackball
+            // clicks (the press is polled, not interrupt-driven).
+            OPS_LOG("Loop", "max gap %u ms  draw %u ms  | ss=%d off=%d %u MHz",
+                    (unsigned)ops::loopstats::recentMaxMs(),
+                    (unsigned)ops::loopstats::sectionRecentMaxMs(ops::loopstats::UI_DRAW),
+                    (int)s_screensaverActive, (int)s_screenOff,
+                    (unsigned)getCpuFrequencyMhz());
         }
     }
 
@@ -718,10 +745,23 @@ void tick() {
     int16_t dx, dy;
     board.consumeTrackballDelta(dx, dy);
     bool tbPress = board.consumeTrackballPress();
+    // The latched press comes from Board::update() sampling the pin once per
+    // loop pass, so a short click can fall between samples when the loop is
+    // slow (screensaver animation at the lower CPU clock). Read the pin too.
+    bool tbDown = digitalRead(GPIO_NUM_0) == LOW;
+    if (s_tbWakeHeld) {
+        // The click that woke the screen must not also press something on
+        // the restored screen.
+        tbPress = false;
+        if (!tbDown) s_tbWakeHeld = false;
+    }
 
     if (s_screensaverActive) {
         // Only GPIO0 (trackball click) wakes — scrolling and touch are discarded.
-        if (tbPress) _deactivateScreensaver();
+        if (tbPress || tbDown) {
+            _deactivateScreensaver();
+            s_tbWakeHeld = tbDown;
+        }
     } else if (s_calState != 0) {
         // Calibration active — keep display awake, swallow all trackball input.
         if (dx || dy || tbPress) s_lastActivityMs = now;
@@ -772,12 +812,7 @@ void tick() {
             if (tbPress) {
                 lv_group_t* pg = lv_group_get_default();
                 lv_obj_t*   pf = pg ? lv_group_get_focused(pg) : nullptr;
-                if (pf) {
-                    uint32_t ek = LV_KEY_ENTER;
-                    lv_event_send(pf, LV_EVENT_KEY, &ek);
-                    if (!lv_obj_is_editable(pf))
-                        lv_event_send(pf, LV_EVENT_CLICKED, nullptr);
-                }
+                if (pf) _activateFocused(pf);
             }
         }
     }
@@ -810,12 +845,7 @@ void tick() {
                         // the textarea's key handler (which would fire LV_EVENT_READY).
                         lv_group_t* g = lv_group_get_default();
                         lv_obj_t* foc = g ? lv_group_get_focused(g) : nullptr;
-                        if (foc) {
-                            uint32_t ek = LV_KEY_ENTER;
-                            lv_event_send(foc, LV_EVENT_KEY, &ek);
-                            if (!lv_obj_is_editable(foc))
-                                lv_event_send(foc, LV_EVENT_CLICKED, nullptr);
-                        }
+                        if (foc) _activateFocused(foc);
                     }
                 } else if (k != '\0' && !ScreenLauncher::isActive()) {
                     // All other keys: send directly to focused widget, bypassing group/editing-mode.
@@ -875,7 +905,8 @@ void tick() {
         int timeoutSec = ops::config::get().screenTimeoutSec;
         if (!s_screensaverActive && timeoutSec > 0 && s_lastActivityMs > 0) {
             if (now - s_lastActivityMs >= (uint32_t)timeoutSec * 1000UL) {
-                _activateScreensaver();
+                _activateScreensaver(false, false,
+                                     ops::config::get().screensaverStyle == 1);
                 // Anchor start time to this tick's `now` so the screen-off check
                 // below sees elapsed=0 and doesn't underflow into a huge number.
                 // (_activateScreensaver calls millis() which is > now, making the
@@ -900,26 +931,32 @@ void tick() {
             if (sane && elapsed >= (uint32_t)offSec * 1000UL) {
                 s_screenOff = true;
                 Board::instance().setDisplayBrightness(0);
+                // Backlight is off: stop the animation timer rather than
+                // redrawing 30 times a second into a dark panel. Its objects
+                // stay on the saver screen and go with it on wake.
+                if (s_ssBootAnim) ops::bootanim::destroy();
                 _applyGovFreq(2);  // screen-off frequency
             }
         }
     }
 
-    // Keyboard backlight: auto night mode (on 21:00-07:00 local, at kbBrightness
-    // level; off outside that window), or a fixed manual level. Off entirely
-    // during screensaver/screen-off. Only writes I2C when the target changes.
+    // Keyboard backlight: Auto lights it in the dark (21:00-07:00 local, and
+    // also through the night-mode window when night mode is on), at the
+    // kbBrightness level; manual keeps a fixed level. Night mode itself no
+    // longer turns it off (it only mutes sounds). Off entirely during
+    // screensaver/screen-off. Only writes I2C when the target changes.
     {
         const auto& cfg = ops::config::get();
         uint8_t desired;
         if (s_screensaverActive || s_screenOff) {
             desired = 0;  // low-power: KB off
-        } else if (ops::config::nightModeActive()) {
-            desired = 0;  // night mode: KB light off
         } else if (cfg.kbAutoNight) {
             time_t t = ops::config::localEpoch();
             struct tm lt;
             gmtime_r(&t, &lt);
-            desired = (lt.tm_hour >= 21 || lt.tm_hour < 7) ? cfg.kbBrightness : 0;
+            bool dark = lt.tm_hour >= 21 || lt.tm_hour < 7
+                        || ops::config::nightModeActive();
+            desired = dark ? cfg.kbBrightness : 0;
         } else if (cfg.kbBrightness == 0) {
             // Manual mode applies kbBrightness at all times, so a stuck 0
             // here leaves the keyboard permanently dark with no visible way
@@ -1178,9 +1215,9 @@ void activateScreensaver(bool analog)
     _activateScreensaver(analog, true);
 }
 
-void activateBootAnimTest()
+void activateSaitamaScr()
 {
-    // /saitama-test: manual, so full brightness and no screen-off.
+    // /saitama-scr: manual, so full brightness and no screen-off.
     _activateScreensaver(false, true, true);
 }
 

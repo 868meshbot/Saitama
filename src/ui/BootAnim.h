@@ -3,8 +3,8 @@
 //
 // Animated boot-screen concept: a sparse mesh of nodes that drift slowly,
 // with a stylised "S" packet routing node to node along the links.
-// Under test — only reachable via the /saitama-test terminal command (shown as
-// a screensaver) until it replaces ScreenBoot.
+// Used as the Saitama screensaver (Settings > Screensaver, or /saitama-scr in
+// the terminal); not yet the boot screen.
 
 #pragma once
 #include <lvgl.h>

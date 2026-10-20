@@ -68,6 +68,45 @@ lv_obj_t* ScreenSettings::_list   = nullptr;
 
 static lv_obj_t* s_listPtr = nullptr;  // mirrors _list for free-function access
 
+// Where the user was: the tile last opened (or left with Esc) and the list's
+// scroll offset then. Closing a dialog deletes the focused widget, and LVGL
+// moves focus to the next object in the group, which wraps to the first or
+// last tile and scrolls there. These put the user back instead.
+static int        s_lastRowIdx  = -1;
+static lv_coord_t s_lastScrollY = 0;
+
+static void _rememberRow(lv_obj_t* row) {
+    if (!row || !s_listPtr || lv_obj_get_parent(row) != s_listPtr) return;
+    s_lastRowIdx  = (int)lv_obj_get_index(row);
+    s_lastScrollY = lv_obj_get_scroll_y(s_listPtr);
+}
+
+static void _restoreRowFocus() {
+    if (!s_listPtr || s_lastRowIdx < 0) return;
+    lv_obj_t* row = lv_obj_get_child(s_listPtr, s_lastRowIdx);
+    if (!row) return;
+    lv_anim_del(s_listPtr, nullptr);          // drop a scroll started by LVGL's refocus
+    lv_obj_update_layout(s_listPtr);          // a fresh list has no height yet
+    lv_obj_scroll_to_y(s_listPtr, s_lastScrollY, LV_ANIM_OFF);
+    lv_group_focus_obj(row);                  // already in view, so no further scroll
+}
+
+// A dialog (always a child of the Settings screen) finished deleting.
+static void _onScreenChildDeleted(lv_event_t* e) {
+    lv_obj_t* scr = lv_event_get_current_target(e);
+    if (lv_scr_act() != scr) return;          // don't steal focus from another screen
+    lv_group_t* g = lv_group_get_default();
+    lv_obj_t* foc = g ? lv_group_get_focused(g) : nullptr;
+    if (foc) {
+        lv_obj_t* top = foc;
+        while (lv_obj_get_parent(top) && lv_obj_get_parent(top) != scr) top = lv_obj_get_parent(top);
+        // Focus inside another open dialog (one replaced the other): leave it.
+        if (lv_obj_get_parent(top) == scr && top != s_listPtr &&
+            !lv_obj_has_flag(top, LV_OBJ_FLAG_HIDDEN)) return;
+    }
+    _restoreRowFocus();
+}
+
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenSettings::show() {
     if (!_screen) {
@@ -76,6 +115,7 @@ void ScreenSettings::show() {
         lv_obj_set_style_bg_color(_screen, theme::BG, 0);
         lv_obj_set_style_pad_all(_screen, 0, 0);
         lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(_screen, _onScreenChildDeleted, LV_EVENT_CHILD_DELETED, nullptr);
 
         _buildTopBar(_screen);
         _buildList(_screen);
@@ -132,6 +172,7 @@ void ScreenSettings::_buildTopBar(lv_obj_t* parent) {
 static void _onRowKey(lv_event_t* e) {
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_BACKSPACE || key == LV_KEY_ESC) {
+        _rememberRow(lv_event_get_current_target(e));   // come back to this tile
         ScreenLauncher::show();
         return;
     }
@@ -359,8 +400,12 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
             pwrOn ? ROW_ON : ROW_OFF);
     static const char* kRadioModeNames[] = { "Continuous", "Duty Cycle", "FHSS" };
     uint8_t rpm = cfg.radioPowerMode < 3 ? cfg.radioPowerMode : 0;
+    char rpmBuf[24];
+    uint8_t hashB = ops::config::pathHashBytes();
+    if (hashB > 1) snprintf(rpmBuf, sizeof(rpmBuf), "%s, %uB", kRadioModeNames[rpm], (unsigned)hashB);
+    else           snprintf(rpmBuf, sizeof(rpmBuf), "%s", kRadioModeNames[rpm]);
     _addRow(_list, LV_SYMBOL_REFRESH, lang::tr(lang::TR_LORA_DUTY),
-            kRadioModeNames[rpm], 28,
+            rpmBuf, 28,
             rpm == ops::RADIO_POWER_CONTINUOUS ? ROW_OFF : ROW_ON);
     static const char* kGovNames[] = { "Power Save", "Medium", "Normal", "Turbo" };
     _addRow(_list, LV_SYMBOL_SETTINGS, lang::tr(lang::TR_CPU_GOV),
@@ -459,6 +504,8 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _fmtScreenOffVal(soStr, sizeof(soStr), (int)cfg.screenOffSec);
         _addRow(_list, LV_SYMBOL_POWER, lang::tr(lang::TR_SCR_OFF), soStr, 27);
     }
+    _addRow(_list, LV_SYMBOL_IMAGE, "Screensaver",
+            cfg.screensaverStyle == 1 ? "Saitama" : "Clock", 44);
     _addRow(_list, LV_SYMBOL_BELL, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
     _addRow(_list, LV_SYMBOL_AUDIO, lang::tr(lang::TR_NOTIFY_SOUND),
@@ -491,23 +538,12 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
 // ── _refreshList() ───────────────────────────────────────────────────
 void ScreenSettings::_refreshList() {
     if (!_list) return;
-    lv_coord_t savedY = lv_obj_get_scroll_y(_list);
 
-    // Save focused row index so we can restore it after rebuild
-    int focusIdx = 0;
+    // A focused tile is where the user is; otherwise (a dialog has focus, or
+    // another screen) use the tile remembered when it was opened.
     lv_group_t* g = lv_group_get_default();
-    if (g) {
-        lv_obj_t* foc = lv_group_get_focused(g);
-        if (foc) {
-            uint32_t n = lv_obj_get_child_cnt(_list);
-            for (uint32_t i = 0; i < n; i++) {
-                if (lv_obj_get_child(_list, (int32_t)i) == foc) {
-                    focusIdx = (int)i;
-                    break;
-                }
-            }
-        }
-    }
+    lv_obj_t* foc = g ? lv_group_get_focused(g) : nullptr;
+    if (foc && lv_obj_get_parent(foc) == _list) _rememberRow(foc);
 
     // May run from a row's own click handler — hide the old list and let
     // LVGL free it after the event finishes.
@@ -516,12 +552,7 @@ void ScreenSettings::_refreshList() {
     _list = nullptr;
     _buildList(_screen);
     lv_obj_del_async(oldList);
-    lv_obj_scroll_to_y(_list, savedY, LV_ANIM_OFF);
-
-    if (g) {
-        lv_obj_t* toFocus = lv_obj_get_child(_list, focusIdx);
-        if (toFocus) lv_group_focus_obj(toFocus);
-    }
+    _restoreRowFocus();
 }
 
 // ── _openNameDialog() ────────────────────────────────────────────────
@@ -2358,7 +2389,7 @@ static void _openKbBrightDialog() {
     lv_obj_add_event_cb(s_kbCtx.slider, _onKbSlide, LV_EVENT_VALUE_CHANGED, nullptr);
 
     s_kbCtx.autoCb = lv_checkbox_create(panel);
-    lv_checkbox_set_text(s_kbCtx.autoCb, "Auto (21:00-07:00)");
+    lv_checkbox_set_text(s_kbCtx.autoCb, "Auto (21:00-07:00 + night mode)");
     lv_obj_set_style_text_font(s_kbCtx.autoCb, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(s_kbCtx.autoCb, theme::TEXT, 0);
     lv_obj_set_style_bg_color(s_kbCtx.autoCb, theme::PRIMARY, LV_PART_INDICATOR | LV_STATE_CHECKED);
@@ -3551,8 +3582,8 @@ static void _openNightDialog() {
     lv_obj_t* note = lv_label_create(panel);
     lv_obj_set_width(note, 240);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(note, "Between these times the keyboard light is off and "
-                            "notification sounds are muted.");
+    lv_label_set_text(note, "Between these times notification sounds are muted. "
+                            "A keyboard light set to Auto stays on.");
     lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
 
@@ -3789,6 +3820,126 @@ static void _openNotifSoundDialog() {
     }
 }
 
+// ── Screensaver style dropdown dialog ───────────────────────────────
+// Clock (default) or the Saitama mesh animation (BootAnim) once idle.
+
+struct SsStyleCtx { lv_obj_t* modal; lv_obj_t* dd; };
+static SsStyleCtx s_ssCtx;
+
+static void _onSSDSave(lv_event_t* /*e*/) {
+    uint8_t sel = (uint8_t)lv_dropdown_get_selected(s_ssCtx.dd);
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.screensaverStyle = sel <= 1 ? sel : 0;
+    ops::config::save();
+    _delModal(s_ssCtx.modal);
+    ScreenSettings::show();
+}
+static void _onSSDExit(lv_event_t* /*e*/) { _delModal(s_ssCtx.modal); }
+static void _onSSDKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_ssCtx.modal);
+}
+
+static void _openScreensaverDialog() {
+    const auto& cfg = ops::config::get();
+
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_ssCtx.modal = modal;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onSSDKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_width(panel, 240);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel,
+        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Screensaver");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* dd = lv_dropdown_create(panel);
+    s_ssCtx.dd = dd;
+    lv_dropdown_set_options(dd, "Clock\nSaitama");
+    lv_dropdown_set_selected(dd, cfg.screensaverStyle <= 1 ? cfg.screensaverStyle : 0);
+    lv_obj_set_width(dd, 210);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+
+    lv_obj_t* list = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+    lv_obj_set_style_text_color(list, theme::TEXT, 0);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_color(list, theme::BORDER, 0);
+
+    lv_obj_t* btnRow = lv_obj_create(panel);
+    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRow, 0, 0);
+    lv_obj_set_style_pad_all(btnRow, 0, 0);
+    lv_obj_set_style_pad_column(btnRow, 4, 0);
+    lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* saveBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(saveBtn, 96, 28);
+    lv_obj_set_style_bg_color(saveBtn, theme::ACCENT,  0);
+    lv_obj_set_style_bg_color(saveBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(saveBtn, 4, 0);
+    lv_obj_set_style_shadow_width(saveBtn, 0, 0);
+    lv_obj_add_event_cb(saveBtn, _onSSDSave, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(saveBtn, _onSSDKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK " Save");
+    lv_obj_set_style_text_color(saveLbl, theme::BG, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(saveLbl);
+
+    lv_obj_t* exitBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(exitBtn, 96, 28);
+    lv_obj_set_style_bg_color(exitBtn, theme::BG_CARD, 0);
+    lv_obj_set_style_bg_color(exitBtn, theme::RED,     LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(exitBtn, theme::BORDER, 0);
+    lv_obj_set_style_border_width(exitBtn, 1, 0);
+    lv_obj_set_style_radius(exitBtn, 4, 0);
+    lv_obj_set_style_shadow_width(exitBtn, 0, 0);
+    lv_obj_add_event_cb(exitBtn, _onSSDExit, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(exitBtn, _onSSDKey,  LV_EVENT_KEY,     nullptr);
+    lv_obj_t* exitLbl = lv_label_create(exitBtn);
+    lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE " Exit");
+    lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
+    lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(exitLbl);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, dd);
+        lv_group_add_obj(g, saveBtn);
+        lv_group_add_obj(g, exitBtn);
+        lv_group_focus_obj(dd);
+    }
+}
+
 // ── Radio Mode radio-button dialog ────────────────────────────────────
 // Continuous / Duty Cycle / FHSS are mutually exclusive radio strategies,
 // so this is a true radio group rather than three toggles.
@@ -3797,8 +3948,10 @@ static void _openNotifSoundDialog() {
 struct RadioModeCtx {
     lv_obj_t* modal;
     lv_obj_t* btn[3];
+    lv_obj_t* hashBtn[3];   // Routing: 1-, 2-, 3-byte path hashes
     lv_obj_t* note;
     uint8_t   sel;
+    uint8_t   hash;         // 1-3 bytes
 };
 static RadioModeCtx s_rmCtx;
 
@@ -3868,6 +4021,11 @@ static void _rmUpdateNote() {
                      "lowest latency.", (double)st.freqMHz);
             break;
     }
+    if (s_rmCtx.hash > 1) {
+        size_t n = strlen(buf);
+        snprintf(buf + n, sizeof(buf) - n, "\n%u-byte routing: repeaters need v1.11+.",
+                 (unsigned)s_rmCtx.hash);
+    }
     lv_label_set_text(s_rmCtx.note, buf);
 }
 
@@ -3877,7 +4035,22 @@ static void _rmRefreshChecks() {
         if (i == s_rmCtx.sel) lv_obj_add_state(s_rmCtx.btn[i], LV_STATE_CHECKED);
         else                  lv_obj_clear_state(s_rmCtx.btn[i], LV_STATE_CHECKED);
     }
+    // Routing buttons: selected = accent fill, others outlined (as in Set Path).
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* b = s_rmCtx.hashBtn[i];
+        if (!b) continue;
+        bool on = (i + 1 == s_rmCtx.hash);
+        lv_obj_set_style_bg_color(b, on ? theme::ACCENT : theme::BG, 0);
+        lv_obj_set_style_border_color(b, on ? theme::ACCENT : theme::BORDER, 0);
+        lv_obj_t* lbl = lv_obj_get_child(b, 0);
+        if (lbl) lv_obj_set_style_text_color(lbl, on ? lv_color_black() : theme::TEXT_MUTED, 0);
+    }
     _rmUpdateNote();
+}
+
+static void _onRMHashPick(lv_event_t* e) {
+    s_rmCtx.hash = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    _rmRefreshChecks();
 }
 
 static void _onRMPick(lv_event_t* e) {
@@ -3891,6 +4064,7 @@ static void _onRMSave(lv_event_t* /*e*/) {
     // Keep the legacy bool in step so an older build reading this NVS blob
     // (or the SD settings.json) still behaves sensibly.
     cfg.loraDutyCycle  = (cfg.radioPowerMode == ops::RADIO_POWER_DUTY_CYCLE);
+    cfg.pathHashSz     = (s_rmCtx.hash >= 1 && s_rmCtx.hash <= 3) ? s_rmCtx.hash : 1;
     ops::config::save();
     _delModal(s_rmCtx.modal);
     ScreenSettings::show();
@@ -3904,6 +4078,7 @@ static void _onRMKey(lv_event_t* e) {
 static void _openRadioModeDialog() {
     const auto& cfg = ops::config::get();
     s_rmCtx.sel = cfg.radioPowerMode < 3 ? cfg.radioPowerMode : 0;
+    s_rmCtx.hash = ops::config::pathHashBytes();
 
     lv_obj_t* modal = lv_obj_create(lv_scr_act());
     s_rmCtx.modal = modal;
@@ -3917,15 +4092,17 @@ static void _openRadioModeDialog() {
     lv_obj_add_event_cb(modal, _onRMKey, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 280, 214);
+    lv_obj_set_size(panel, 280, 234);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_radius(panel, 6, 0);
-    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_all(panel, 6, 0);
     lv_obj_set_style_pad_row(panel, 3, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    // Scrolls only if a long note pushes the buttons off; focus scrolls to view.
+    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -3963,6 +4140,39 @@ static void _openRadioModeDialog() {
     lv_label_set_long_mode(s_rmCtx.note, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(s_rmCtx.note, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(s_rmCtx.note, &lv_font_montserrat_10, 0);
+
+    // ── Routing: path hash size our floods ask repeaters to append ──
+    lv_obj_t* routeTitle = lv_label_create(panel);
+    lv_label_set_text(routeTitle, "Routing (1-byte default)");
+    lv_obj_set_style_text_color(routeTitle, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(routeTitle, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* hashRow = lv_obj_create(panel);
+    lv_obj_set_size(hashRow, 258, 26);
+    lv_obj_set_style_bg_opa(hashRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(hashRow, 0, 0);
+    lv_obj_set_style_pad_all(hashRow, 0, 0);
+    lv_obj_clear_flag(hashRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(hashRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hashRow,
+        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    static const char* kHashOpt[3] = { "1-byte", "2-byte", "3-byte" };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* hb = lv_btn_create(hashRow);
+        s_rmCtx.hashBtn[i] = hb;
+        lv_obj_set_size(hb, 76, 24);
+        lv_obj_set_style_border_width(hb, 1, 0);
+        lv_obj_set_style_radius(hb, 4, 0);
+        lv_obj_set_style_shadow_width(hb, 0, 0);
+        lv_obj_set_style_bg_color(hb, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_add_event_cb(hb, _onRMHashPick, LV_EVENT_CLICKED, (void*)(uintptr_t)(i + 1));
+        lv_obj_add_event_cb(hb, _onRMKey,      LV_EVENT_KEY,     nullptr);
+        lv_obj_t* hl = lv_label_create(hb);
+        lv_label_set_text(hl, kHashOpt[i]);
+        lv_obj_set_style_text_font(hl, &lv_font_montserrat_10, 0);
+        lv_obj_center(hl);
+    }
 
     lv_obj_t* btnRow = lv_obj_create(panel);
     lv_obj_set_size(btnRow, 258, 30);
@@ -5099,6 +5309,7 @@ static void _openGenIdDialog();          // defined after _onItemClick
 // ── _onItemClick() ───────────────────────────────────────────────────
 void ScreenSettings::_onItemClick(lv_event_t* e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    _rememberRow(lv_event_get_current_target(e));
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
 
     switch (idx) {
@@ -5194,6 +5405,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 27:  // Screen Off → slider dialog
             _openScreenOffDialog();
+            return;
+
+        case 44:  // Screensaver → Clock / Saitama dropdown
+            _openScreensaverDialog();
             return;
 
         case 38:  // DM Retries → two-slider dialog
@@ -5454,13 +5669,15 @@ static const char* _runBackup()
     ops::contacts::save();
     ops::repeaters::save();
     static const char* kSrc[] = {
-        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json"
+        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json",
+        "/ops/advert_config.json"
     };
     static const char* kDst[] = {
-        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak"
+        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak",
+        "/ops/advert_config.bak"
     };
     int ok = 0;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         if (SD.exists(kSrc[i]))
             ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
     }
@@ -5479,13 +5696,15 @@ static const char* _runRestore()
         if (!ops::sdcard::tryMount()) return "SD not mounted";
     }
     static const char* kSrc[] = {
-        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak"
+        "/ops/contacts.bak",  "/ops/repeaters.bak",  "/ops/settings.bak",
+        "/ops/advert_config.bak"
     };
     static const char* kDst[] = {
-        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json"
+        "/ops/contacts.json", "/ops/repeaters.json", "/ops/settings.json",
+        "/ops/advert_config.json"
     };
     int ok = 0;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         if (SD.exists(kSrc[i]))
             ok += _copyFile(kSrc[i], kDst[i]) ? 1 : 0;
     }

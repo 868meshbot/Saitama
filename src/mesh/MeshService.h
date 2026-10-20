@@ -187,6 +187,12 @@ public:
     // asked straight away — regionAskedCount() has the running total.
     // Replies arrive via pollRegionReply(); names also go into the catalog.
     int  discoverRegions();
+
+    // Asks a repeater for its owner info (MeshCore ANON_REQ_TYPE_OWNER, sent
+    // direct: needs a stored route, or zeroHop for a neighbour heard directly).
+    // The answer (owner text, may be empty) arrives once via pollOwnerInfo().
+    bool requestOwnerInfo(const uint8_t* pubKey32, const char* name, bool zeroHop);
+    bool pollOwnerInfo(char* out, int outMax);
     uint32_t regionScanMs();
     int  regionAskedCount();
     bool regionScanning();

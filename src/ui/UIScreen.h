@@ -28,9 +28,10 @@ void applyGovernorNow();
 // Any input will dismiss it as usual. Called from the /clock terminal command.
 void activateScreensaver(bool analog = false);
 
-// Preview the animated boot screen (BootAnim) as a screensaver; a trackball
-// click dismisses it. Called from the /saitama-test terminal command.
-void activateBootAnimTest();
+// Show the Saitama screensaver (BootAnim) now; a trackball click dismisses
+// it. Called from the /saitama-scr terminal command. The idle screensaver uses
+// it too when Settings > Screensaver is "Saitama".
+void activateSaitamaScr();
 
 // Launch the 2-point touch calibration routine.
 // Creates an LVGL overlay; tap the crosshair twice; coefficients are saved to Config.

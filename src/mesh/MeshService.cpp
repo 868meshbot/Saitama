@@ -76,6 +76,7 @@
 #define COMP_CMD_SET_CHANNEL           32
 #define COMP_CMD_GET_ADVERT_PATH       42
 #define COMP_CMD_SET_FLOOD_SCOPE_KEY   54
+#define COMP_CMD_SET_PATH_HASH_MODE    61
 
 #define COMP_RESP_OK                    0
 #define COMP_RESP_ERR                   1
@@ -282,6 +283,13 @@ class OMSMesh : public BaseChatMesh {
         bool     answered;
     };
     RegTarget   _regTargets[REG_MAX] = {};
+
+    // ── Owner info (Heard popup) ──────────────────────────────────────
+    // One outstanding ANON_REQ_TYPE_OWNER at a time, matched on its tag.
+    static constexpr uint8_t ANON_REQ_OWNER = 0x02;     // simple_repeater ANON_REQ_TYPE_OWNER
+    uint32_t    _ownerTag = 0;
+    bool        _ownerReady = false;
+    char        _ownerText[124] = {};
     int         _regTargetCount = 0;
     // While millis() < this, repeaters answering our zero-hop discover scan
     // are asked for their regions as their replies arrive.
@@ -588,7 +596,8 @@ class OMSMesh : public BaseChatMesh {
     }
 
     void _compQueueContactMsg(const ContactInfo& from, mesh::Packet* pkt,
-                              uint32_t sender_timestamp, const char* text)
+                              uint32_t sender_timestamp, const char* text,
+                              uint8_t txtType = TXT_TYPE_PLAIN)
     {
         if (!_btSerial) return;
         int i = 0;
@@ -601,7 +610,7 @@ class OMSMesh : public BaseChatMesh {
         }
         memcpy(&_outFrame[i], from.id.pub_key, 6); i += 6;
         _outFrame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
-        _outFrame[i++] = 0; // TXT_TYPE_PLAIN
+        _outFrame[i++] = txtType;
         memcpy(&_outFrame[i], &sender_timestamp, 4); i += 4;
         int tlen = (int)strlen(text);
         if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
@@ -740,7 +749,7 @@ class OMSMesh : public BaseChatMesh {
             memset(&_outFrame[i], 0, 20); // firmware version
             strncpy((char*)&_outFrame[i], OPS_VERSION_STRING, 19); i += 20;
             _outFrame[i++] = 0; // client_repeat
-            _outFrame[i++] = 0; // path_hash_mode
+            _outFrame[i++] = (uint8_t)(config::pathHashBytes() - 1); // path_hash_mode
             _btSerial->writeFrame(_outFrame, i);
 
         } else if (cmd == COMP_CMD_APP_START && len >= 2) {
@@ -1008,6 +1017,17 @@ class OMSMesh : public BaseChatMesh {
         } else if (cmd == COMP_CMD_SET_FLOOD_SCOPE_KEY) {
             // Accept but ignore flood-scope key — we don't implement scoped flooding yet.
             _compWriteOK();
+
+        } else if (cmd == COMP_CMD_SET_PATH_HASH_MODE && len >= 3 && _cmdFrame[1] == 0) {
+            // Same setting as Settings > Radio Mode > Routing (mode 0-2 = 1-3 bytes).
+            if (_cmdFrame[2] >= 3) {
+                _compWriteErr(COMP_ERR_ILLEGAL_ARG);
+            } else {
+                auto& cfg = const_cast<Config&>(config::get());
+                cfg.pathHashSz = (uint8_t)(_cmdFrame[2] + 1);
+                config::save();
+                _compWriteOK();
+            }
 
         } else {
             OPS_LOG("BT", "Unhandled cmd 0x%02X len=%d", cmd, (int)len);
@@ -1295,7 +1315,38 @@ private:
         _compQueueContactMsg(from, pkt, sender_timestamp, text);
     }
 
-    void onCommandDataRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {}
+    // A repeater/room server's reply to an admin CLI command (TXT_TYPE_CLI_DATA).
+    // Each line goes to the Terminal via the response queue, like status
+    // replies; the phone app gets the whole reply as a CLI-type message.
+    void onCommandDataRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override
+    {
+        OPS_LOG("Mesh", "CLI reply from %s: %.100s", from.name, text);
+        char buf[132];
+        const char* p = text;
+        while (*p) {
+            const char* nl = strchr(p, '\n');
+            int n = nl ? (int)(nl - p) : (int)strlen(p);
+            if (n > 0 && p[n - 1] == '\r') n--;
+            if (n > 0) {
+                snprintf(buf, sizeof(buf), "[%s] %.*s", from.name, n, p);
+                _enqueueResp(buf);
+            }
+            if (!nl) break;
+            p = nl + 1;
+        }
+        _compQueueContactMsg(from, pkt, sender_timestamp, text, TXT_TYPE_CLI_DATA);
+    }
+
+    // MeshCore v1.18: another companion sending us a CLI command
+    // (TXT_TYPE_CLI_COMMAND). A handheld never runs commands from the air, and
+    // the phone app can set the contact's "remote CLI" flag, so it is ignored
+    // regardless: an empty reply sends nothing back.
+    void onCLICommandRecv(const ContactInfo& from, mesh::Packet* /*pkt*/, uint32_t /*sender_timestamp*/,
+                          const char* /*text*/, char* reply) override
+    {
+        OPS_LOG("Mesh", "Ignored remote CLI command from %s", from.name);
+        reply[0] = '\0';
+    }
 
     // ── Zero-hop control data (Finder / discover protocol) ────────────
     static constexpr uint8_t CTL_DISCOVER_REQ  = 0x80;
@@ -1605,6 +1656,7 @@ private:
     void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override
     {
         if (_takeRegionReply(contact, data, len)) return;
+        if (_takeOwnerReply(data, len)) return;
 
         // All repeater responses are prefixed with a 4-byte timestamp.
         // The actual response code/text starts at data[4].
@@ -1890,7 +1942,7 @@ public:
         }
         uint32_t ts = getRTCClock()->getCurrentTime();
         uint32_t timeout = 0;
-        int ret = sendCommandData(*ci, ts, 0, command, timeout);
+        int ret = sendCommandData(*ci, ts, 0, TXT_TYPE_CLI_DATA, command, timeout);
         if (ret == MSG_SEND_FAILED) {
             char buf[80];
             snprintf(buf, sizeof(buf), "[%s] Command send FAILED",
@@ -2191,7 +2243,12 @@ public:
 
         _saveIdentityBackups();
 
+        // MeshCore v1.18 begin() restores the time saved before a crash/WDT/
+        // brownout reset, else seeds 1 Mar 2026. Board::init() has already
+        // seeded the build time; keep whichever is later.
+        uint32_t seeded = (uint32_t)time(nullptr);
         rtc_clock.begin();
+        if (rtc_clock.getCurrentTime() < seeded) rtc_clock.setCurrentTime(seeded);
         bootstrapRTCfromContacts();
 
         // Register channels: slot 0 uses the standard MeshCore public PSK;
@@ -2487,6 +2544,71 @@ public:
         return true;
     }
 
+    // Asks a repeater for its owner info. Repeaters only answer this when it
+    // arrives direct, so it needs a stored route or a zero-hop neighbour; the
+    // reply path is our route reversed. Returns false when it can't be sent.
+    bool requestOwnerInfo(const uint8_t* pubKey32, const char* name, bool zeroHop) {
+        if (!_active) return false;
+        ContactInfo* c = lookupContactByPubKey(pubKey32, PUB_KEY_SIZE);
+        if (!c) {
+            static const uint8_t kZero[PUB_KEY_SIZE] = {};
+            if (memcmp(pubKey32, kZero, PUB_KEY_SIZE) == 0) return false;
+            preloadOne(pubKey32, name);   // so its reply can be decrypted
+            c = lookupContactByPubKey(pubKey32, PUB_KEY_SIZE);
+            if (!c) return false;
+        }
+        uint8_t pathLen;
+        if (c->out_path_len != OUT_PATH_UNKNOWN) pathLen = c->out_path_len;
+        else if (zeroHop)                        pathLen = 0;
+        else return false;
+        uint8_t hashSz = (pathLen >> 6) + 1, hops = pathLen & 63;
+        if (!mesh::Packet::isValidPathLen(pathLen)) return false;
+
+        uint8_t req[6 + MAX_PATH_SIZE];
+        uint32_t tag = getRTCClock()->getCurrentTimeUnique();
+        memcpy(req, &tag, 4);
+        req[4] = ANON_REQ_OWNER;
+        req[5] = pathLen;                       // reply path: same hops, reversed
+        for (uint8_t h = 0; h < hops; h++)
+            memcpy(&req[6 + h * hashSz], &c->out_path[(hops - 1 - h) * hashSz], hashSz);
+        mesh::Packet* pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, c->id,
+                                               c->getSharedSecret(self_id),
+                                               req, 6 + hops * hashSz);
+        if (!pkt) return false;
+        sendDirect(pkt, c->out_path, pathLen, 0);
+        _ownerTag   = tag;
+        _ownerReady = false;
+        OPS_LOG("Mesh", "Asked %s for owner info (tag %08X, %u hop(s))", c->name, tag, hops);
+        return true;
+    }
+
+    bool pollOwnerInfo(char* out, int outMax) {
+        if (!_ownerReady) return false;
+        _ownerReady = false;
+        strncpy(out, _ownerText, outMax - 1);
+        out[outMax - 1] = '\0';
+        return true;
+    }
+
+    // Reply layout: our tag(4) + their clock(4) + "node name\nowner info".
+    bool _takeOwnerReply(const uint8_t* data, uint8_t len) {
+        if (len < 8 || !_ownerTag) return false;
+        uint32_t tag;
+        memcpy(&tag, data, 4);
+        if (tag != _ownerTag) return false;
+        _ownerTag = 0;
+        int n = len - 8;
+        char txt[sizeof(_ownerText)];
+        if (n > (int)sizeof(txt) - 1) n = sizeof(txt) - 1;
+        memcpy(txt, data + 8, n);
+        txt[n] = '\0';
+        const char* nl = strchr(txt, '\n');
+        strncpy(_ownerText, nl ? nl + 1 : "", sizeof(_ownerText) - 1);
+        _ownerText[sizeof(_ownerText) - 1] = '\0';
+        _ownerReady = true;
+        return true;
+    }
+
     int discoverRegions() {
         if (!_active) return 0;
         _regTargetCount = 0;
@@ -2655,14 +2777,15 @@ public:
     }
 
     // Floods pkt with the region code for `scope`, or unscoped when there is
-    // none. The code covers the payload, so pkt must be complete.
+    // none. The code covers the payload, so pkt must be complete. Repeaters
+    // append path hashes of the size set in Settings > Radio Mode > Routing.
     void _floodInScope(mesh::Packet* pkt, const char* scope, uint32_t delay_millis) {
         TransportKey tk;
         if (_regionKey(scope, tk)) {
             uint16_t codes[2] = { tk.calcTransportCode(pkt), 0 };
-            sendFlood(pkt, codes, delay_millis);
+            sendFlood(pkt, codes, delay_millis, config::pathHashBytes());
         } else {
-            sendFlood(pkt, delay_millis);
+            sendFlood(pkt, delay_millis, config::pathHashBytes());
         }
     }
 
@@ -3349,6 +3472,7 @@ void MeshService::tick() {
     if (!_initialized) return;
     if (s_sigGenActive) return;  // mesh suspended while signal generator is active
     the_mesh.loop();
+    rtc_clock.tick();   // saves the time so a crash/WDT reset can restore it
     the_mesh.serviceDmRetries();
     the_mesh.serviceOwnFloods();
     the_mesh.checkSerialInterface();
@@ -3423,6 +3547,14 @@ bool MeshService::pollAck(uint32_t& acked_crc) {
 
 bool MeshService::pollDmFailed(uint32_t& id) {
     return _initialized && the_mesh.pollDmFailed(id);
+}
+
+bool MeshService::requestOwnerInfo(const uint8_t* pubKey32, const char* name, bool zeroHop) {
+    return _initialized && the_mesh.requestOwnerInfo(pubKey32, name, zeroHop);
+}
+
+bool MeshService::pollOwnerInfo(char* out, int outMax) {
+    return _initialized && the_mesh.pollOwnerInfo(out, outMax);
 }
 
 int MeshService::discoverRegions() {
