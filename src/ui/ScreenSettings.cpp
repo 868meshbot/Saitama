@@ -451,6 +451,12 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         static const char* kMapStyle[] = { "Day", "Night", "Auto" };
         _addRow(_list, LV_SYMBOL_IMAGE, "Map Style", kMapStyle[cfg.mapStyle < 3 ? cfg.mapStyle : 2], 43);
     }
+    {
+        const char* tv = !cfg.telemAllow ? off
+                       : cfg.telemLocation ? "On + loc" : on;
+        _addRow(_list, LV_SYMBOL_GPS, "Telemetry", tv, 45,
+                cfg.telemAllow ? ROW_ON : ROW_OFF);
+    }
     static const char* gpsModeNames[] = { "Off", "Intermittent", "On" };
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9,
@@ -3678,6 +3684,167 @@ static void _openNightDialog() {
     }
 }
 
+// ── Telemetry dialog ──────────────────────────────────────────────────
+// What this node sends when another node asks for its telemetry: nothing,
+// or battery + MCU temperature, optionally with our position. The
+// environment-sensor choice is kept (and reported to BLE apps) but the
+// T-Deck has no such sensors. MeshService::onContactRequest() answers.
+
+struct TelemCtx {
+    lv_obj_t* modal;
+    lv_obj_t* val[3];   // Yes/No labels: allow, location, environment
+    bool      on[3];
+};
+static TelemCtx s_tmCtx;
+
+static void _setYesNo(lv_obj_t* valLbl, bool on) {
+    _setToggle(valLbl, on);
+    if (valLbl) lv_label_set_text(valLbl, on ? "Yes" : "No");
+}
+static void _onTelemToggle(lv_event_t* e) {
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i > 2) return;
+    s_tmCtx.on[i] = !s_tmCtx.on[i];
+    _setYesNo(s_tmCtx.val[i], s_tmCtx.on[i]);
+}
+static void _onTelemSave(lv_event_t* /*e*/) {
+    auto& cfg = const_cast<ops::Config&>(ops::config::get());
+    cfg.telemAllow    = s_tmCtx.on[0];
+    cfg.telemLocation = s_tmCtx.on[1];
+    cfg.telemEnv      = s_tmCtx.on[2];
+    ops::config::save();
+    OPS_LOG("Settings", "Telemetry allow=%d loc=%d env=%d",
+            cfg.telemAllow, cfg.telemLocation, cfg.telemEnv);
+    _delModal(s_tmCtx.modal);
+    ScreenSettings::show();
+}
+static void _onTelemExit(lv_event_t* /*e*/) { _delModal(s_tmCtx.modal); }
+static void _onTelemKey(lv_event_t* e) {
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) _delModal(s_tmCtx.modal);
+}
+
+static void _openTelemetryDialog() {
+    const auto& cfg = ops::config::get();
+    lv_obj_t* modal = lv_obj_create(lv_scr_act());
+    s_tmCtx = TelemCtx{};
+    s_tmCtx.modal = modal;
+    s_tmCtx.on[0] = cfg.telemAllow;
+    s_tmCtx.on[1] = cfg.telemLocation;
+    s_tmCtx.on[2] = cfg.telemEnv;
+    lv_obj_set_size(modal, OPS_SCREEN_W, OPS_SCREEN_H);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(modal, _onTelemKey, LV_EVENT_KEY, nullptr);
+
+    lv_obj_t* panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 280, LV_SIZE_CONTENT);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(panel, theme::BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 6, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 6, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, LV_SYMBOL_GPS " Telemetry");
+    lv_obj_set_style_text_color(title, theme::ACCENT, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+
+    static const char* kText[3] = {
+        "Allow telemetry requests?",
+        "Include location in telemetry?",
+        "Include environment sensors in your telemetry?",
+    };
+    lv_obj_t* btns[5];
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* row = lv_obj_create(panel);
+        lv_obj_set_size(row, 260, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* l = lv_label_create(row);
+        lv_obj_set_width(l, 200);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(l, kText[i]);
+        lv_obj_set_style_text_color(l, theme::TEXT, 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* btn = lv_btn_create(row);
+        btns[i] = btn;
+        lv_obj_set_size(btn, 48, 24);
+        lv_obj_set_style_border_color(btn, theme::BORDER, 0);
+        lv_obj_set_style_border_color(btn, theme::ACCENT, LV_STATE_FOCUSED);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, _onTelemToggle, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(btn, _onTelemKey, LV_EVENT_KEY, nullptr);
+        s_tmCtx.val[i] = lv_label_create(btn);
+        lv_obj_set_style_text_font(s_tmCtx.val[i], &lv_font_montserrat_12, 0);
+        lv_obj_center(s_tmCtx.val[i]);
+        _setYesNo(s_tmCtx.val[i], s_tmCtx.on[i]);
+    }
+
+    lv_obj_t* note = lv_label_create(panel);
+    lv_obj_set_width(note, 260);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(note, "Applies to every node that asks. Sends battery and chip "
+                            "temperature; location uses the GPS fix or the manual "
+                            "position. This T-Deck has no environment sensors.");
+    lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* row = lv_obj_create(panel);
+    lv_obj_set_size(row, 260, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    const char*   txt[2] = { "Cancel", "Save" };
+    lv_color_t    col[2] = { theme::TEXT_MUTED, theme::ACCENT };
+    lv_event_cb_t cbs[2] = { _onTelemExit, _onTelemSave };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t* btn = lv_btn_create(row);
+        btns[3 + i] = btn;
+        lv_obj_set_size(btn, 96, 28);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, col[i], 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, cbs[i], LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(btn, _onTelemKey, LV_EVENT_KEY, nullptr);
+        lv_obj_t* l = lv_label_create(btn);
+        lv_label_set_text(l, txt[i]);
+        lv_obj_set_style_text_color(l, col[i], 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_center(l);
+    }
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        for (int i = 0; i < 5; i++) lv_group_add_obj(g, btns[i]);
+        lv_group_focus_obj(btns[0]);
+    }
+}
+
 // ── Notification Sound dropdown dialog ───────────────────────────────
 
 struct NotifSndCtx { lv_obj_t* modal; lv_obj_t* dd; };
@@ -5405,6 +5572,10 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 27:  // Screen Off → slider dialog
             _openScreenOffDialog();
+            return;
+
+        case 45:  // Telemetry → what we answer to telemetry requests
+            _openTelemetryDialog();
             return;
 
         case 44:  // Screensaver → Clock / Saitama dropdown

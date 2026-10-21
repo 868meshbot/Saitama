@@ -74,6 +74,9 @@ static void setDefaults(Config& c) {
     c.nightEndMin      = 7 * 60;
     c.mapStyle         = 0;   // day
     c.screensaverStyle = 0;   // clock
+    c.telemAllow       = false;   // MeshCore companion default: deny
+    c.telemLocation    = false;
+    c.telemEnv         = false;
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -147,6 +150,9 @@ static void _saveToSD() {
     doc["nightEnd"]     = s_cfg.nightEndMin;
     doc["mapStyle"]     = s_cfg.mapStyle;
     doc["ssStyle"]      = s_cfg.screensaverStyle;
+    doc["telBase"]      = s_cfg.telemAllow;
+    doc["telLoc"]       = s_cfg.telemLocation;
+    doc["telEnv"]       = s_cfg.telemEnv;
     doc["cpuGov"]       = s_cfg.cpuGovernor;
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
@@ -250,6 +256,9 @@ static bool _loadFromSD() {
     if (s_cfg.mapStyle > 2) s_cfg.mapStyle = 2;
     s_cfg.screensaverStyle = (uint8_t)(doc["ssStyle"] | 0);
     if (s_cfg.screensaverStyle > 1) s_cfg.screensaverStyle = 0;
+    s_cfg.telemAllow    = doc["telBase"] | false;
+    s_cfg.telemLocation = doc["telLoc"]  | false;
+    s_cfg.telemEnv      = doc["telEnv"]  | false;
     s_cfg.cpuGovernor   = (uint8_t)(doc["cpuGov"] | 2);
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);

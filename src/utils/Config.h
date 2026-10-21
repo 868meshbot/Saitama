@@ -110,6 +110,12 @@ struct Config {
     uint8_t    mapStyle;
     // Idle screensaver: 0 = clock, 1 = Saitama mesh animation (BootAnim).
     uint8_t    screensaverStyle;
+    // Answering telemetry requests from other nodes (Settings > Telemetry):
+    // telemAllow = reply at all (battery, MCU temperature); telemLocation adds
+    // our position; telemEnv allows environment sensors (the T-Deck has none).
+    bool       telemAllow;
+    bool       telemLocation;
+    bool       telemEnv;
 };
 
 // Values for Config::radioPowerMode.
