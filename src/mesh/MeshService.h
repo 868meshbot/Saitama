@@ -263,6 +263,9 @@ public:
     bool sendRepeaterStatusReq(const uint8_t* prefix4);
     // GET_NEIGHBOURS request (10 entries, newest first, 4-byte prefix).
     bool sendRepeaterNeighboursReq(const uint8_t* prefix4);
+    // GET_ACCESS_LIST request (admin login needed); reply lines "ACL <12hex> <perms>",
+    // then "ACL end <n>", through pollContactResponse().
+    bool sendRepeaterAclReq(const uint8_t* prefix4);
     // Returns true (once per response) when a contact response line is waiting.
     bool pollContactResponse(char* out, int outMax);
     // Returns true (once) when a login attempt result is ready; ok=true on success.

@@ -14,6 +14,7 @@
 #include "../utils/Repeaters.h"
 #include "../utils/SDCard.h"
 #include "../utils/Log.h"
+#include "../utils/PsramAlloc.h"
 
 #include <Arduino.h>
 #include <algorithm>
@@ -44,6 +45,8 @@
 #include <soc/gpio_reg.h>
 
 // Not in BaseChatMesh.h — defined only in simple_repeater example
+#define REQ_TYPE_GET_TELEMETRY_DATA 0x03
+#define REQ_TYPE_GET_ACCESS_LIST    0x05
 #define REQ_TYPE_GET_NEIGHBOURS 0x06
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
@@ -348,12 +351,20 @@ class OMSMesh : public BaseChatMesh {
     bool _pcapCaptureEnabled = false;
 
     // Tracks what binary response format to expect from the next onContactResponse()
-    enum PendingResp { PENDING_NONE = 0, PENDING_STATUS, PENDING_NEIGHBOURS };
+    enum PendingResp { PENDING_NONE = 0, PENDING_STATUS, PENDING_NEIGHBOURS, PENDING_TELEMETRY, PENDING_ACL };
     PendingResp _pendingResp = PENDING_NONE;
+    // A status reply queues a telemetry request to the same repeater; sent
+    // from serviceTelemetry() rather than inside the response callback.
+    bool     _telemWanted = false;
+    uint8_t  _telemKey[4] = {};
+    uint32_t _telemSentMs = 0;   // a lost reply stops blocking after 30 s
 
     // Contact response queue — filled by onContactResponse() for repeater replies
-    static constexpr int RESP_QUEUE_SIZE = 8;
-    char _respBuf[RESP_QUEUE_SIZE][132];
+    // 24 lines: a status reply is 12 lines, a neighbours reply up to ~20.
+    // PSRAM — the mesh object itself is static in internal DRAM.
+    static constexpr int RESP_QUEUE_SIZE = 24;
+    char (&_respBuf)[RESP_QUEUE_SIZE][132] =
+        ops::psram::array<char[RESP_QUEUE_SIZE][132]>();
     int  _respHead  = 0;
     int  _respTail  = 0;
     int  _respCount = 0;
@@ -767,7 +778,10 @@ class OMSMesh : public BaseChatMesh {
             memcpy(&_outFrame[i], &lon, 4); i += 4;
             _outFrame[i++] = 0; // multi_acks
             _outFrame[i++] = 0; // advert_loc_policy
-            _outFrame[i++] = 0; // telemetry mode bits
+            // telemetry modes, 2 bits each (env<<4 | loc<<2 | base): 2 = allow all, 0 = deny
+            _outFrame[i++] = (uint8_t)(((cfg.telemAllow && cfg.telemEnv) ? 2 : 0) << 4 |
+                                       ((cfg.telemAllow && cfg.telemLocation) ? 2 : 0) << 2 |
+                                       (cfg.telemAllow ? 2 : 0));
             _outFrame[i++] = 0; // manual_add_contacts
             float freqMHz = (cfg.radioCustom && cfg.freqMHz > 0.0f) ? cfg.freqMHz : 869.618f;
             uint32_t freq = (uint32_t)(freqMHz * 1000.0f);
@@ -1632,9 +1646,60 @@ private:
         _compQueueChannelMsg(channel, pkt, timestamp, text);
     }
 
+    // Telemetry request from another node (Settings > Telemetry). Reply:
+    // sender_timestamp as a tag, then CayenneLPP (big-endian) on channel 1:
+    // battery voltage, MCU temperature and, if allowed, our position. The
+    // request's first reserved byte is an inverse mask on what we allow.
+    static int _lppPut(uint8_t* p, uint8_t type, int32_t v, int size)
+    {
+        p[0] = 1;   // TELEM_CHANNEL_SELF
+        p[1] = type;
+        for (int i = 0; i < size; i++) p[2 + i] = (uint8_t)(v >> (8 * (size - 1 - i)));
+        return 2 + size;
+    }
+
     uint8_t onContactRequest(const ContactInfo& contact, uint32_t sender_timestamp,
                              const uint8_t* data, uint8_t len, uint8_t* reply) override {
-        return 0;
+        if (len < 1 || data[0] != REQ_TYPE_GET_TELEMETRY_DATA) return 0;
+        const auto& cfg = config::get();
+        uint8_t mask = (len >= 2) ? (uint8_t)~data[1] : 0xFF;
+        bool base = cfg.telemAllow && (mask & 0x01);              // TELEM_PERM_BASE
+        bool loc  = base && cfg.telemLocation && (mask & 0x02);   // TELEM_PERM_LOCATION
+        if (!base) return 0;
+
+        memcpy(reply, &sender_timestamp, 4);
+        int n = 4;
+        int32_t mv = 3200 + Board::instance().batteryPercent() * 10;   // as OMSBoard::getBattMilliVolts
+        n += _lppPut(reply + n, 116, mv / 10, 2);                                     // 0.01 V
+        float t = temperatureRead();                                                  // MCU, °C
+        if (!isnan(t)) n += _lppPut(reply + n, 103, (int32_t)lroundf(t * 10.0f), 2);    // 0.1 °C
+        if (loc) {
+            double lat = 0.0, lon = 0.0, alt = 0.0;
+            bool have = false;
+            if (Board::instance().hasGPSFix()) {
+                lat = Board::instance().gpsLat();
+                lon = Board::instance().gpsLng();
+                alt = Board::instance().gpsAltM();
+                have = true;
+            } else if (cfg.manualLat != 0.0f || cfg.manualLon != 0.0f) {
+                lat = cfg.manualLat; lon = cfg.manualLon;
+                have = true;
+            }
+            if (have) {
+                // LPP_GPS: 3-byte lat/lon (0.0001 deg), 3-byte altitude (0.01 m)
+                reply[n++] = 1; reply[n++] = 136;
+                int32_t v[3] = { (int32_t)lround(lat * 10000.0), (int32_t)lround(lon * 10000.0),
+                                 (int32_t)lround(alt * 100.0) };
+                for (int k = 0; k < 3; k++) {
+                    reply[n++] = (uint8_t)(v[k] >> 16);
+                    reply[n++] = (uint8_t)(v[k] >> 8);
+                    reply[n++] = (uint8_t)v[k];
+                }
+            }
+        }
+        // Environment sensors (cfg.telemEnv): the T-Deck has none to add.
+        OPS_LOG("Mesh", "Telemetry reply to %s (%d bytes%s)", contact.name, n, loc ? ", location" : "");
+        return (uint8_t)n;
     }
 
     // Rough state of charge for a single Li-ion/LiPo cell from its voltage
@@ -1653,6 +1718,55 @@ private:
         return 100;
     }
 
+    // CayenneLPP telemetry (big-endian): channel, type, value. Channel 1 is
+    // the repeater itself (battery voltage, MCU temperature); external
+    // sensors use channel 2 and up, and only those are shown. Lines:
+    // "Temp: 21.5", "Humidity: 45.5", "Pressure: 1013.2" (see
+    // ScreenRepeaters::onContactResponse). Nothing is shown when there are none.
+    static int _lppSize(uint8_t type)
+    {
+        switch (type) {
+            case 0: case 1: case 102: case 104: case 120: case 142: return 1;
+            case 2: case 3: case 101: case 103: case 115: case 116: case 117:
+            case 121: case 125: case 128: case 132:                 return 2;
+            case 135:                                               return 3;
+            case 100: case 118: case 130: case 131: case 133:       return 4;
+            case 113: case 134:                                     return 6;
+            case 136:                                               return 9;
+        }
+        return -1;   // unknown or variable length (polyline): stop parsing
+    }
+
+    void _emitTelemetry(const ContactInfo& contact, const uint8_t* p, uint8_t n)
+    {
+        char buf[132];
+        int o = 0;
+        while (o + 2 <= (int)n) {
+            uint8_t ch = p[o], type = p[o + 1];
+            int sz = _lppSize(type);
+            if (sz < 0 || o + 2 + sz > (int)n) break;
+            const uint8_t* v = p + o + 2;
+            o += 2 + sz;
+            if (ch < 2) continue;   // the repeater's own readings
+            if (type == 103) {
+                int16_t t = (int16_t)((v[0] << 8) | v[1]);   // 0.1 °C
+                snprintf(buf, sizeof(buf), "[%s] Temp: %s%d.%d", contact.name,
+                         t < 0 ? "-" : "", abs(t) / 10, abs(t) % 10);
+            } else if (type == 104) {
+                unsigned h = v[0];                            // 0.5 %
+                snprintf(buf, sizeof(buf), "[%s] Humidity: %u.%u",
+                         contact.name, h / 2, (h % 2) * 5);
+            } else if (type == 115) {
+                unsigned pr = (unsigned)((v[0] << 8) | v[1]); // 0.1 hPa
+                snprintf(buf, sizeof(buf), "[%s] Pressure: %u.%u",
+                         contact.name, pr / 10, pr % 10);
+            } else {
+                continue;
+            }
+            _enqueueResp(buf);
+        }
+    }
+
     void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override
     {
         if (_takeRegionReply(contact, data, len)) return;
@@ -1663,7 +1777,10 @@ private:
         const uint8_t* payload    = (len > 4) ? &data[4] : data;
         uint8_t        payloadLen = (len > 4) ? len - 4  : len;
 
-        bool isLoginOk = (payloadLen >= 1 && payload[0] == RESP_SERVER_LOGIN_OK);
+        // A binary reply (status, telemetry, access list) can start with 0x00
+        // too: it is only a login result when no request is outstanding.
+        bool isLoginOk = (payloadLen >= 1 && payload[0] == RESP_SERVER_LOGIN_OK &&
+                          (_waitingForLoginResp || _pendingResp == PENDING_NONE));
 
         if (_waitingForLoginResp) {
             _waitingForLoginResp = false;
@@ -1725,25 +1842,61 @@ private:
             if (batt_mv == 0) snprintf(battBuf, sizeof(battBuf), "n/a");   // board can't measure
             else              snprintf(battBuf, sizeof(battBuf), "%dmV (%d%%)",
                                        (int)batt_mv, _liionPercent(batt_mv));
+            // One fact per line with "Radio" / "Packets" headers; the admin
+            // panel (ScreenRepeaters::onContactResponse) keys on these
+            // prefixes to add the battery icon and colours.
+            snprintf(buf, sizeof(buf), "[%s] Batt: %s", contact.name, battBuf);
+            _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] Radio", contact.name);
+            _enqueueResp(buf);
             snprintf(buf, sizeof(buf),
-                "[%s] Batt:%s  RSSI:%d  SNR:%d.%02d  Noise:%d",
-                contact.name, battBuf, (int)rssi, snr_i, snr_f, (int)noise);
+                "[%s] RSSI: %d  SNR: %s%d.%02d  Noise: %d",
+                contact.name, (int)rssi, snr_x4 < 0 ? "-" : "",
+                abs(snr_i), snr_f, (int)noise);
+            _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] Packets", contact.name);
             _enqueueResp(buf);
             snprintf(buf, sizeof(buf),
                 "[%s] Recv:%u  Sent:%u  Err:%u  Queue:%u",
                 contact.name, (unsigned)n_recv, (unsigned)n_sent,
                 (unsigned)n_err, (unsigned)tx_queue);
             _enqueueResp(buf);
-            snprintf(buf, sizeof(buf),
-                "[%s] Flood R/T:%u/%u  Direct R/T:%u/%u",
-                contact.name, (unsigned)f_recv, (unsigned)f_sent,
-                (unsigned)d_recv, (unsigned)d_sent);
+            snprintf(buf, sizeof(buf), "[%s] Flood R/T:%u/%u",
+                contact.name, (unsigned)f_recv, (unsigned)f_sent);
             _enqueueResp(buf);
-            snprintf(buf, sizeof(buf),
-                "[%s] TxAir:%us  RxAir:%us  Up:%ud%uh%02um",
-                contact.name, (unsigned)air_tx, (unsigned)air_rx,
-                (unsigned)up_d, (unsigned)up_h, (unsigned)up_m);
+            snprintf(buf, sizeof(buf), "[%s] Direct R/T:%u/%u",
+                contact.name, (unsigned)d_recv, (unsigned)d_sent);
             _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] Airtime", contact.name);
+            _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] TxAir:%us  RxAir:%us",
+                contact.name, (unsigned)air_tx, (unsigned)air_rx);
+            _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] Uptime", contact.name);
+            _enqueueResp(buf);
+            snprintf(buf, sizeof(buf), "[%s] %ud %uh %02um",
+                contact.name, (unsigned)up_d, (unsigned)up_h, (unsigned)up_m);
+            _enqueueResp(buf);
+            // Environmental sensors come in a separate telemetry reply.
+            memcpy(_telemKey, contact.id.pub_key, 4);
+            _telemWanted = true;
+        } else if (_pendingResp == PENDING_ACL) {
+            _pendingResp = PENDING_NONE;
+            // Access list: per client a 6-byte key prefix + permissions byte.
+            // Lines "ACL <12 hex> <perms>", then "ACL end <count>" (read by
+            // the admin Access Control window).
+            int cnt = 0;
+            for (int o = 0; o + 7 <= (int)payloadLen; o += 7, cnt++) {
+                snprintf(buf, sizeof(buf), "[%s] ACL %02X%02X%02X%02X%02X%02X %u", contact.name,
+                         payload[o], payload[o + 1], payload[o + 2],
+                         payload[o + 3], payload[o + 4], payload[o + 5], (unsigned)payload[o + 6]);
+                _enqueueResp(buf);
+            }
+            snprintf(buf, sizeof(buf), "[%s] ACL end %d", contact.name, cnt);
+            _enqueueResp(buf);
+        } else if (_pendingResp == PENDING_TELEMETRY) {
+            _pendingResp = PENDING_NONE;
+            _emitTelemetry(contact, payload, payloadLen);
         } else if (_pendingResp == PENDING_NEIGHBOURS && payloadLen >= 4) {
             _pendingResp = PENDING_NONE;
             // Neighbours response layout (after 4-byte timestamp stripped):
@@ -1771,11 +1924,13 @@ private:
                 else                snprintf(ago, sizeof(ago), "%us ago", (unsigned)secs_ago);
                 int snr_i2 = snr8 / 4;
                 int snr_f2 = ((snr8 < 0 ? -snr8 : snr8) % 4) * 25;
+                // "Nbr XX:XX:XX:XX ..." — the admin panel looks the prefix
+                // up in the repeater list and colours the SNR.
                 snprintf(buf, sizeof(buf),
-                    "[%s] %02X:%02X:%02X:%02X  %s  SNR:%d.%02d",
+                    "[%s] Nbr %02X:%02X:%02X:%02X  %s  SNR:%s%d.%02d",
                     contact.name,
                     pfx[0], pfx[1], pfx[2], pfx[3],
-                    ago, snr_i2, snr_f2);
+                    ago, snr8 < 0 ? "-" : "", abs(snr_i2), snr_f2);
                 _enqueueResp(buf);
             }
         } else if (payloadLen > 0) {
@@ -1804,6 +1959,23 @@ public:
 
     // Retries timed-out DMs; called from MeshService::tick().
     void serviceDmRetries() { _serviceDmRetries(); }
+
+    // Sends the telemetry request queued by a status reply.
+    void serviceTelemetry() {
+        if (_pendingResp == PENDING_TELEMETRY && millis() - _telemSentMs > 30000)
+            _pendingResp = PENDING_NONE;
+        if (!_telemWanted || _pendingResp != PENDING_NONE || !_active) return;
+        _telemWanted = false;
+        ContactInfo* ci = lookupContactByPubKey(_telemKey, 4);
+        if (!ci) return;
+        ContactInfo ci_flood = *ci;   // flood, as for status
+        ci_flood.out_path_len = OUT_PATH_UNKNOWN;
+        _pendingResp = PENDING_TELEMETRY;
+        _telemSentMs = millis();
+        uint32_t tag = 0, timeout = 0;
+        if (sendRequest(ci_flood, REQ_TYPE_GET_TELEMETRY_DATA, tag, timeout) == MSG_SEND_FAILED)
+            _pendingResp = PENDING_NONE;
+    }
 
     bool pollDmFailed(uint32_t& id) {
         if (_failQCount == 0) return false;
@@ -1933,6 +2105,23 @@ public:
         return ret != MSG_SEND_FAILED;
     }
 
+    // REQ_TYPE_GET_ACCESS_LIST (admin only); reply parsed in onContactResponse.
+    bool sendSingleRepeaterAcl(const uint8_t* prefix4) {
+        if (!_active) return false;
+        ContactInfo* ci = lookupContactByPubKey(prefix4, 4);
+        if (!ci) {
+            _enqueueResp("[repadmin] Contact not in mesh table.");
+            return false;
+        }
+        ContactInfo ci_flood = *ci;   // flood, as for status
+        ci_flood.out_path_len = OUT_PATH_UNKNOWN;
+        _pendingResp = PENDING_ACL;
+        uint32_t tag = 0, timeout = 0;
+        int ret = sendRequest(ci_flood, REQ_TYPE_GET_ACCESS_LIST, tag, timeout);
+        if (ret == MSG_SEND_FAILED) _pendingResp = PENDING_NONE;
+        return ret != MSG_SEND_FAILED;
+    }
+
     bool sendAdminCommandTo(const uint8_t* prefix4, const char* command) {
         if (!_active) return false;
         ContactInfo* ci = lookupContactByPubKey(prefix4, 4);
@@ -1940,7 +2129,9 @@ public:
             _enqueueResp("[repadmin] Contact not in mesh table.");
             return false;
         }
-        uint32_t ts = getRTCClock()->getCurrentTime();
+        // Unique: a repeater treats a command with the same timestamp as the
+        // previous one as a retry and does not run it (two in one second).
+        uint32_t ts = getRTCClock()->getCurrentTimeUnique();
         uint32_t timeout = 0;
         int ret = sendCommandData(*ci, ts, 0, TXT_TYPE_CLI_DATA, command, timeout);
         if (ret == MSG_SEND_FAILED) {
@@ -3474,6 +3665,7 @@ void MeshService::tick() {
     the_mesh.loop();
     rtc_clock.tick();   // saves the time so a crash/WDT reset can restore it
     the_mesh.serviceDmRetries();
+    the_mesh.serviceTelemetry();
     the_mesh.serviceOwnFloods();
     the_mesh.checkSerialInterface();
     the_mesh.restoreDeferredPaths();   // no-op unless deferred at boot
@@ -3643,6 +3835,10 @@ bool MeshService::sendAdminCommand(const uint8_t* prefix4, const char* command) 
 
 bool MeshService::sendRepeaterStatusReq(const uint8_t* prefix4) {
     return _initialized && the_mesh.sendSingleRepeaterStatus(prefix4);
+}
+
+bool MeshService::sendRepeaterAclReq(const uint8_t* prefix4) {
+    return _initialized && the_mesh.sendSingleRepeaterAcl(prefix4);
 }
 
 bool MeshService::sendRepeaterNeighboursReq(const uint8_t* prefix4) {

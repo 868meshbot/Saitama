@@ -198,6 +198,8 @@ EMOJI = [
     ("us_flag",       0x1F1FA, "1f1fa-1f1f8", "usa flag united states"),
     ("france",        0x1F1EB, "1f1eb-1f1f7", "france flag french"),
     ("moon",          0x1F319, "1f319", "crescent moon night"),
+    ("droplet",       0x1F4A7, "1f4a7", "droplet water drop humidity"),
+    ("timer_clock",   0x023F2, "23f2",  "timer clock gauge dial pressure"),
 ]
 
 # Deduplicate by codepoint — keep first occurrence

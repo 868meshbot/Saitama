@@ -181,6 +181,8 @@ extern const lv_img_dsc_t emoji_ireland;
 extern const lv_img_dsc_t emoji_us_flag;
 extern const lv_img_dsc_t emoji_france;
 extern const lv_img_dsc_t emoji_moon;
+extern const lv_img_dsc_t emoji_droplet;
+extern const lv_img_dsc_t emoji_timer_clock;
 
 #ifdef __cplusplus
 }
@@ -361,5 +363,7 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F1FAu, &emoji_us_flag, "usa flag united states" },
     { 0x1F1EBu, &emoji_france, "france flag french" },
     { 0x1F319u, &emoji_moon, "crescent moon night" },
+    { 0x1F4A7u, &emoji_droplet, "droplet water drop humidity" },
+    { 0x023F2u, &emoji_timer_clock, "timer clock gauge dial pressure" },
 };
-static const int kOpsEmojiCount = 172;
+static const int kOpsEmojiCount = 174;

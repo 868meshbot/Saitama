@@ -8,6 +8,8 @@
 #include "ScreenTrace.h"
 #include "Theme.h"
 #include "ListFilter.h"
+#include "Emoji.h"
+#include "RepeaterAdminTools.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Repeaters.h"
 #include "../utils/Crypto.h"
@@ -18,6 +20,9 @@
 #include <cctype>
 #include <time.h>
 #include <Arduino.h>
+
+// Latin-1 Montserrat 12 (has the degree sign; C object, so global scope).
+extern const lv_font_t font_montserrat_12_ext;
 
 namespace ops { namespace ui {
 
@@ -35,7 +40,7 @@ lv_obj_t* ScreenRepeaters::s_waitOverlay      = nullptr;
 // ── Admin panel statics ───────────────────────────────────────────────
 lv_obj_t* ScreenRepeaters::s_adminScreen      = nullptr;
 lv_obj_t* ScreenRepeaters::s_adminRespLbl     = nullptr;
-char      (&ScreenRepeaters::s_adminRespBuf)[640] = ops::psram::array<char[640]>();
+char      (&ScreenRepeaters::s_adminRespBuf)[2048] = ops::psram::array<char[2048]>();
 
 static constexpr int REP_TOP_H = 28;
 // Type-to-filter box in the top bar: matches name or id.
@@ -1229,6 +1234,20 @@ static constexpr int ADM_BTN_H  = 68;   // two wrapped rows of buttons
 static constexpr int ADM_RESP_Y = ADM_TOP_H + ADM_BTN_H;
 static constexpr int ADM_RESP_H = OPS_SCREEN_H - ADM_RESP_Y;
 
+// Response pane font: Latin-1 Montserrat 12 (degree sign) → Montserrat 12
+// (LV_SYMBOL_* icons) → emoji images (thermometer, droplet, gauge).
+static const lv_font_t* _adminRespFont()
+{
+    static lv_font_t s_font;
+    static bool s_ready = false;
+    if (!s_ready) {
+        s_font = font_montserrat_12_ext;
+        s_font.fallback = ops::emoji::emojiFont(&lv_font_montserrat_12);
+        s_ready = true;
+    }
+    return &s_font;
+}
+
 // ── _showAdminPanel() ─────────────────────────────────────────────────
 void ScreenRepeaters::_showAdminPanel()
 {
@@ -1326,6 +1345,12 @@ void ScreenRepeaters::_showAdminPanel()
     makeAdminBtn(LV_SYMBOL_LIST     " Nbrs",   theme::TEXT_MUTED, _onAdminNbrs);
     makeAdminBtn(LV_SYMBOL_KEYBOARD " Term",   theme::TEXT_MUTED, _onAdminTerminal);
     makeAdminBtn(LV_SYMBOL_POWER    " Reboot", theme::RED,        _onAdminReboot);
+    makeAdminBtn(LV_SYMBOL_EYE_OPEN " Access", theme::TEXT_MUTED,
+                 [](lv_event_t*) { repadmin::openAccess(s_adminPrefix, s_adminName); });
+    makeAdminBtn(LV_SYMBOL_EDIT     " Passwd", theme::TEXT_MUTED,
+                 [](lv_event_t*) { repadmin::openPassword(s_adminPrefix, s_adminName); });
+    makeAdminBtn(LV_SYMBOL_GPS      " Regions", theme::TEXT_MUTED,
+                 [](lv_event_t*) { repadmin::openRegions(s_adminPrefix, s_adminName); });
 
     // ── Response area ─────────────────────────────────────────────────
     lv_obj_t* respArea = lv_obj_create(s_adminScreen);
@@ -1337,13 +1362,17 @@ void ScreenRepeaters::_showAdminPanel()
     lv_obj_set_style_pad_all(respArea, 4, 0);
     lv_obj_set_scroll_dir(respArea, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(respArea, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(respArea, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(respArea, LV_OBJ_FLAG_USER_1);   // trackball up/down scrolls it (UIScreen)
 
     s_adminRespLbl = lv_label_create(respArea);
     lv_label_set_text(s_adminRespLbl, "Press Status to query the repeater.");
     lv_label_set_long_mode(s_adminRespLbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_adminRespLbl, OPS_SCREEN_W - 10);
     lv_obj_set_style_text_color(s_adminRespLbl, theme::TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(s_adminRespLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_adminRespLbl, _adminRespFont(), 0);
+    lv_obj_set_style_text_line_space(s_adminRespLbl, 2, 0);
+    lv_label_set_recolor(s_adminRespLbl, true);   // status colours, see _fmtAdminLine
 
     // Wire backspace key to close: add respArea to the default input group so
     // keyboard events reach it, then register the key handler.
@@ -1419,6 +1448,7 @@ void ScreenRepeaters::_onAdminTerminal(lv_event_t* /*e*/)
     // Null the response label so subsequent responses go to the terminal log.
     s_adminRespLbl = nullptr;
     s_adminRespBuf[0] = '\0';
+    repadmin::forget();   // its windows live on the admin screen
 
     // Open admin terminal (loads new screen over the admin panel).
     ScreenTerminal::showAdmin(s_adminPrefix, s_adminName);
@@ -1536,6 +1566,7 @@ void ScreenRepeaters::_onAdminClose(lv_event_t* /*e*/)
 {
     s_adminRespLbl = nullptr;
     s_adminRespBuf[0] = '\0';
+    repadmin::forget();   // its windows live on the admin screen
 
     lv_obj_t* dying = s_adminScreen;
     s_adminScreen = nullptr;
@@ -1546,24 +1577,187 @@ void ScreenRepeaters::_onAdminClose(lv_event_t* /*e*/)
     if (dying) lv_obj_del_async(dying);
 }
 
+// ── Admin panel line formatting ───────────────────────────────────────
+// The label uses LVGL recolour ("#RRGGBB text#"), so a literal '#' in a
+// reply is doubled. Status lines from MeshService get an icon / colours.
+
+static void _hexOf(lv_color_t c, char* out)   // out: 7 bytes
+{
+    uint32_t v = lv_color_to32(c) & 0xFFFFFF;
+    snprintf(out, 7, "%06X", (unsigned)v);
+}
+
+static void _catPlain(char* out, size_t max, const char* text);
+
+// Appends "#RRGGBB text#" to out. A '#' can't be escaped inside a colour
+// span, so such text goes in uncoloured.
+static void _catColored(char* out, size_t max, lv_color_t c, const char* text)
+{
+    if (strchr(text, '#')) { _catPlain(out, max, text); return; }
+    char hex[7];
+    _hexOf(c, hex);
+    size_t n = strlen(out);
+    if (n < max) snprintf(out + n, max - n, "#%s %s#", hex, text);
+}
+
+static void _catPlain(char* out, size_t max, const char* text)
+{
+    size_t n = strlen(out);
+    while (*text && n + 2 < max) {
+        if (*text == '#') out[n++] = '#';   // escape for recolour
+        out[n++] = *text++;
+    }
+    out[n] = '\0';
+}
+
+static lv_color_t _rssiColor(int rssi)
+{
+    return rssi >= -90 ? theme::GREEN : rssi >= -105 ? theme::ORANGE : theme::RED;
+}
+static lv_color_t _snrColor(float snr)
+{
+    return snr >= 5.0f ? theme::GREEN : snr >= -5.0f ? theme::ORANGE : theme::RED;
+}
+static lv_color_t _noiseColor(int nf)
+{
+    return nf <= -110 ? theme::GREEN : nf <= -100 ? theme::ORANGE : theme::RED;
+}
+
+static void _fmtAdminLine(const char* text, char* out, size_t max)
+{
+    out[0] = '\0';
+    char tmp[48];
+
+    if (strcmp(text, "--- Status ---") == 0) return;   // the panel title says it
+
+    if (strncmp(text, "Batt: ", 6) == 0) {
+        const char* val = text + 6;
+        const char* pc  = strchr(val, '(');
+        int pct = pc ? atoi(pc + 1) : -1;
+        const char* sym = LV_SYMBOL_BATTERY_EMPTY;
+        lv_color_t  col = theme::TEXT_MUTED;
+        if (pct >= 0 && strcmp(val, "n/a") != 0) {
+            sym = pct >= 80 ? LV_SYMBOL_BATTERY_FULL
+                : pct >= 55 ? LV_SYMBOL_BATTERY_3
+                : pct >= 30 ? LV_SYMBOL_BATTERY_2
+                : pct >= 10 ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
+            col = pct >= 30 ? theme::GREEN : pct >= 10 ? theme::ORANGE : theme::RED;
+        }
+        // Header line (icon coloured by charge), then the reading.
+        _catColored(out, max, col, sym);
+        _catColored(out, max, theme::ACCENT, " Battery");
+        _catPlain(out, max, "\n");
+        _catPlain(out, max, val);
+        return;
+    }
+
+    // Section headers with a symbol (Montserrat has no plane: the
+    // location arrow stands in for Airtime).
+    static const struct { const char* name; const char* sym; } kHeaders[] = {
+        { "Radio",   LV_SYMBOL_WIFI    },
+        { "Packets", LV_SYMBOL_SHUFFLE },
+        { "Airtime", LV_SYMBOL_GPS     },
+        { "Uptime",  LV_SYMBOL_UP      },
+    };
+    for (const auto& h : kHeaders) {
+        if (strcmp(text, h.name) == 0) {
+            snprintf(tmp, sizeof(tmp), "%s %s", h.sym, h.name);
+            _catColored(out, max, theme::ACCENT, tmp);
+            return;
+        }
+    }
+
+    // Sensor telemetry (MeshService::_emitTelemetry): emoji header, value below.
+    float fv = 0.0f;
+    if (sscanf(text, "Temp: %f", &fv) == 1) {
+        _catPlain(out, max, "\xF0\x9F\x8C\xA1");                 // U+1F321 thermometer
+        _catColored(out, max, theme::ACCENT, " Temperature");
+        snprintf(tmp, sizeof(tmp), "\n%.1f\xC2\xB0" "C   %.1f\xC2\xB0" "F",
+                 fv, fv * 9.0f / 5.0f + 32.0f);
+        _catPlain(out, max, tmp);
+        return;
+    }
+    if (sscanf(text, "Humidity: %f", &fv) == 1) {
+        _catPlain(out, max, "\xF0\x9F\x92\xA7");                 // U+1F4A7 droplet
+        _catColored(out, max, theme::ACCENT, " Humidity");
+        snprintf(tmp, sizeof(tmp), "\n%.1f%%", fv);
+        _catPlain(out, max, tmp);
+        return;
+    }
+    if (sscanf(text, "Pressure: %f", &fv) == 1) {
+        _catPlain(out, max, "\xE2\x8F\xB2");                      // U+23F2 timer clock (gauge)
+        _catColored(out, max, theme::ACCENT, " Pressure");
+        snprintf(tmp, sizeof(tmp), "\n%.1f hPa", fv);
+        _catPlain(out, max, tmp);
+        return;
+    }
+
+    int rssi = 0, noise = 0;
+    float snr = 0.0f;
+    if (sscanf(text, "RSSI: %d SNR: %f Noise: %d", &rssi, &snr, &noise) == 3) {
+        _catPlain(out, max, "RSSI ");
+        snprintf(tmp, sizeof(tmp), "%d dBm", rssi);
+        _catColored(out, max, _rssiColor(rssi), tmp);
+        _catPlain(out, max, "   SNR ");
+        snprintf(tmp, sizeof(tmp), "%.2f dB", snr);
+        _catColored(out, max, _snrColor(snr), tmp);
+        _catPlain(out, max, "   Noise ");
+        snprintf(tmp, sizeof(tmp), "%d dBm", noise);
+        _catColored(out, max, _noiseColor(noise), tmp);
+        return;
+    }
+
+    // "Nbr AA:BB:CC:DD  5m ago  SNR:-3.25" → prefix, repeater name, coloured SNR
+    unsigned b[4];
+    char ago[16];
+    if (sscanf(text, "Nbr %2X:%2X:%2X:%2X %15s ago SNR:%f",
+               &b[0], &b[1], &b[2], &b[3], ago, &snr) == 6) {
+        uint8_t pfx[4] = { (uint8_t)b[0], (uint8_t)b[1], (uint8_t)b[2], (uint8_t)b[3] };
+        static Repeater r;   // large record: keep it off the stack
+        int idx = -1;
+        bool known = ops::repeaters::findByKey(pfx, &idx) && ops::repeaters::get(idx, r) && r.name[0];
+        snprintf(tmp, sizeof(tmp), "%02X:%02X:%02X:%02X ", b[0], b[1], b[2], b[3]);
+        _catPlain(out, max, tmp);
+        _catColored(out, max, known ? theme::TEXT : theme::TEXT_MUTED, known ? r.name : "unknown");
+        snprintf(tmp, sizeof(tmp), "  %s ago  SNR ", ago);
+        _catPlain(out, max, tmp);
+        snprintf(tmp, sizeof(tmp), "%.2f dB", snr);
+        _catColored(out, max, _snrColor(snr), tmp);
+        return;
+    }
+
+    _catPlain(out, max, text);
+}
+
 // ── onContactResponse() — append to admin panel if open ───────────────
 void ScreenRepeaters::onContactResponse(const char* line)
 {
     if (!s_adminRespLbl) return;
 
     // Strip the "[Name] " prefix if present so the panel stays clean
-    const char* text = line;
+    const char* raw = line;
     const char* bracket = strstr(line, "] ");
-    if (bracket) text = bracket + 2;
+    if (bracket) raw = bracket + 2;
+
+    // An open Access / Password / Regions window takes its replies; the
+    // access-list lines are only for that window.
+    if (repadmin::onResponse(raw) && strncmp(raw, "ACL ", 4) == 0) return;
+
+    char text[320];
+    _fmtAdminLine(raw, text, sizeof(text));
+    if (!text[0]) return;
 
     int used = (int)strlen(s_adminRespBuf);
     int remaining = (int)sizeof(s_adminRespBuf) - used - 1;
-    if (remaining <= 0) {
+    if (remaining < (int)strlen(text) + 1) {
         // Scroll buffer: drop first half to make room
         int half = (int)sizeof(s_adminRespBuf) / 2;
         memmove(s_adminRespBuf, s_adminRespBuf + half,
                 sizeof(s_adminRespBuf) - half);
         s_adminRespBuf[sizeof(s_adminRespBuf) - half - 1] = '\0';
+        // Start at a line boundary so no colour tag is cut in half.
+        char* nl = strchr(s_adminRespBuf, '\n');
+        if (nl) memmove(s_adminRespBuf, nl + 1, strlen(nl + 1) + 1);
         used = (int)strlen(s_adminRespBuf);
         remaining = (int)sizeof(s_adminRespBuf) - used - 1;
     }

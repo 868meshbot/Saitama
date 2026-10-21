@@ -88,7 +88,7 @@ private:
     // ── Admin panel (new LVGL screen shown after successful login) ────
     static lv_obj_t* s_adminScreen;
     static lv_obj_t* s_adminRespLbl;
-    static char      (&s_adminRespBuf)[640];   // PSRAM
+    static char      (&s_adminRespBuf)[2048];   // PSRAM
 
     static void _showAdminPanel();
     static void _onAdminStatus(lv_event_t* e);
