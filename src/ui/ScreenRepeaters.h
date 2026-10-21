@@ -22,6 +22,10 @@ public:
     // Appends to the admin panel response area when the panel is open.
     static void onContactResponse(const char* line);
 
+    // Current admin target (for the RepeaterAdminTools windows).
+    static const uint8_t* adminPrefix() { return s_adminPrefix; }
+    static const char*    adminName()   { return s_adminName; }
+
 private:
     static lv_obj_t* _screen;
 
@@ -91,6 +95,12 @@ private:
     static char      (&s_adminRespBuf)[2048];   // PSRAM
 
     static void _showAdminPanel();
+    // Panel actions: a dropdown of these plus an Open button.
+    struct AdminAction { const char* label; lv_event_cb_t cb; };
+    static const AdminAction kAdminActions[];
+    static const int         kAdminActionCount;
+    static lv_obj_t*         s_adminActionDd;
+    static void _onAdminOpen(lv_event_t* e);
     static void _onAdminStatus(lv_event_t* e);
     static void _onAdminClose (lv_event_t* e);
     static void _onAdminKey   (lv_event_t* e);  // ESC/backspace on admin panel

@@ -1230,7 +1230,7 @@ void ScreenRepeaters::_onRetryLogin(lv_event_t* e)
 // ─────────────────────────────────────────────────────────────────────
 
 static constexpr int ADM_TOP_H  = 28;
-static constexpr int ADM_BTN_H  = 68;   // two wrapped rows of buttons
+static constexpr int ADM_BTN_H  = 34;   // action dropdown + Open
 static constexpr int ADM_RESP_Y = ADM_TOP_H + ADM_BTN_H;
 static constexpr int ADM_RESP_H = OPS_SCREEN_H - ADM_RESP_Y;
 
@@ -1246,6 +1246,36 @@ static const lv_font_t* _adminRespFont()
         s_ready = true;
     }
     return &s_font;
+}
+
+// Set by Status / Neighbours (which clear the pane): keep the pane at the top.
+static bool s_respFromTop = false;
+
+// ── Admin actions (dropdown on the panel; Open runs the selected one) ──
+static void _actAccess(lv_event_t*)   { repadmin::openAccess(ScreenRepeaters::adminPrefix(), ScreenRepeaters::adminName()); }
+static void _actPassword(lv_event_t*) { repadmin::openPassword(ScreenRepeaters::adminPrefix(), ScreenRepeaters::adminName()); }
+static void _actRegions(lv_event_t*)  { repadmin::openRegions(ScreenRepeaters::adminPrefix(), ScreenRepeaters::adminName()); }
+
+const ScreenRepeaters::AdminAction ScreenRepeaters::kAdminActions[] = {
+    { LV_SYMBOL_REFRESH  "  Status",          ScreenRepeaters::_onAdminStatus    },
+    { LV_SYMBOL_LIST     "  Neighbours",      ScreenRepeaters::_onAdminNbrs      },
+    { LV_SYMBOL_LOOP     "  Clock sync",      ScreenRepeaters::_onAdminClockSync },
+    { LV_SYMBOL_WIFI     "  Send advert",     ScreenRepeaters::_onAdminAdvert    },
+    { LV_SYMBOL_KEYBOARD "  Terminal",        ScreenRepeaters::_onAdminTerminal  },
+    { LV_SYMBOL_EYE_OPEN "  Access control",  _actAccess                         },
+    { LV_SYMBOL_EDIT     "  Change password", _actPassword                       },
+    { LV_SYMBOL_GPS      "  Regions",         _actRegions                        },
+    { LV_SYMBOL_POWER    "  Reboot",          ScreenRepeaters::_onAdminReboot    },
+};
+const int ScreenRepeaters::kAdminActionCount =
+    (int)(sizeof(ScreenRepeaters::kAdminActions) / sizeof(ScreenRepeaters::kAdminActions[0]));
+lv_obj_t* ScreenRepeaters::s_adminActionDd = nullptr;
+
+void ScreenRepeaters::_onAdminOpen(lv_event_t* e)
+{
+    if (!s_adminActionDd) return;
+    int i = (int)lv_dropdown_get_selected(s_adminActionDd);
+    if (i >= 0 && i < kAdminActionCount) kAdminActions[i].cb(e);
 }
 
 // ── _showAdminPanel() ─────────────────────────────────────────────────
@@ -1300,7 +1330,7 @@ void ScreenRepeaters::_showAdminPanel()
     lv_obj_set_style_text_font(closeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(closeLbl);
 
-    // ── Button row ────────────────────────────────────────────────────
+    // ── Action row: dropdown + Open ───────────────────────────────────
     lv_obj_t* btnRow = lv_obj_create(s_adminScreen);
     lv_obj_set_size(btnRow, OPS_SCREEN_W, ADM_BTN_H);
     lv_obj_align(btnRow, LV_ALIGN_TOP_LEFT, 0, ADM_TOP_H);
@@ -1308,49 +1338,54 @@ void ScreenRepeaters::_showAdminPanel()
     lv_obj_set_style_border_width(btnRow, 0, 0);
     lv_obj_set_style_radius(btnRow, 0, 0);
     lv_obj_set_style_pad_hor(btnRow, 6, 0);
-    lv_obj_set_style_pad_ver(btnRow, 4, 0);
+    lv_obj_set_style_pad_ver(btnRow, 2, 0);
     lv_obj_set_style_pad_column(btnRow, 6, 0);
     lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btnRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Helper: add a small action button to the button row.
-    // accent_col = border/text colour; cb = click callback.
-    auto makeAdminBtn = [&](const char* label, lv_color_t accent_col,
-                            lv_event_cb_t cb) -> lv_obj_t*
+    s_adminActionDd = lv_dropdown_create(btnRow);
+    lv_obj_set_height(s_adminActionDd, 28);
+    lv_obj_set_flex_grow(s_adminActionDd, 1);
     {
-        lv_obj_t* btn = lv_btn_create(btnRow);
-        lv_group_remove_obj(btn);
-        lv_obj_set_height(btn, 26);
-        lv_obj_set_width(btn, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(btn, theme::BG, 0);
-        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(btn, accent_col, 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_radius(btn, 4, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_hor(btn, 8, 0);
-        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, label);
-        lv_obj_set_style_text_color(lbl, accent_col, 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
-        lv_obj_center(lbl);
-        return btn;
-    };
+        static char opts[200];
+        size_t n = 0;
+        for (int i = 0; i < kAdminActionCount; i++)
+            n += (size_t)snprintf(opts + n, sizeof(opts) - n, "%s%s", i ? "\n" : "", kAdminActions[i].label);
+        lv_dropdown_set_options_static(s_adminActionDd, opts);
+    }
+    lv_obj_set_style_bg_color(s_adminActionDd, theme::BG, 0);
+    lv_obj_set_style_text_color(s_adminActionDd, theme::TEXT, 0);
+    lv_obj_set_style_text_font(s_adminActionDd, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_border_color(s_adminActionDd, theme::BORDER, 0);
+    lv_obj_set_style_border_color(s_adminActionDd, theme::ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_pad_ver(s_adminActionDd, 5, 0);
+    if (lv_obj_t* list = lv_dropdown_get_list(s_adminActionDd)) {
+        lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+        lv_obj_set_style_text_color(list, theme::TEXT, 0);
+        lv_obj_set_style_text_font(list, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_max_height(list, 200, 0);
+    }
+    lv_obj_add_event_cb(s_adminActionDd, _onAdminKey, LV_EVENT_KEY, nullptr);
 
-    makeAdminBtn(LV_SYMBOL_REFRESH  " Status", theme::ACCENT,     _onAdminStatus);
-    makeAdminBtn(LV_SYMBOL_LOOP     " Clk",    theme::TEXT_MUTED, _onAdminClockSync);
-    makeAdminBtn(LV_SYMBOL_WIFI     " Advert", theme::TEXT_MUTED, _onAdminAdvert);
-    makeAdminBtn(LV_SYMBOL_LIST     " Nbrs",   theme::TEXT_MUTED, _onAdminNbrs);
-    makeAdminBtn(LV_SYMBOL_KEYBOARD " Term",   theme::TEXT_MUTED, _onAdminTerminal);
-    makeAdminBtn(LV_SYMBOL_POWER    " Reboot", theme::RED,        _onAdminReboot);
-    makeAdminBtn(LV_SYMBOL_EYE_OPEN " Access", theme::TEXT_MUTED,
-                 [](lv_event_t*) { repadmin::openAccess(s_adminPrefix, s_adminName); });
-    makeAdminBtn(LV_SYMBOL_EDIT     " Passwd", theme::TEXT_MUTED,
-                 [](lv_event_t*) { repadmin::openPassword(s_adminPrefix, s_adminName); });
-    makeAdminBtn(LV_SYMBOL_GPS      " Regions", theme::TEXT_MUTED,
-                 [](lv_event_t*) { repadmin::openRegions(s_adminPrefix, s_adminName); });
+    lv_obj_t* openBtn = lv_btn_create(btnRow);
+    lv_obj_set_size(openBtn, 70, 28);
+    lv_obj_set_style_bg_color(openBtn, theme::BG, 0);
+    lv_obj_set_style_bg_color(openBtn, theme::PRIMARY, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(openBtn, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(openBtn, 1, 0);
+    lv_obj_set_style_border_width(openBtn, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_radius(openBtn, 4, 0);
+    lv_obj_set_style_shadow_width(openBtn, 0, 0);
+    lv_obj_add_event_cb(openBtn, _onAdminOpen, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(openBtn, _onAdminKey, LV_EVENT_KEY, nullptr);
+    {
+        lv_obj_t* lbl = lv_label_create(openBtn);
+        lv_label_set_text(lbl, "Open " LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(lbl, theme::ACCENT, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_center(lbl);
+    }
 
     // ── Response area ─────────────────────────────────────────────────
     lv_obj_t* respArea = lv_obj_create(s_adminScreen);
@@ -1379,7 +1414,7 @@ void ScreenRepeaters::_showAdminPanel()
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, respArea);
-        lv_group_focus_obj(respArea);
+        lv_group_focus_obj(s_adminActionDd);   // pick an action, then Open
     }
     lv_obj_add_event_cb(respArea, _onAdminKey, LV_EVENT_KEY, nullptr);
 
@@ -1396,6 +1431,7 @@ void ScreenRepeaters::_onAdminStatus(lv_event_t* /*e*/)
 
     s_adminRespBuf[0] = '\0';
     if (s_adminRespLbl) {
+        s_respFromTop = true;
         lv_label_set_text(s_adminRespLbl, "Querying...");
         lv_obj_set_style_text_color(s_adminRespLbl, theme::TEXT_MUTED, 0);
     }
@@ -1412,6 +1448,7 @@ void ScreenRepeaters::_onAdminClockSync(lv_event_t* /*e*/)
     if (now - s_lastStatusMs < 2000) return;  // light debounce
     s_lastStatusMs = now;
     // "clock sync" tells the repeater to adopt sender_timestamp (our current time).
+    s_respFromTop = false;   // the reply is appended below
     bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "clock sync");
     OPS_LOG("Admin", "Clock sync %s to %s", ok ? "sent" : "FAILED", s_adminName);
 }
@@ -1422,6 +1459,7 @@ void ScreenRepeaters::_onAdminAdvert(lv_event_t* /*e*/)
     uint32_t now = (uint32_t)millis();
     if (now - s_lastStatusMs < 2000) return;
     s_lastStatusMs = now;
+    s_respFromTop = false;
     bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "advert");
     OPS_LOG("Admin", "Advert cmd %s to %s", ok ? "sent" : "FAILED", s_adminName);
 }
@@ -1435,6 +1473,7 @@ void ScreenRepeaters::_onAdminNbrs(lv_event_t* /*e*/)
 
     s_adminRespBuf[0] = '\0';
     if (s_adminRespLbl) {
+        s_respFromTop = true;
         lv_label_set_text(s_adminRespLbl, "Querying neighbours...");
         lv_obj_set_style_text_color(s_adminRespLbl, theme::TEXT_MUTED, 0);
     }
@@ -1449,6 +1488,7 @@ void ScreenRepeaters::_onAdminTerminal(lv_event_t* /*e*/)
     s_adminRespLbl = nullptr;
     s_adminRespBuf[0] = '\0';
     repadmin::forget();   // its windows live on the admin screen
+    s_adminActionDd = nullptr;
 
     // Open admin terminal (loads new screen over the admin panel).
     ScreenTerminal::showAdmin(s_adminPrefix, s_adminName);
@@ -1567,6 +1607,7 @@ void ScreenRepeaters::_onAdminClose(lv_event_t* /*e*/)
     s_adminRespLbl = nullptr;
     s_adminRespBuf[0] = '\0';
     repadmin::forget();   // its windows live on the admin screen
+    s_adminActionDd = nullptr;
 
     lv_obj_t* dying = s_adminScreen;
     s_adminScreen = nullptr;
@@ -1716,9 +1757,13 @@ static void _fmtAdminLine(const char* text, char* out, size_t max)
         static Repeater r;   // large record: keep it off the stack
         int idx = -1;
         bool known = ops::repeaters::findByKey(pfx, &idx) && ops::repeaters::get(idx, r) && r.name[0];
-        snprintf(tmp, sizeof(tmp), "%02X:%02X:%02X:%02X ", b[0], b[1], b[2], b[3]);
-        _catPlain(out, max, tmp);
-        _catColored(out, max, known ? theme::TEXT : theme::TEXT_MUTED, known ? r.name : "unknown");
+        // The name when it is one of our repeaters, otherwise the id.
+        if (known) {
+            _catPlain(out, max, r.name);
+        } else {
+            snprintf(tmp, sizeof(tmp), "%02X:%02X:%02X:%02X", b[0], b[1], b[2], b[3]);
+            _catColored(out, max, theme::TEXT_MUTED, tmp);
+        }
         snprintf(tmp, sizeof(tmp), "  %s ago  SNR ", ago);
         _catPlain(out, max, tmp);
         snprintf(tmp, sizeof(tmp), "%.2f dB", snr);
@@ -1771,9 +1816,10 @@ void ScreenRepeaters::onContactResponse(const char* line)
     lv_label_set_text(s_adminRespLbl, s_adminRespBuf);
     lv_obj_set_style_text_color(s_adminRespLbl, theme::TEXT, 0);
 
-    // Scroll response area to bottom
+    // A Status / Neighbours reply is read from its first line; anything
+    // else (command replies) follows the newest line.
     lv_obj_t* parent = lv_obj_get_parent(s_adminRespLbl);
-    if (parent) lv_obj_scroll_to_y(parent, LV_COORD_MAX, LV_ANIM_OFF);
+    if (parent) lv_obj_scroll_to_y(parent, s_respFromTop ? 0 : LV_COORD_MAX, LV_ANIM_OFF);
 }
 
 }}  // namespace ops::ui
