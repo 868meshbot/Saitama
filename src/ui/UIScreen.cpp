@@ -795,7 +795,12 @@ void tick() {
                 lv_group_t* ng    = lv_group_get_default();
                 lv_obj_t*   nf    = ng ? lv_group_get_focused(ng) : nullptr;
                 bool onSlider = nf && lv_obj_has_class(nf, &lv_slider_class);
-                if (dy != 0) {
+                // LV_OBJ_FLAG_USER_1 marks a scrollable text pane: up/down
+                // scroll it instead of moving focus.
+                bool onPane = nf && lv_obj_has_flag(nf, LV_OBJ_FLAG_USER_1);
+                if (dy != 0 && onPane) {
+                    lv_obj_scroll_by_bounded(nf, 0, (dy > 0) ? -30 : 30, LV_ANIM_ON);
+                } else if (dy != 0) {
                     enc_diff = (dy > 0) ? 1 : -1;
                 }
                 if (dx != 0) {

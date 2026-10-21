@@ -40,6 +40,9 @@
 #include <strings.h>   // strcasecmp
 #include <cstdio>
 
+// Moon emoji image (C object, so declared at global scope).
+extern "C" const lv_img_dsc_t emoji_moon;
+
 namespace ops { namespace ui {
 
 // ── Layout constants ─────────────────────────────────────────────────
@@ -56,7 +59,7 @@ lv_obj_t* ScreenLauncher::_radioLbl   = nullptr;
 lv_obj_t* ScreenLauncher::_speakerLbl = nullptr;
 lv_obj_t* ScreenLauncher::_btLbl      = nullptr;
 
-static lv_obj_t* s_nightLbl = nullptr;   // moon beside the clock (night mode)
+static lv_obj_t* s_nightLbl = nullptr;   // moon image box beside the clock (night mode)
 
 // ── Home page (page 0) state ─────────────────────────────────────────
 // Four app buttons over a "rain" of stations heard this session and the
@@ -928,14 +931,26 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent) {
 
     _btLbl = lv_label_create(bar);
     lv_label_set_text(_btLbl, LV_SYMBOL_BLUETOOTH);
-    lv_obj_set_style_text_font(_btLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(_btLbl, &lv_font_montserrat_12, 0);   // ~ the 11 px moon
     lv_obj_set_style_text_color(_btLbl, theme::TEXT_MUTED, 0);  // grey = off
     lv_obj_set_style_pad_right(_btLbl, 2, 0);
 
     // Night mode moon, left of the clock; shown only while night mode is active.
-    s_nightLbl = lv_label_create(bar);
-    lv_label_set_text(s_nightLbl, "\xF0\x9F\x8C\x99");   // U+1F319 crescent moon
-    lv_obj_set_style_text_font(s_nightLbl, ops::emoji::emojiFont(&lv_font_montserrat_10), 0);
+    // The 16 px emoji image scaled to ~11 px (as on the Map day/night button)
+    // inside a 12 px box so it sits with the 10 pt bar symbols.
+    s_nightLbl = lv_obj_create(bar);
+    lv_obj_remove_style_all(s_nightLbl);
+    lv_obj_set_size(s_nightLbl, 12, 12);
+    lv_obj_set_style_pad_right(s_nightLbl, 2, 0);
+    lv_obj_clear_flag(s_nightLbl, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_nightLbl, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    {
+        lv_obj_t* img = lv_img_create(s_nightLbl);
+        lv_img_set_src(img, &emoji_moon);
+        lv_img_set_zoom(img, 176);   // 256 = 100%
+        lv_img_set_antialias(img, true);
+        lv_obj_center(img);
+    }
     if (!ops::config::nightModeActive()) lv_obj_add_flag(s_nightLbl, LV_OBJ_FLAG_HIDDEN);
 
     _timeLbl = lv_label_create(bar);
