@@ -47,6 +47,8 @@
 #include <Wire.h>
 #include <LittleFS.h>
 #include <Preferences.h>
+#include <esp_sleep.h>
+#include <driver/gpio.h>
 
 namespace ops { namespace ui {
 
@@ -77,15 +79,15 @@ static const char* kCmdList[] = {
     "clearrep", "clock", "contacts", "control", "filemgr", "find", "get",
     "getpath", "gps", "help", "i2c", "identity", "import", "kbbl", "list",
     "local", "memory", "messages", "pathsize", "play", "power", "public",
-    "quiet", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
+    "quiet", "reboot", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
     "resetpath", "saitama-scr", "scope", "screenshot", "sd", "send", "set", "setchannel",
-    "setpath", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
+    "setpath", "shutdown", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
     nullptr
 };
 
 // Free-text commands accepted in repeater-admin mode (see showAdmin() hint).
 static const char* kAdminCmdList[] = {
-    "advert", "clock", "neighbours", "reboot", "status", nullptr
+    "advert", "clock", "neighbours", "reboot", "shutdown", "status", nullptr
 };
 
 // Second-word completions for commands whose next token is one of a small
@@ -200,7 +202,36 @@ void ScreenTerminal::showAdmin(const uint8_t* prefix4, const char* name)
     char hdr[72];
     snprintf(hdr, sizeof(hdr), "--- Admin: %s ---  type commands below ---", s_adminName);
     appendLine(hdr);
-    appendLine("status | advert | reboot | clock sync | neighbours");
+    appendLine("status | advert | reboot | shutdown | clock sync | neighbours");
+}
+
+// ── _shutdownNow() ───────────────────────────────────────────────────
+// No PMU on the T-Deck: "off" is the radio, GPS and lights off, the
+// peripheral rail (BOARD_POWERON, GPIO10) cut and held low, then deep sleep.
+// A trackball click (GPIO0) wakes it, which boots Saitama from the start —
+// or the Launcher, if one is installed with "DeepSleep starts Launcher" on.
+// main.cpp releases the GPIO10 hold at boot.
+static void _shutdownNow()
+{
+    OPS_LOG("Term", "Shutdown");
+    Serial.flush();
+    MeshService::instance().setActive(false);
+    auto& board = Board::instance();
+    board.gpsStandby();
+    board.setKeyboardBacklight(0);
+    board.setDisplayBrightness(0);
+
+    // A wake source that is already active would wake us at once.
+    uint32_t t0 = millis();
+    while (digitalRead(GPIO_NUM_0) == LOW && millis() - t0 < 3000) delay(10);
+
+    digitalWrite(GPIO_NUM_10, LOW);
+    gpio_hold_en(GPIO_NUM_10);
+    gpio_deep_sleep_hold_en();
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+    esp_deep_sleep_start();
 }
 
 // ── appendLine() ─────────────────────────────────────────────────────
@@ -727,6 +758,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  memory");
         appendLine("  battery");
         appendLine("  power  - open power monitor screen");
+        appendLine("  reboot   - restart Saitama");
+        appendLine("  shutdown - power off; trackball click turns it back on");
         appendLine("  sd  |  sd mount  |  sd unmount  |  sd restore  |  sd ls [path]");
         appendLine("  identity show");
         appendLine("  identity restore");
@@ -826,6 +859,24 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── power ─────────────────────────────────────────────────────────
     if (strcmp(cmd, "power") == 0) {
         ScreenPower::show();
+        return;
+    }
+
+    // ── reboot / shutdown ─────────────────────────────────────────────
+    // Run from a short timer so the reply line is drawn first.
+    if (strcmp(cmd, "reboot") == 0) {
+        appendLine("Rebooting...");
+        lv_timer_t* t = lv_timer_create([](lv_timer_t*) {
+            Serial.flush();
+            ESP.restart();
+        }, 400, nullptr);
+        lv_timer_set_repeat_count(t, 1);
+        return;
+    }
+    if (strcmp(cmd, "shutdown") == 0) {
+        appendLine("Shutting down - click the trackball to turn back on.");
+        lv_timer_t* t = lv_timer_create([](lv_timer_t*) { _shutdownNow(); }, 600, nullptr);
+        lv_timer_set_repeat_count(t, 1);
         return;
     }
 

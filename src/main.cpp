@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <nvs.h>
+#include <driver/gpio.h>
 #include "version.h"
 #include "hardware/Board.h"
 #include "mesh/MeshService.h"
@@ -26,6 +27,11 @@
 
 // ── Setup ───────────────────────────────────────────────────────────
 void setup() {
+    // The terminal "shutdown" command holds the peripheral rail (GPIO10) low
+    // through deep sleep; release it before Board::init() drives it high.
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis(GPIO_NUM_10);
+
     // Must precede begin(): HWCDC only creates its TX ring (default 256 B) if
     // none exists. With the zero timeout below, any burst larger than the
     // ring is silently truncated — multi-line terminal replies (help, card,
