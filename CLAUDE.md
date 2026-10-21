@@ -69,7 +69,8 @@ src/
   ui/ScreenSettings.h/cpp   — Settings
   ui/ScreenHeard.h/cpp      — Peer list (signal bars, last-seen, type badge); Clear List + close X top right; row → details (name, identity, RSSI, repeater owner via ANON_REQ_TYPE_OWNER) with Save/Update
   ui/ScreenContacts.h/cpp   — Contact directory: filter box, star beside the name, speech-bubble DM button, signal bars, 2-column action popup, Details, Block
-  ui/ScreenRepeaters.h/cpp  — Repeater directory: filter box, signal bars, 2-column action popup, admin login/panel
+  ui/ScreenRepeaters.h/cpp  — Repeater directory: filter box, signal bars, 2-column action popup, admin login/panel (Status with battery/radio/packets/airtime/uptime + sensor telemetry, Neighbours with names)
+  ui/RepeaterAdminTools.h/cpp — admin panel windows: Change Password, Access Control (ACL), Regions — CLI commands, replies via onResponse()
   ui/ScreenTrace.h/cpp      — Hop-by-hop trace tool; showFor(prefix) opens with a target preselected
   ui/ScreenRegions.h/cpp    — Region discovery (asks 0-hop repeaters) + saved-region chips
   ui/ScopePicker.h/cpp      — Shared region-scope dropdown + "New Scope" box (Settings channels, Chat)
@@ -149,7 +150,7 @@ OPS_LOG("Tag", "fmt %d", value);   // → Serial.printf("[OPS] Tag: fmt N\n")
 
 **Closing popups/dialogs (crash rules):** a button inside an overlay must close it with `lv_obj_del_async()`, never `lv_obj_del()` (deleting an ancestor of the event target corrupts LVGL). If the screen is then rebuilt (a deferred `show()` that deletes the old screen), **only hide** the overlay — LVGL runs the newest async call first, so a deferred delete plus a deferred rebuild frees the overlay twice.
 
-**Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; sounds muted, keyboard light on Auto stays lit; moon beside the launcher clock), Speaker & Volume in one window. Radio Mode also holds **Routing** (1/2/3-byte path hashes, `cfg.pathHashSz`, `"pathHashSz"` in settings.json): every flood goes out through `_floodInScope()` with `config::pathHashBytes()`; BLE apps read it in device info and set it with command 61. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
+**Settings additions:** Region Scope (10 slots: 1 = default `cfg.scopeTag`, 2–10 = `ops::regions`), Bluetooth PIN, Night Mode (start/end times; sounds muted, keyboard light on Auto stays lit; moon beside the launcher clock), Speaker & Volume in one window. **Telemetry** (`cfg.telemAllow/telemLocation/telemEnv`, `"telBase"/"telLoc"/"telEnv"`) decides whether `onContactRequest()` answers telemetry requests (battery, MCU temp, optional position; the T-Deck has no environment sensors). Radio Mode also holds **Routing** (1/2/3-byte path hashes, `cfg.pathHashSz`, `"pathHashSz"` in settings.json): every flood goes out through `_floodInScope()` with `config::pathHashBytes()`; BLE apps read it in device info and set it with command 61. Channel PSKs are sealed in `settings.json` (`pskEnc`) — see `docs/STORED_SECRETS.md`.
 
 **Internal DRAM is the scarce resource:** BLE pairing, hardware AES (channel decrypt) and the SD driver allocate from it at runtime; when it runs out BLE fails ("BLE_INIT: Malloc failed") and channel packets decrypt to empty "?" messages ("esp-aes: Failed to allocate memory"). Static arrays over ~500 B go to PSRAM via `static T (&s_x)[N] = ops::psram::array<T[N]>();`. `pre_build.py` patches NavBoxLib so its 45 KB PNG decoder lives in PSRAM. `UIScreen::tick()` logs `[OPS] Heap:` every 10 s.
 
