@@ -2,6 +2,8 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "GpsMgr.h"
+#include <sys/time.h>
+#include <time.h>
 #include "Config.h"
 #include "Log.h"
 #include "../hardware/Board.h"
@@ -66,6 +68,44 @@ void GpsMgr::tick()
 
     if (_mode == GPS_MODE_INTER) {
         _tickInter();
+    }
+    _tickClock();
+}
+
+// Board::tick() syncs the clock from the first GPS time it decodes and then
+// at most every 10 minutes. That first time can arrive before a fix (the
+// module's own clock, which may be stale), and nothing corrected it for
+// the next 10 minutes. Every 5 s: with live NMEA and a position fix, put
+// the clock right if it is more than 5 s out.
+void GpsMgr::_tickClock()
+{
+    uint32_t now = millis();
+    if (now - _clockCheckMs < 5000) return;
+    _clockCheckMs = now;
+
+    auto& board = Board::instance();
+    uint32_t nmea = board.gpsNmeaCount();
+    bool fresh = (nmea != _clockNmea);
+    _clockNmea = nmea;
+    if (!fresh || !board.hasGPSFix()) return;
+
+    uint16_t y; uint8_t mo, d, h, mi, s;
+    if (!board.gpsDateTime(y, mo, d, h, mi, s) || y < 2024) return;
+    struct tm t = {};
+    t.tm_year = y - 1900;
+    t.tm_mon  = mo - 1;
+    t.tm_mday = d;
+    t.tm_hour = h;
+    t.tm_min  = mi;
+    t.tm_sec  = s;
+    time_t gpsT = mktime(&t);          // TZ is UTC, as in Board::tick()
+    time_t sysT = time(nullptr);
+    long diff = (long)(gpsT - sysT);
+    if (diff > 5 || diff < -5) {
+        struct timeval tv = { gpsT, 0 };
+        settimeofday(&tv, nullptr);
+        OPS_LOG("GPS", "Clock corrected by %ld s: %04u-%02u-%02u %02u:%02u:%02u UTC",
+                diff, y, mo, d, h, mi, s);
     }
 }
 

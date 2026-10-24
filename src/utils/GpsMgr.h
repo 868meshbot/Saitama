@@ -45,8 +45,12 @@ private:
     static constexpr uint32_t SLEEP_MS   = 60UL * 60UL * 1000UL;  // 1 hour
     static constexpr uint32_t RESYNC_MS  =  5UL * 60UL * 1000UL;  // 5 minutes
 
+    uint32_t    _clockCheckMs  = 0;   // millis() of the last clock-vs-GPS check
+    uint32_t    _clockNmea     = 0;   // NMEA count at that check (fresh data?)
+
     void _enterMode(uint8_t mode);
     void _tickInter();
+    void _tickClock();
 };
 
 }  // namespace ops
