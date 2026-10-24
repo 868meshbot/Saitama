@@ -15,6 +15,16 @@ namespace ops {
 // numHops  = number of hashes in the path (each hash = 1–2 bytes of a node's pub_key).
 // hashes[] = path_hashes byte array, laid out as numHops * hashSz bytes.
 // snrs[]   = SNR*4 (int8) per forwarding node (numHops − 1 values before final bounce).
+// One repeater heard re-sending a channel message we sent: the last hop
+// in the copy's path (that repeater's key prefix, 1-3 bytes) and how
+// strongly we heard that copy.
+struct FloodRepeat {
+    uint8_t hash[3];
+    uint8_t hashSz;
+    int16_t rssi;       // dBm
+    int8_t  snrX4;      // SNR x 4
+};
+
 struct TraceResult {
     uint32_t tag;
     uint8_t  numHops;      // total hashes in path_hashes (includes contact + repeaters)
@@ -178,6 +188,9 @@ public:
     // (count = distinct repeaters so far), or count 0 when 30 s passed with
     // none heard.
     bool pollFloodRepeat(uint32_t& id, uint8_t& count);
+    // Who repeated it (up to 8), for the last 16 channel sends. Returns how
+    // many were copied; -1 when the message is no longer held.
+    int  floodRepeats(uint32_t id, FloodRepeat* out, int max) const;
 
     // ── Region discovery ──────────────────────────────────────────────
     // Asks every repeater in direct range which regions it floods for

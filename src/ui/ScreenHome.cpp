@@ -186,9 +186,15 @@ static int       s_iconEmojiBtnCount = 0;
 // Captured when the user taps a received bubble; consumed by _onAddContactSave.
 static char     s_pendingContactName[32] = {};
 static uint8_t  s_pendingContactKey[4]   = {};
+// Full key of the bubble's sender when known from the Heard list (adverts).
+static uint8_t  s_pendingFullKey[32]     = {};
+static bool     s_pendingHasFullKey      = false;
 static char     s_pendingPath[36]        = {};
 static uint8_t  s_pendingHops            = 0;
 static lv_obj_t* s_pathOverlay           = nullptr;
+// Non-zero: the path view lists who repeated this sent channel message
+// (tap a sent bubble) instead of a received message's hops.
+static uint32_t  s_pendingFloodId         = 0;
 static lv_obj_t* s_pathList              = nullptr;
 
 // ── Msg JSON helpers (no heap — hand-rolled for hot path) ─────────────
@@ -527,6 +533,14 @@ void ScreenHome::_addBubble(int         histIdx,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_bg_color(bubble,
         sent ? theme::PRIMARY : theme::BG_CARD, 0);
+
+    // A sent channel message: tap it to see which repeaters re-sent it.
+    if (sent && histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId) {
+        lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+        lv_group_remove_obj(bubble);
+        lv_obj_add_event_cb(bubble, _onSentBubbleClick, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)histIdx);
+    }
 
     if (!sent) {
         // Header row: sender name (if known) + action button (▾) pinned to top-right.
@@ -2508,7 +2522,18 @@ void ScreenHome::_onBubbleClick(lv_event_t* e)
     strncpy(s_pendingPath, entry.pathStr, sizeof(s_pendingPath) - 1);
     s_pendingPath[sizeof(s_pendingPath) - 1] = '\0';
     s_pendingHops = entry.hops;
+    s_pendingFloodId = 0;
     _openBubbleActionMenu();
+}
+
+void ScreenHome::_onSentBubbleClick(lv_event_t* e)
+{
+    int histIdx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (histIdx < 0 || histIdx >= s_histCount) return;
+    const MsgEntry& entry = s_history[histIdx];
+    if (!entry.sent || !entry.floodId) return;
+    s_pendingFloodId = entry.floodId;
+    _openPathView();
 }
 
 void ScreenHome::_openBubbleActionMenu()
@@ -2517,6 +2542,26 @@ void ScreenHome::_openBubbleActionMenu()
 
     bool hasKey = s_pendingContactKey[0] || s_pendingContactKey[1] ||
                   s_pendingContactKey[2] || s_pendingContactKey[3];
+    // Channel messages carry only the sender's name: look the name up among
+    // the nodes heard advertising, which gives the full key.
+    s_pendingHasFullKey = false;
+    {
+        auto& svc = ops::MeshService::instance();
+        ops::PeerInfo p;
+        for (int i = 0; i < svc.peerCount(); i++) {
+            if (!svc.getPeer(i, p) || p.type == 2) continue;
+            bool match = hasKey ? memcmp(p.pubKeyPrefix, s_pendingContactKey, 4) == 0
+                                : strcmp(p.name, s_pendingContactName) == 0;
+            if (!match) continue;
+            static const uint8_t kZero[32] = {};
+            if (memcmp(p.pubKey, kZero, 32) == 0) continue;
+            memcpy(s_pendingFullKey, p.pubKey, 32);
+            memcpy(s_pendingContactKey, p.pubKey, 4);
+            s_pendingHasFullKey = true;
+            hasKey = true;
+            break;
+        }
+    }
     bool alreadySaved = hasKey && ops::contacts::findByKey(s_pendingContactKey, nullptr);
 
     s_addContactOverlay = lv_obj_create(lv_scr_act());
@@ -2585,6 +2630,8 @@ void ScreenHome::_openBubbleActionMenu()
               alreadySaved ? theme::BG : theme::PRIMARY,
               _onBubbleAddContact,
               alreadySaved);
+    else   // no key until their advert is heard
+        mkBtn(LV_SYMBOL_PLUS " Add Contact (not heard yet)", theme::BG, nullptr, true);
     mkBtn("Close", theme::BG, _onAddContactCancel, false);
 }
 
@@ -2701,6 +2748,7 @@ void ScreenHome::_onAddContactSave(lv_event_t* /*e*/)
         ops::Contact c = {};
         strncpy(c.name, s_pendingContactName, sizeof(c.name) - 1);
         memcpy(c.pubKeyPrefix, s_pendingContactKey, 4);
+        if (s_pendingHasFullKey) memcpy(c.pubKey, s_pendingFullKey, 32);
         c.lastSeen  = (uint32_t)time(nullptr);
         c.outPathLen = 0xFF;   // unknown until an advert is heard
         ops::contacts::add(c);
@@ -2776,9 +2824,17 @@ void ScreenHome::_openPathView()
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Repeats view: one row per repeater heard re-sending our message.
+    ops::FloodRepeat reps[8];
+    int nReps = s_pendingFloodId
+        ? ops::MeshService::instance().floodRepeats(s_pendingFloodId, reps, 8) : 0;
+
     char title[24];
-    snprintf(title, sizeof(title), "%u hop%s",
-             (unsigned)s_pendingHops, s_pendingHops == 1 ? "" : "s");
+    if (s_pendingFloodId)
+        snprintf(title, sizeof(title), "Repeated by %d", nReps > 0 ? nReps : 0);
+    else
+        snprintf(title, sizeof(title), "%u hop%s",
+                 (unsigned)s_pendingHops, s_pendingHops == 1 ? "" : "s");
     lv_obj_t* titleLbl = lv_label_create(bar);
     lv_label_set_text(titleLbl, title);
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
@@ -2851,10 +2907,36 @@ void ScreenHome::_openPathView()
         }
     };
 
+    if (s_pendingFloodId) {
+        // RSSI is how we heard that repeater's copy, not its stored value.
+        for (int i = 0; i < nReps; i++) {
+            char code[8] = {};
+            for (int b = 0; b < reps[i].hashSz && b < 3; b++)
+                snprintf(code + b * 2, 3, "%02X", reps[i].hash[b]);
+            char name[48] = {};
+            int extra = 0;
+            float stored = 0.0f;
+            float rssi = reps[i].rssi ? (float)reps[i].rssi : -1.0f;
+            if (_findRepeaterByHash(reps[i].hash, reps[i].hashSz, name, 32, &extra, &stored)) {
+                if (extra > 0) {
+                    size_t n = strlen(name);
+                    snprintf(name + n, sizeof(name) - n, " (+%d)", extra);
+                }
+                addLine(code, name, theme::TEXT, rssi);
+            } else {
+                addLine(code, "unknown repeater", theme::TEXT_MUTED, rssi);
+            }
+        }
+        if (nReps < 0)
+            addLine("", "No longer held (last 16 sends)", theme::TEXT_MUTED, 0.0f);
+        else if (nReps == 0)
+            addLine("", "No repeater heard yet", theme::TEXT_MUTED, 0.0f);
+    }
+
     // Parse "AA>B1>3F" (or 2-byte "AABB>..."); stored path may be truncated
     // for long routes, so s_pendingHops stays the authoritative count.
     int shown = 0;
-    const char* p = s_pendingPath;
+    const char* p = s_pendingFloodId ? "" : s_pendingPath;
     while (*p) {
         const char* end = strchr(p, '>');
         int len = end ? (int)(end - p) : (int)strlen(p);
@@ -2885,7 +2967,9 @@ void ScreenHome::_openPathView()
         p = end + 1;
     }
 
-    if (s_pendingHops == 0 && shown == 0) {
+    if (s_pendingFloodId) {
+        // rows added above
+    } else if (s_pendingHops == 0 && shown == 0) {
         addLine("", "Direct - no repeaters", theme::TEXT_MUTED, 0.0f);
     } else if (shown == 0) {
         addLine("", "Path not recorded", theme::TEXT_MUTED, 0.0f);
@@ -2911,6 +2995,7 @@ static void _closePathView()
     lv_obj_del_async(s_pathOverlay);
     s_pathOverlay = nullptr;
     s_pathList    = nullptr;
+    s_pendingFloodId = 0;
 }
 
 void ScreenHome::_onPathClose(lv_event_t* /*e*/)

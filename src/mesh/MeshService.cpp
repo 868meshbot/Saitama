@@ -249,17 +249,19 @@ class OMSMesh : public BaseChatMesh {
     // re-send it is the only sign it got out, so for 30 s after each send we
     // count copies by packet hash (payload only, so every copy matches),
     // once per distinct repeater (the last hop in the copy's path).
-    static constexpr int      OWN_FLOODS   = 6;
+    // The last OWN_FLOODS sends are kept after their window closes so the
+    // chat can list who repeated each one (tap a sent bubble).
+    static constexpr int      OWN_FLOODS   = 16;
     static constexpr uint32_t OWN_FLOOD_MS = 30000;
     struct OwnFlood {
-        uint8_t  hash[MAX_HASH_SIZE];
-        uint32_t id;          // first 4 hash bytes, never 0 — what the UI holds
-        uint32_t sentMs;
-        uint8_t  count;
-        uint8_t  lastHops[8]; // first byte of each repeater heard
-        bool     active;
+        uint8_t     hash[MAX_HASH_SIZE];
+        uint32_t    id;          // first 4 hash bytes, never 0 — what the UI holds
+        uint32_t    sentMs;
+        uint8_t     count;
+        ops::FloodRepeat reps[8]; // each repeater heard (last hop + signal)
+        bool        active;
     };
-    OwnFlood _own[OWN_FLOODS] = {};
+    OwnFlood (&_own)[OWN_FLOODS] = ops::psram::array<OwnFlood[OWN_FLOODS]>();
     int      _ownNext        = 0;
     uint32_t _lastFloodId    = 0;
     struct FloodEvent { uint32_t id; uint8_t count; };
@@ -1077,7 +1079,7 @@ class OMSMesh : public BaseChatMesh {
     }
 
     // A frame heard: is it a repeater re-sending one of our channel floods?
-    void _checkOwnFloodEcho(const uint8_t raw[], int len) {
+    void _checkOwnFloodEcho(const uint8_t raw[], int len, float snr, float rssi) {
         bool any = false;
         for (const OwnFlood& o : _own) if (o.active) { any = true; break; }
         if (!any) return;
@@ -1091,9 +1093,19 @@ class OMSMesh : public BaseChatMesh {
         for (OwnFlood& o : _own) {
             if (!o.active || memcmp(o.hash, h, MAX_HASH_SIZE) != 0) continue;
             uint8_t hashSz = (pkt.path_len >> 6) + 1;
-            uint8_t last   = pkt.path[(hops - 1) * hashSz];
-            for (int k = 0; k < o.count && k < 8; k++) if (o.lastHops[k] == last) return;
-            if (o.count < 8) o.lastHops[o.count] = last;
+            if (hashSz > 3) hashSz = 3;
+            const uint8_t* lastHop = &pkt.path[(hops - 1) * hashSz];
+            uint8_t last = lastHop[0];
+            for (int k = 0; k < o.count && k < 8; k++)
+                if (memcmp(o.reps[k].hash, lastHop, hashSz) == 0) return;
+            if (o.count < 8) {
+                ops::FloodRepeat& r = o.reps[o.count];
+                memcpy(r.hash, lastHop, hashSz);
+                r.hashSz = hashSz;
+                r.rssi   = (int16_t)rssi;
+                float s4 = snr * 4.0f;
+                r.snrX4  = (int8_t)(s4 > 127 ? 127 : s4 < -128 ? -128 : s4);
+            }
             if (o.count < 255) o.count++;
             _pushFloodEvent(o.id, o.count);
             OPS_LOG("Mesh", "Channel msg %08X repeated x%u (via %02X)", o.id, o.count, last);
@@ -1116,6 +1128,17 @@ public:
         }
     }
     uint32_t lastChannelFloodId() const { return _lastFloodId; }
+    int floodRepeats(uint32_t id, ops::FloodRepeat* out, int max) const {
+        if (id == 0) return -1;
+        for (const OwnFlood& o : _own) {
+            if (o.id != id) continue;
+            int n = o.count < 8 ? o.count : 8;
+            if (n > max) n = max;
+            for (int i = 0; i < n; i++) out[i] = o.reps[i];
+            return n;
+        }
+        return -1;
+    }
     bool pollFloodRepeat(uint32_t& id, uint8_t& count) {
         if (_floodQCount == 0) return false;
         id    = _floodQ[_floodQHead].id;
@@ -1129,7 +1152,7 @@ private:
     // Fires for every received frame, before parsing — raw bytes as they came
     // off the radio. Also buffered for ScreenPcap while a capture runs.
     void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override {
-        if (len > 0) _checkOwnFloodEcho(raw, len);
+        if (len > 0) _checkOwnFloodEcho(raw, len, snr, rssi);
         if (!_pcapCaptureEnabled || len <= 0) return;
         if (_pcapCount >= PCAP_QUEUE_SIZE) return;  // drop — screen isn't draining fast enough
         CapturedPacket& p = _pcapBuf[_pcapTail];
@@ -3818,6 +3841,10 @@ uint32_t MeshService::lastChannelFloodId() const {
 
 bool MeshService::pollFloodRepeat(uint32_t& id, uint8_t& count) {
     return _initialized && the_mesh.pollFloodRepeat(id, count);
+}
+
+int MeshService::floodRepeats(uint32_t id, FloodRepeat* out, int max) const {
+    return _initialized ? the_mesh.floodRepeats(id, out, max) : -1;
 }
 
 uint32_t MeshService::lastExpectedAck() const {

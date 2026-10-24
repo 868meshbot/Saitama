@@ -168,6 +168,7 @@ private:
     static void _onDMPickerRow     (lv_event_t* e);
     static void _onDMPickerClose   (lv_event_t* e);
     static void _onBubbleClick      (lv_event_t* e);
+    static void _onSentBubbleClick  (lv_event_t* e);
     static void _onBubbleReply      (lv_event_t* e);
     static void _onBubbleAddContact (lv_event_t* e);
     static void _onBubbleShowPath   (lv_event_t* e);
