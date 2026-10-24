@@ -200,6 +200,11 @@ EMOJI = [
     ("moon",          0x1F319, "1f319", "crescent moon night"),
     ("droplet",       0x1F4A7, "1f4a7", "droplet water drop humidity"),
     ("timer_clock",   0x023F2, "23f2",  "timer clock gauge dial pressure"),
+    ("monkey",        0x1F412, "1f412", "monkey ape animal"),
+    ("tropical_fish", 0x1F420, "1f420", "tropical fish sea animal"),
+    ("rat",           0x1F400, "1f400", "rat mouse rodent animal"),
+    ("mushroom",      0x1F344, "1f344", "mushroom fungus toadstool"),
+    ("pool_8_ball",   0x1F3B1, "1f3b1", "8 ball pool billiards game"),
 ]
 
 # Deduplicate by codepoint — keep first occurrence

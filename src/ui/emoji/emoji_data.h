@@ -183,6 +183,11 @@ extern const lv_img_dsc_t emoji_france;
 extern const lv_img_dsc_t emoji_moon;
 extern const lv_img_dsc_t emoji_droplet;
 extern const lv_img_dsc_t emoji_timer_clock;
+extern const lv_img_dsc_t emoji_monkey;
+extern const lv_img_dsc_t emoji_tropical_fish;
+extern const lv_img_dsc_t emoji_rat;
+extern const lv_img_dsc_t emoji_mushroom;
+extern const lv_img_dsc_t emoji_pool_8_ball;
 
 #ifdef __cplusplus
 }
@@ -365,5 +370,10 @@ static const OpsEmojiEntry kOpsEmoji[] = {
     { 0x1F319u, &emoji_moon, "crescent moon night" },
     { 0x1F4A7u, &emoji_droplet, "droplet water drop humidity" },
     { 0x023F2u, &emoji_timer_clock, "timer clock gauge dial pressure" },
+    { 0x1F412u, &emoji_monkey, "monkey ape animal" },
+    { 0x1F420u, &emoji_tropical_fish, "tropical fish sea animal" },
+    { 0x1F400u, &emoji_rat, "rat mouse rodent animal" },
+    { 0x1F344u, &emoji_mushroom, "mushroom fungus toadstool" },
+    { 0x1F3B1u, &emoji_pool_8_ball, "8 ball pool billiards game" },
 };
-static const int kOpsEmojiCount = 174;
+static const int kOpsEmojiCount = 179;
