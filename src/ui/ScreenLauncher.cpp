@@ -1227,13 +1227,22 @@ void ScreenLauncher::refreshBattery(int percent, bool charging) {
     if (charging) {
         sym = LV_SYMBOL_CHARGE;
         col = theme::GREEN;
-    } else if (percent >= 75) { sym = LV_SYMBOL_BATTERY_FULL;  col = theme::GREEN;  }
-    else if   (percent >= 50) { sym = LV_SYMBOL_BATTERY_3;     col = theme::GREEN;  }
-    else if   (percent >= 25) { sym = LV_SYMBOL_BATTERY_2;     col = theme::ORANGE; }
-    else if   (percent >=  5) { sym = LV_SYMBOL_BATTERY_1;     col = theme::ORANGE; }
-    else                      { sym = LV_SYMBOL_BATTERY_EMPTY; col = theme::RED;    }
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%s %d%%", sym, percent);
+    } else {
+        // Green above 60 %, orange 30-60 %, red below 30 %.
+        if      (percent >= 75) sym = LV_SYMBOL_BATTERY_FULL;
+        else if (percent >= 50) sym = LV_SYMBOL_BATTERY_3;
+        else if (percent >= 25) sym = LV_SYMBOL_BATTERY_2;
+        else if (percent >=  5) sym = LV_SYMBOL_BATTERY_1;
+        else                    sym = LV_SYMBOL_BATTERY_EMPTY;
+        col = (percent > 60) ? theme::GREEN
+            : (percent >= 30) ? theme::ORANGE : theme::RED;
+    }
+    char buf[32];
+    if (charging)   // yellow bolt, percentage in the label colour
+        snprintf(buf, sizeof(buf), "#FFD60A %s# %d%%", sym, percent);
+    else
+        snprintf(buf, sizeof(buf), "%s %d%%", sym, percent);
+    lv_label_set_recolor(_battLbl, true);
     lv_label_set_text(_battLbl, buf);
     lv_obj_set_style_text_color(_battLbl, col, 0);
 }
@@ -1258,7 +1267,7 @@ void ScreenLauncher::refreshStatus(uint8_t gpsMode, bool hasFix, int satellites)
             snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "%d", satellites);
         else
             snprintf(buf, sizeof(buf), LV_SYMBOL_GPS "--");
-        col = hasFix ? theme::GREEN : theme::TEXT_MUTED;
+        col = hasFix ? theme::GREEN : theme::ACCENT;
     }
     lv_label_set_text(_satLbl, buf);
     lv_obj_set_style_text_color(_satLbl, col, 0);
@@ -1275,7 +1284,7 @@ void ScreenLauncher::refreshRadio(bool initialized, bool active)
     lv_obj_clear_flag(_radioLbl, LV_OBJ_FLAG_HIDDEN);
     if (active) {
         lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " RX");
-        lv_obj_set_style_text_color(_radioLbl, theme::GREEN, 0);
+        lv_obj_set_style_text_color(_radioLbl, theme::ACCENT, 0);
     } else {
         lv_label_set_text(_radioLbl, LV_SYMBOL_WIFI " Off");
         lv_obj_set_style_text_color(_radioLbl, theme::TEXT_MUTED, 0);
@@ -1288,7 +1297,7 @@ void ScreenLauncher::refreshSpeaker(bool enabled)
     if (!_speakerLbl) return;
     if (enabled) {
         lv_label_set_text(_speakerLbl, LV_SYMBOL_VOLUME_MAX);
-        lv_obj_set_style_text_color(_speakerLbl, theme::GREEN, 0);
+        lv_obj_set_style_text_color(_speakerLbl, theme::ACCENT, 0);
     } else {
         lv_label_set_text(_speakerLbl, LV_SYMBOL_MUTE);
         lv_obj_set_style_text_color(_speakerLbl, theme::RED, 0);

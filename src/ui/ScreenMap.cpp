@@ -70,8 +70,10 @@ static void _repositionLabels();
 
 // ── File-scope state ──────────────────────────────────────────────────
 static MapRenderer s_renderer;
-static uint16_t    s_markerIds[64];
-static NameLabel   (&s_nameLabels)[64] = ops::psram::array<NameLabel[64]>();
+// Self is always marker 0, so 99 others fit.
+static constexpr int kMaxMarkers = 100;
+static uint16_t    s_markerIds[kMaxMarkers];
+static NameLabel   (&s_nameLabels)[kMaxMarkers] = ops::psram::array<NameLabel[kMaxMarkers]>();
 static int         s_markerCount = 0;
 
 // ── Static member definitions ─────────────────────────────────────────
@@ -430,7 +432,7 @@ void ScreenMap::_refreshMarkers()
 
     auto addMark = [&](double lat, double lon, uint32_t col, const char* name)
     {
-        if ((lat == 0.0 && lon == 0.0) || s_markerCount >= 64) return;
+        if ((lat == 0.0 && lon == 0.0) || s_markerCount >= kMaxMarkers) return;
         int idx = s_markerCount;
         char lbl = (name && name[0]) ? name[0] : '?';
         s_markerIds[idx] = ml->add(Marker(GeoPoint(lat, lon), 10, col, lbl));
@@ -452,6 +454,19 @@ void ScreenMap::_refreshMarkers()
         s_nameLabels[idx] = { nlbl, lat, lon };
         s_markerCount++;
     };
+
+    // Self position first so it always gets a slot (kMaxMarkers); added
+    // last, long contact/repeater lists used to push our own dot off.
+    {
+        auto& b = Board::instance();
+        double slat = 0.0, slng = 0.0;
+        if (b.hasGPSFix()) { slat = b.gpsLat(); slng = b.gpsLng(); }
+        else {
+            const auto& cfg = ops::config::get();
+            slat = cfg.manualLat; slng = cfg.manualLon;
+        }
+        addMark(slat, slng, colSelf, ops::config::get().callsign);
+    }
 
     // Saved repeaters
     for (int i = 0; i < ops::repeaters::count(); i++) {
@@ -478,18 +493,6 @@ void ScreenMap::_refreshMarkers()
         if (p.type != 2 && ops::contacts::findByKey(p.pubKeyPrefix, &dummy)) continue;
         addMark((double)p.lat / 1e6, (double)p.lon / 1e6,
                 p.type == 2 ? colRepeater : colContact, p.name);
-    }
-
-    // Self position
-    {
-        auto& b = Board::instance();
-        double slat = 0.0, slng = 0.0;
-        if (b.hasGPSFix()) { slat = b.gpsLat(); slng = b.gpsLng(); }
-        else {
-            const auto& cfg = ops::config::get();
-            slat = cfg.manualLat; slng = cfg.manualLon;
-        }
-        addMark(slat, slng, colSelf, ops::config::get().callsign);
     }
 }
 
