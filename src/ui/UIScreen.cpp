@@ -25,6 +25,7 @@
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
 #include "Screen2048.h"
+#include "ScreenSnake.h"
 #include "ScreenPcap.h"
 #include "ScreenFoxhunt.h"
 #include "Theme.h"
@@ -784,6 +785,9 @@ void tick() {
             if (dx || dy) ScreenChanScan::navigate(dx, dy);
         } else if (Screen2048::isActive()) {
             if (dx || dy) Screen2048::navigate(dx, dy);
+        } else if (ScreenSnake::isActive()) {
+            if (dx || dy) ScreenSnake::navigate(dx, dy);
+            if (tbPress) ScreenSnake::press();
         } else if (ScreenFoxhunt::isActive()) {
             int ndy = (dy > 0) ? 1 : (dy < 0) ? -1 : 0;
             if (ndy) ScreenFoxhunt::navigate(0, ndy);

@@ -38,7 +38,7 @@ Saitama is a community project. Development tooling includes AI coding assistant
 - **Contacts, Repeaters & Heard**: contact and repeater directories with saved routes, repeater admin login (optional remembered password), path set/reset, and a live list of every station heard.
 - **Network tools**: Finder (zero-hop neighbour scan), hop-by-hop Trace, Signal (RSSI/SNR/noise, airtime), channel scan, spectrum, PCAP capture, signal generator, BT foxhunt.
 - **GPS Map**: offline tile map from the SD card with node positions.
-- **Media & extras**: MP3 player, picture viewer, file manager, terminal, 2048.
+- **Media & extras**: MP3 player, picture viewer, file manager, terminal, 2048, Snake.
 - **Power**: CPU governor, screensaver and screen-off with radio light sleep, LoRa duty cycle or FHSS, RX boost, power estimates.
 - **BLE Companion**: works with the MeshCore mobile apps over Bluetooth, paired with a per-device PIN.
 - **Backup**: settings, contacts, repeaters and the node identity are mirrored to `/ops/` on the SD card and restored after a reflash.
@@ -146,7 +146,7 @@ Saitama/
 │   │   └── BTCompanionService.h/cpp  # BLE companion transport (MeshCore apps)
 │   ├── map/
 │   │   └── MapEngine.h/cpp       # Offline tile renderer
-│   ├── games/                    # Game logic: 2048, tic-tac-toe
+│   ├── games/                    # Game logic: 2048, tic-tac-toe, snake
 │   ├── ui/
 │   │   ├── UIScreen.h/cpp        # LVGL init, input drivers, main UI tick, screensaver, notifications
 │   │   ├── ScreenBoot            # Splash screen
@@ -165,7 +165,7 @@ Saitama/
 │   │   ├── ScreenPower           # Battery history and power estimates
 │   │   ├── ScreenSpectrum, ScreenChanScan, ScreenSigGen, ScreenPcap, ScreenFoxhunt  # Radio tools
 │   │   ├── ScreenMP3Player, ScreenPicViewer, ScreenFileManager                    # Media and files
-│   │   ├── Screen2048, ScreenZeroXZero                                           # Games
+│   │   ├── Screen2048, ScreenSnake, ScreenZeroXZero                                       # Games
 │   │   ├── ScreenPlaceholder     # GPS skyplot
 │   │   ├── ScopePicker           # Shared region-scope dropdown
 │   │   ├── ListFilter            # Type-to-filter box for lists

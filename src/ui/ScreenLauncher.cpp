@@ -23,6 +23,7 @@
 #include "ScreenPower.h"
 #include "ScreenZeroXZero.h"
 #include "Screen2048.h"
+#include "ScreenSnake.h"
 #include "ScreenPcap.h"
 #include "ScreenFoxhunt.h"
 #include "ScreenPicViewer.h"
@@ -201,7 +202,7 @@ static const AppItem kApps2[] = {
     { LV_SYMBOL_LIST,      "Trace"    },
     { LV_SYMBOL_TINT,      "SigGen"   },  // row 1
     { LV_SYMBOL_BATTERY_3, "Power"    },
-    { LV_SYMBOL_EDIT,      "0x0"      },
+    { LV_SYMBOL_RIGHT,     "Snake"    },
     { LV_SYMBOL_SHUFFLE,   "2048"     },
     { "\xF0\x9F\x94\x8D",   "PCAP"     },  // row 2 - magnifier emoji
     { "\xF0\x9F\xA6\x8A",   "BT Foxhunt" },  // fox emoji
@@ -1680,6 +1681,7 @@ void ScreenLauncher::_onIconClick(lv_event_t* e) {
     else if (strcmp(name, "Power")     == 0) { ScreenPower::show();          return; }
     else if (strcmp(name, "0x0")       == 0) { ScreenZeroXZero::show();  return; }
     else if (strcmp(name, "2048")      == 0) { Screen2048::show();       return; }
+    else if (strcmp(name, "Snake")     == 0) { ScreenSnake::show();      return; }
     else if (strcmp(name, "PCAP")      == 0) { ScreenPcap::show();       return; }
     else if (strcmp(name, "BT Foxhunt") == 0) { ScreenFoxhunt::show();   return; }
     else if (strcmp(name, "Pic Viewer") == 0) { ScreenPicViewer::show(); return; }
