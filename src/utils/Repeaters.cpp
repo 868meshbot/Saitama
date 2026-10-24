@@ -281,14 +281,24 @@ void repeaters::add(const Repeater& r)
         // A live advert arrives as a freshly built struct, so anything the
         // user set locally has to be carried across by hand or the next
         // advert silently wipes it.
-        bool    fav   = s_reps[idx].favourite;
-        bool    hasPw = s_reps[idx].hasAdminPw;
-        uint8_t pwEnc[crypto::BLOB_LEN];
-        memcpy(pwEnc, s_reps[idx].adminPwEnc, sizeof(pwEnc));
+        // That includes the stored route and position: Heard > Update
+        // builds a struct with neither and used to erase both.
+        Repeater old = s_reps[idx];
         s_reps[idx] = r;
-        s_reps[idx].favourite  = fav;
-        s_reps[idx].hasAdminPw = hasPw;
-        memcpy(s_reps[idx].adminPwEnc, pwEnc, sizeof(pwEnc));
+        Repeater& n = s_reps[idx];
+        n.favourite  = old.favourite;
+        n.hasAdminPw = old.hasAdminPw;
+        memcpy(n.adminPwEnc, old.adminPwEnc, sizeof(n.adminPwEnc));
+        if (!r.outPathValid) {
+            n.outPathValid = old.outPathValid;
+            n.outPathLen   = old.outPathLen;
+            memcpy(n.outPath, old.outPath, sizeof(n.outPath));
+            n.pathAt       = old.pathAt;
+        }
+        if (r.lat == 0 && r.lon == 0) { n.lat = old.lat; n.lon = old.lon; }
+        static const uint8_t kZeroKey[32] = {};
+        if (memcmp(r.pubKey, kZeroKey, 32) == 0) memcpy(n.pubKey, old.pubKey, 32);
+        if (!r.name[0]) memcpy(n.name, old.name, sizeof(n.name));
         OPS_LOG("Repeaters", "Updated: %s", r.name);
     } else if (s_count < CAPACITY) {
         s_reps[s_count++] = r;

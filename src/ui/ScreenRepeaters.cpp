@@ -1250,6 +1250,10 @@ static const lv_font_t* _adminRespFont()
 
 // Set by Status / Neighbours (which clear the pane): keep the pane at the top.
 static bool s_respFromTop = false;
+// The pane is showing CLI replies (Clock sync / Send advert). While it shows
+// Status or Neighbours, CLI replies are left out: late answers to a closed
+// Regions / Access / Password window used to land there.
+static bool s_respWantCli = false;
 
 // ── Admin actions (dropdown on the panel; Open runs the selected one) ──
 static void _actAccess(lv_event_t*)   { repadmin::openAccess(ScreenRepeaters::adminPrefix(), ScreenRepeaters::adminName()); }
@@ -1283,6 +1287,7 @@ void ScreenRepeaters::_showAdminPanel()
 {
     // Reset response buffer
     s_adminRespBuf[0] = '\0';
+    s_respWantCli = false;
 
     s_adminScreen = lv_obj_create(nullptr);
     lv_obj_set_size(s_adminScreen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -1430,6 +1435,7 @@ void ScreenRepeaters::_onAdminStatus(lv_event_t* /*e*/)
     s_lastStatusMs = now;
 
     s_adminRespBuf[0] = '\0';
+    s_respWantCli = false;
     if (s_adminRespLbl) {
         s_respFromTop = true;
         lv_label_set_text(s_adminRespLbl, "Querying...");
@@ -1449,6 +1455,7 @@ void ScreenRepeaters::_onAdminClockSync(lv_event_t* /*e*/)
     s_lastStatusMs = now;
     // "clock sync" tells the repeater to adopt sender_timestamp (our current time).
     s_respFromTop = false;   // the reply is appended below
+    s_respWantCli = true;
     bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "clock sync");
     OPS_LOG("Admin", "Clock sync %s to %s", ok ? "sent" : "FAILED", s_adminName);
 }
@@ -1460,6 +1467,7 @@ void ScreenRepeaters::_onAdminAdvert(lv_event_t* /*e*/)
     if (now - s_lastStatusMs < 2000) return;
     s_lastStatusMs = now;
     s_respFromTop = false;
+    s_respWantCli = true;
     bool ok = ops::MeshService::instance().sendAdminCommand(s_adminPrefix, "advert");
     OPS_LOG("Admin", "Advert cmd %s to %s", ok ? "sent" : "FAILED", s_adminName);
 }
@@ -1472,6 +1480,7 @@ void ScreenRepeaters::_onAdminNbrs(lv_event_t* /*e*/)
     s_lastStatusMs = now;
 
     s_adminRespBuf[0] = '\0';
+    s_respWantCli = false;
     if (s_adminRespLbl) {
         s_respFromTop = true;
         lv_label_set_text(s_adminRespLbl, "Querying neighbours...");
@@ -1775,7 +1784,7 @@ static void _fmtAdminLine(const char* text, char* out, size_t max)
 }
 
 // ── onContactResponse() — append to admin panel if open ───────────────
-void ScreenRepeaters::onContactResponse(const char* line)
+void ScreenRepeaters::onContactResponse(const char* line, bool isCli)
 {
     if (!s_adminRespLbl) return;
 
@@ -1784,9 +1793,11 @@ void ScreenRepeaters::onContactResponse(const char* line)
     const char* bracket = strstr(line, "] ");
     if (bracket) raw = bracket + 2;
 
-    // An open Access / Password / Regions window takes its replies; the
-    // access-list lines are only for that window.
-    if (repadmin::onResponse(raw) && strncmp(raw, "ACL ", 4) == 0) return;
+    // An open Access / Password / Regions window takes its replies, and they
+    // stay out of the pane; so do stray CLI replies while it shows a query.
+    if (repadmin::onResponse(raw)) return;
+    if (isCli && !s_respWantCli) return;
+    if (strncmp(raw, "ACL ", 4) == 0) return;   // late access list, window gone
 
     char text[320];
     _fmtAdminLine(raw, text, sizeof(text));

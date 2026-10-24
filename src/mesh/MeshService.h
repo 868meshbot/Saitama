@@ -267,7 +267,8 @@ public:
     // then "ACL end <n>", through pollContactResponse().
     bool sendRepeaterAclReq(const uint8_t* prefix4);
     // Returns true (once per response) when a contact response line is waiting.
-    bool pollContactResponse(char* out, int outMax);
+    // isCli (optional) is set when the line is a reply to an admin CLI command.
+    bool pollContactResponse(char* out, int outMax, bool* isCli = nullptr);
     // Returns true (once) when a login attempt result is ready; ok=true on success.
     bool pollLoginResult(bool& ok);
 

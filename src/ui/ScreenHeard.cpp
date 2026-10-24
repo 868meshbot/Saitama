@@ -475,6 +475,8 @@ void ScreenHeard::_onSaveRepConfirm(lv_event_t *e) {
     memcpy(r.pubKey, peer.pubKey, 32);
     r.lastSeen = peer.lastSeen;
     r.lastRssi = peer.lastRssi;
+    r.lat = peer.lat;   // 0/0 keeps the stored position
+    r.lon = peer.lon;
     repeaters::add(r);
     OPS_LOG("Heard", "Saved repeater: %s", peer.name);
   }

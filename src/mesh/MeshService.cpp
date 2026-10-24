@@ -365,6 +365,7 @@ class OMSMesh : public BaseChatMesh {
     static constexpr int RESP_QUEUE_SIZE = 24;
     char (&_respBuf)[RESP_QUEUE_SIZE][132] =
         ops::psram::array<char[RESP_QUEUE_SIZE][132]>();
+    bool _respCli[RESP_QUEUE_SIZE] = {};   // line is an admin CLI reply
     int  _respHead  = 0;
     int  _respTail  = 0;
     int  _respCount = 0;
@@ -405,11 +406,12 @@ class OMSMesh : public BaseChatMesh {
     int         _contactIterIdx    = 0;
     uint32_t    _contactIterLastmod = 0;
 
-    void _enqueueResp(const char* text)
+    void _enqueueResp(const char* text, bool cli = false)
     {
         if (_respCount >= RESP_QUEUE_SIZE) return;
         strncpy(_respBuf[_respTail], text, 131);
         _respBuf[_respTail][131] = '\0';
+        _respCli[_respTail] = cli;
         _respTail = (_respTail + 1) % RESP_QUEUE_SIZE;
         _respCount++;
     }
@@ -1343,7 +1345,7 @@ private:
             if (n > 0 && p[n - 1] == '\r') n--;
             if (n > 0) {
                 snprintf(buf, sizeof(buf), "[%s] %.*s", from.name, n, p);
-                _enqueueResp(buf);
+                _enqueueResp(buf, true);
             }
             if (!nl) break;
             p = nl + 1;
@@ -1993,10 +1995,11 @@ public:
         return true;
     }
 
-    bool dequeueResp(char* out, int outMax) {
+    bool dequeueResp(char* out, int outMax, bool* isCli) {
         if (_respCount == 0) return false;
         strncpy(out, _respBuf[_respHead], outMax - 1);
         out[outMax - 1] = '\0';
+        if (isCli) *isCli = _respCli[_respHead];
         _respHead = (_respHead + 1) % RESP_QUEUE_SIZE;
         _respCount--;
         return true;
@@ -3845,8 +3848,8 @@ bool MeshService::sendRepeaterNeighboursReq(const uint8_t* prefix4) {
     return _initialized && the_mesh.sendSingleRepeaterNeighbours(prefix4);
 }
 
-bool MeshService::pollContactResponse(char* out, int outMax) {
-    return _initialized && the_mesh.dequeueResp(out, outMax);
+bool MeshService::pollContactResponse(char* out, int outMax, bool* isCli) {
+    return _initialized && the_mesh.dequeueResp(out, outMax, isCli);
 }
 
 bool MeshService::pollLoginResult(bool& ok) {

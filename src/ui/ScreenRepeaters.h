@@ -20,7 +20,8 @@ public:
 
     // Called from UIScreen::tick() for every incoming contact response line.
     // Appends to the admin panel response area when the panel is open.
-    static void onContactResponse(const char* line);
+    // isCli: the line answers an admin CLI command (not Status/Neighbours).
+    static void onContactResponse(const char* line, bool isCli = false);
 
     // Current admin target (for the RepeaterAdminTools windows).
     static const uint8_t* adminPrefix() { return s_adminPrefix; }

@@ -1052,9 +1052,10 @@ void tick() {
     // Drain async contact responses → terminal + repeater admin panel (if open).
     {
         char respLine[132];
-        while (ops::MeshService::instance().pollContactResponse(respLine, sizeof(respLine))) {
+        bool respCli = false;
+        while (ops::MeshService::instance().pollContactResponse(respLine, sizeof(respLine), &respCli)) {
             ScreenTerminal::appendLine(respLine);
-            ScreenRepeaters::onContactResponse(respLine);
+            ScreenRepeaters::onContactResponse(respLine, respCli);
         }
     }
 
