@@ -44,6 +44,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <esp_heap_caps.h>
+#include <driver/rtc_io.h>
 #include <Wire.h>
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -225,11 +226,20 @@ static void _shutdownNow()
     uint32_t t0 = millis();
     while (digitalRead(GPIO_NUM_0) == LOW && millis() - t0 < 3000) delay(10);
 
+    // GPIO10 is an RTC pad, so gpio_hold_en() alone keeps it low in deep
+    // sleep. No gpio_deep_sleep_hold_en(): that froze every pad, the wake
+    // pin included.
     digitalWrite(GPIO_NUM_10, LOW);
     gpio_hold_en(GPIO_NUM_10);
-    gpio_deep_sleep_hold_en();
 
+    // Keep the trackball button pulled up through sleep so a click (low)
+    // is a clean edge rather than a floating pin.
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    rtc_gpio_init(GPIO_NUM_0);
+    rtc_gpio_set_direction(GPIO_NUM_0, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(GPIO_NUM_0);
+    rtc_gpio_pulldown_dis(GPIO_NUM_0);
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
     esp_deep_sleep_start();
 }

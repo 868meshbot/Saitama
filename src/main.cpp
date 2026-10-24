@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <nvs.h>
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
 #include "version.h"
 #include "hardware/Board.h"
 #include "mesh/MeshService.h"
@@ -31,6 +32,9 @@ void setup() {
     // through deep sleep; release it before Board::init() drives it high.
     gpio_deep_sleep_hold_dis();
     gpio_hold_dis(GPIO_NUM_10);
+    // ...and hand the trackball button (the wake pin) back to the digital
+    // GPIO matrix, or the trackball click stays dead after the wake.
+    rtc_gpio_deinit(GPIO_NUM_0);
 
     // Must precede begin(): HWCDC only creates its TX ring (default 256 B) if
     // none exists. With the zero timeout below, any burst larger than the
