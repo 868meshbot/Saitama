@@ -123,6 +123,8 @@ struct Config {
     // Log lines and the terminal echo on the USB serial port (Settings >
     // Serial Output); default on. Mirrored into ops::log::g_serialOn.
     bool       serialLog;
+    // Cardputer launcher: 0 = Menu (list, default), 1 = Carousel.
+    uint8_t    launcherStyle;
 };
 
 // Values for Config::radioPowerMode.

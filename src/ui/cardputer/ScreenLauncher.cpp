@@ -13,6 +13,19 @@
 //  │ ☰ Contacts                           │  rows 17 px
 //  │ ...                                  │
 //  └──────────────────────────────────────┘  y = 135
+//
+// The carousel (config launcherStyle 1, the default; Settings > Launcher
+// = Menu brings back the list) shows one big icon with its neighbours;
+// Left/Right move, wrapping round:
+//
+//  ├──────────────────────────────────────┤
+//  │            ╭────────╮                │
+//  │    ⚙       │   ✉    │       ☰        │  neighbours 20 pt, centre 36 pt
+//  │ Settings   ╰────────╯   Contacts     │
+//  │                Chat                  │  name 16 pt
+//  │           New messages               │  subtitle
+//  │        ○ ● ○ ○ ○ ○ ○ ○ ○ ○           │  position dots
+//  └──────────────────────────────────────┘
 
 #include "../ScreenLauncher.h"
 #include "../ScreenHome.h"
@@ -31,8 +44,11 @@
 #include "../../hardware/Board.h"
 #include "../../utils/Config.h"
 #include "../../utils/Contacts.h"
+#include "../../utils/Repeaters.h"
+#include "../../mesh/MeshService.h"
 #include "../../utils/Log.h"
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 namespace ops { namespace ui {
@@ -64,13 +80,203 @@ static const App kApps[] = {
 };
 static constexpr int APP_COUNT = sizeof(kApps) / sizeof(kApps[0]);
 
+static lv_obj_t* s_body = nullptr;         // the list or the carousel
+static int       s_builtStyle = -1;        // launcherStyle s_body was built for
 static lv_obj_t* s_list = nullptr;
 static lv_obj_t* s_rows[APP_COUNT] = {};
 static lv_obj_t* s_unreadDot = nullptr;    // on the Chat row
 static int       s_sel = 0;
 
+// ── Carousel ────────────────────────────────────────────────────────
+// Five slots: the centre, its two neighbours, and one more off each edge
+// that slides in. The slots are reused and re-labelled as the selection
+// moves; only their x changes during the slide. No transform zoom (it
+// needs a layer buffer there is no RAM for): the centre is a bigger font.
+static constexpr int CAR_SLOTS = 5;
+static constexpr int CAR_MID   = CAR_SLOTS / 2;
+static constexpr int CAR_STEP  = 80;       // px between slot centres
+static constexpr int SLOT_W    = 76;
+static constexpr int SLOT_H    = 60;
+static constexpr int TILE_W    = 64;
+static constexpr int TILE_H    = 58;
+static constexpr int ANIM_MS   = 150;
+
+static lv_obj_t* s_slot[CAR_SLOTS]     = {};
+static lv_obj_t* s_slotIcon[CAR_SLOTS] = {};
+static lv_obj_t* s_slotName[CAR_SLOTS] = {};
+static lv_obj_t* s_carName = nullptr;
+static lv_obj_t* s_carSub  = nullptr;
+static lv_obj_t* s_dots[APP_COUNT] = {};
+static int32_t   s_carOffset = 0;
+
+static bool _carousel() { return s_builtStyle == 1; }
+static int  _wrap(int i) { return ((i % APP_COUNT) + APP_COUNT) % APP_COUNT; }
+
+static void _placeSlots()
+{
+    for (int k = 0; k < CAR_SLOTS; k++) {
+        if (!s_slot[k]) continue;
+        int cx = OPS_SCREEN_W / 2 + (k - CAR_MID) * CAR_STEP + (int)s_carOffset;
+        lv_obj_set_x(s_slot[k], (lv_coord_t)(cx - SLOT_W / 2));
+    }
+}
+
+// One line under the app name: something live where it is cheap to get.
+static void _subtitle(int i, char* buf, size_t n)
+{
+    const char* name = kApps[i].name;
+    if (!strcmp(name, "Chat")) {
+        if (contacts::anyUnread()) snprintf(buf, n, "#FF453A " LV_SYMBOL_BULLET "# New messages");
+        else                       snprintf(buf, n, "Channels and DMs");
+    } else if (!strcmp(name, "Contacts")) {
+        snprintf(buf, n, "%d saved", contacts::count());
+    } else if (!strcmp(name, "Repeaters")) {
+        snprintf(buf, n, "%d known", repeaters::count());
+    } else if (!strcmp(name, "Heard")) {
+        snprintf(buf, n, "%d heard this session", MeshService::instance().peerCount());
+    } else if (!strcmp(name, "Finder")) {
+        snprintf(buf, n, "Find a node");
+    } else if (!strcmp(name, "Regions")) {
+        const char* sc = config::get().scopeTag;
+        if (sc[0]) snprintf(buf, n, "Scope: %s", sc);
+        else       snprintf(buf, n, "No scope");
+    } else if (!strcmp(name, "Signal")) {
+        snprintf(buf, n, "Radio stats");
+    } else if (!strcmp(name, "GPS")) {
+        if (config::get().gpsMode == 0)          snprintf(buf, n, "Off");
+        else if (Board::instance().hasGPSFix())  snprintf(buf, n, "Fix");
+        else                                     snprintf(buf, n, "No fix");
+    } else if (!strcmp(name, "Terminal")) {
+        snprintf(buf, n, "Commands and log");
+    } else {
+        snprintf(buf, n, "Device setup");
+    }
+}
+
+static void _fillCarousel()
+{
+    for (int k = 0; k < CAR_SLOTS; k++) {
+        if (!s_slot[k]) continue;
+        int i = _wrap(s_sel + k - CAR_MID);
+        lv_label_set_text(s_slotIcon[k], kApps[i].icon);
+        lv_label_set_text(s_slotName[k], kApps[i].name);
+    }
+    if (s_carName) lv_label_set_text(s_carName, kApps[s_sel].name);
+    if (s_carSub) {
+        char buf[40];
+        _subtitle(s_sel, buf, sizeof(buf));
+        lv_label_set_text(s_carSub, buf);
+    }
+    for (int i = 0; i < APP_COUNT; i++) {
+        if (!s_dots[i]) continue;
+        lv_obj_set_style_bg_color(s_dots[i], i == s_sel ? theme::ACCENT : theme::BORDER, 0);
+    }
+}
+
+static void _carAnimCb(void* /*var*/, int32_t v)
+{
+    s_carOffset = v;
+    _placeSlots();
+}
+
+static void _carouselMove(int step)
+{
+    s_sel = _wrap(s_sel + step);
+    _fillCarousel();
+    // The new centre was one step to the side: slide everything back in.
+    lv_anim_del(&s_carOffset, _carAnimCb);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, &s_carOffset);
+    lv_anim_set_exec_cb(&a, _carAnimCb);
+    lv_anim_set_values(&a, step * CAR_STEP, 0);
+    lv_anim_set_time(&a, ANIM_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+}
+
+static void _buildCarousel(lv_obj_t* body)
+{
+    static constexpr int BODY_H = OPS_SCREEN_H - 16;
+
+    // Frame behind the centre icon.
+    lv_obj_t* tile = lv_obj_create(body);
+    lv_obj_set_size(tile, TILE_W, TILE_H);
+    lv_obj_set_pos(tile, (OPS_SCREEN_W - TILE_W) / 2, 3);
+    lv_obj_set_style_bg_color(tile, theme::BG_CARD, 0);
+    lv_obj_set_style_border_color(tile, theme::ACCENT, 0);
+    lv_obj_set_style_border_width(tile, 2, 0);
+    lv_obj_set_style_radius(tile, 10, 0);
+    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    for (int k = 0; k < CAR_SLOTS; k++) {
+        bool mid = (k == CAR_MID);
+        lv_obj_t* slot = lv_obj_create(body);
+        s_slot[k] = slot;
+        lv_obj_set_size(slot, SLOT_W, SLOT_H);
+        lv_obj_set_y(slot, 2);
+        lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(slot, 0, 0);
+        lv_obj_set_style_pad_all(slot, 0, 0);
+        lv_obj_set_style_pad_row(slot, 2, 0);
+        lv_obj_clear_flag(slot, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_flex_flow(slot, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(slot, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        s_slotIcon[k] = lv_label_create(slot);
+        lv_obj_set_style_text_font(s_slotIcon[k],
+            mid ? &lv_font_montserrat_36 : &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(s_slotIcon[k], mid ? theme::ACCENT : theme::TEXT_MUTED, 0);
+
+        s_slotName[k] = lv_label_create(slot);
+        lv_obj_set_style_text_font(s_slotName[k], &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(s_slotName[k], theme::TEXT_MUTED, 0);
+        if (mid) lv_obj_add_flag(s_slotName[k], LV_OBJ_FLAG_HIDDEN);   // big name below
+    }
+
+    s_carName = lv_label_create(body);
+    lv_obj_set_width(s_carName, OPS_SCREEN_W);
+    lv_obj_set_pos(s_carName, 0, 64);
+    lv_obj_set_style_text_align(s_carName, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(s_carName, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_carName, theme::TEXT, 0);
+
+    s_carSub = lv_label_create(body);
+    lv_obj_set_width(s_carSub, OPS_SCREEN_W);
+    lv_obj_set_pos(s_carSub, 0, 84);
+    lv_label_set_recolor(s_carSub, true);
+    lv_obj_set_style_text_align(s_carSub, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(s_carSub, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(s_carSub, theme::TEXT_MUTED, 0);
+
+    lv_obj_t* dots = lv_obj_create(body);
+    lv_obj_set_size(dots, OPS_SCREEN_W, 8);
+    lv_obj_set_pos(dots, 0, BODY_H - 13);
+    lv_obj_set_style_bg_opa(dots, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_style_pad_column(dots, 6, 0);
+    lv_obj_clear_flag(dots, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    for (int i = 0; i < APP_COUNT; i++) {
+        lv_obj_t* d = lv_obj_create(dots);
+        s_dots[i] = d;
+        lv_obj_set_size(d, 6, 6);
+        lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(d, 0, 0);
+        lv_obj_set_style_pad_all(d, 0, 0);
+        lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    s_carOffset = 0;
+    _placeSlots();
+    _fillCarousel();
+}
+
 static void _updateHighlight()
 {
+    if (_carousel()) { _fillCarousel(); return; }
     for (int i = 0; i < APP_COUNT; i++) {
         if (!s_rows[i]) continue;
         if (i == s_sel) lv_obj_add_state(s_rows[i], LV_STATE_CHECKED);
@@ -90,7 +296,6 @@ void ScreenLauncher::show()
         lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
 
         _buildTopBar(_screen);
-        _buildGrid(_screen);
         _buildBottomBar(_screen);
 
         refreshClock();
@@ -99,6 +304,8 @@ void ScreenLauncher::show()
         refreshStatus(config::get().gpsMode, b.hasGPSFix(), 0);
         refreshBluetooth(config::get().bluetoothEnabled);
     }
+    if (s_builtStyle != (int)config::get().launcherStyle)
+        _buildGrid(_screen);   // first show, or Settings > Launcher changed
     refreshUnreadDot();
     lv_scr_load(_screen);
     _updateHighlight();
@@ -151,7 +358,32 @@ void ScreenLauncher::_buildTopBar(lv_obj_t* parent)
 // ── App list ────────────────────────────────────────────────────────
 void ScreenLauncher::_buildGrid(lv_obj_t* parent)
 {
+    // Rebuilt when the style changes: drop the old body and its pointers.
+    lv_anim_del(&s_carOffset, _carAnimCb);
+    if (s_body) lv_obj_del(s_body);
+    s_body = nullptr;
+    s_list = nullptr;
+    s_unreadDot = nullptr;
+    s_carName = s_carSub = nullptr;
+    for (int i = 0; i < APP_COUNT; i++) { s_rows[i] = nullptr; s_dots[i] = nullptr; }
+    for (int k = 0; k < CAR_SLOTS; k++) s_slot[k] = s_slotIcon[k] = s_slotName[k] = nullptr;
+    s_builtStyle = config::get().launcherStyle;
+
+    if (_carousel()) {
+        s_body = lv_obj_create(parent);
+        lv_obj_set_size(s_body, OPS_SCREEN_W, OPS_SCREEN_H - BAR_H);
+        lv_obj_align(s_body, LV_ALIGN_TOP_LEFT, 0, BAR_H);
+        lv_obj_set_style_bg_opa(s_body, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(s_body, 0, 0);
+        lv_obj_set_style_radius(s_body, 0, 0);
+        lv_obj_set_style_pad_all(s_body, 0, 0);
+        lv_obj_clear_flag(s_body, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        _buildCarousel(s_body);
+        return;
+    }
+
     s_list = lv_obj_create(parent);
+    s_body = s_list;
     lv_obj_set_size(s_list, OPS_SCREEN_W, OPS_SCREEN_H - BAR_H);
     lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, BAR_H);
     lv_obj_set_style_bg_opa(s_list, LV_OPA_TRANSP, 0);
@@ -223,6 +455,11 @@ bool ScreenLauncher::isActive()
 void ScreenLauncher::navigate(int dx, int dy)
 {
     if (!_screen) return;
+    if (_carousel()) {
+        // Left/Right only; up/down do nothing here.
+        if (dx) _carouselMove(dx > 0 ? 1 : -1);
+        return;
+    }
     int step = dy ? dy : dx;
     int n = s_sel + step;
     s_sel = n < 0 ? 0 : (n >= APP_COUNT ? APP_COUNT - 1 : n);
@@ -231,7 +468,9 @@ void ScreenLauncher::navigate(int dx, int dy)
 
 void ScreenLauncher::confirmSelect()
 {
-    if (_screen && s_rows[s_sel]) lv_event_send(s_rows[s_sel], LV_EVENT_CLICKED, nullptr);
+    if (!_screen) return;
+    if (_carousel()) { kApps[s_sel].open(); return; }
+    if (s_rows[s_sel]) lv_event_send(s_rows[s_sel], LV_EVENT_CLICKED, nullptr);
 }
 
 // ── Status refreshes ────────────────────────────────────────────────
@@ -310,6 +549,7 @@ void ScreenLauncher::refreshBluetooth(bool enabled)
 
 void ScreenLauncher::refreshUnreadDot()
 {
+    if (_carousel()) { if (s_carSub) _fillCarousel(); return; }
     if (!s_unreadDot) return;
     if (contacts::anyUnread()) lv_obj_clear_flag(s_unreadDot, LV_OBJ_FLAG_HIDDEN);
     else                       lv_obj_add_flag(s_unreadDot, LV_OBJ_FLAG_HIDDEN);

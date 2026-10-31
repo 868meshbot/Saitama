@@ -83,6 +83,7 @@ static void setDefaults(Config& c) {
     c.kbAutoStartMin   = 21 * 60;
     c.kbAutoEndMin     = 7 * 60;
     c.serialLog        = true;
+    c.launcherStyle    = OPS_LAUNCHER_DEFAULT;
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -166,6 +167,7 @@ static void _saveToSD() {
     doc["kbAutoStart"]  = s_cfg.kbAutoStartMin;
     doc["kbAutoEnd"]    = s_cfg.kbAutoEndMin;
     doc["serialLog"]    = s_cfg.serialLog;
+    doc["launcherStyle"] = s_cfg.launcherStyle;
     doc["tcXScale"]     = s_cfg.touchCalXScale;
     doc["tcXOff"]       = s_cfg.touchCalXOff;
     doc["tcYScale"]     = s_cfg.touchCalYScale;
@@ -275,6 +277,8 @@ static bool _loadFromSD() {
     s_cfg.kbAutoStartMin = (uint16_t)(doc["kbAutoStart"] | 21 * 60) % 1440;
     s_cfg.kbAutoEndMin   = (uint16_t)(doc["kbAutoEnd"]   | 7 * 60) % 1440;
     s_cfg.serialLog      = doc["serialLog"] | true;
+    s_cfg.launcherStyle  = (uint8_t)(doc["launcherStyle"] | OPS_LAUNCHER_DEFAULT);
+    if (s_cfg.launcherStyle > 1) s_cfg.launcherStyle = OPS_LAUNCHER_DEFAULT;
     s_cfg.touchCalXScale = doc["tcXScale"] | 1.0f;
     s_cfg.touchCalXOff   = doc["tcXOff"]   | 0.0f;
     s_cfg.touchCalYScale = doc["tcYScale"] | 1.0f;
@@ -336,6 +340,10 @@ static bool _sanitize(Config& c) {
     if (c.brightness < 128 || c.brightness > 255) {
         OPS_LOG("Config", "Brightness %d out of range - reset to 200", c.brightness);
         c.brightness = 200;
+        fixed = true;
+    }
+    if (c.launcherStyle > 1) {
+        c.launcherStyle = OPS_LAUNCHER_DEFAULT;
         fixed = true;
     }
     if (c.radioProfile >= 14) {

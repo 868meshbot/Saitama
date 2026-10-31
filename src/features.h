@@ -25,6 +25,8 @@
 #define OPS_FEAT_BOOTANIM     0   // Saitama mesh animation screensaver
 #define OPS_FEAT_IDLE_SAVER   1   // idle screensaver (mesh rain by default)
 #define OPS_SS_DIM_MIN        128 // idle-saver backlight floor (lower is too dark here)
+#define OPS_FEAT_LAUNCHER_STYLE 1 // Settings > Launcher: Menu / Carousel
+#define OPS_LAUNCHER_DEFAULT  1   // launcherStyle default: 1 = Carousel
 #define OPS_FEAT_SOUND        1   // I2S speaker through the ES8311 codec
 #define OPS_SPK_BCLK          41  // pins and codec setup from M5Unified
 #define OPS_SPK_WS            43
@@ -74,6 +76,8 @@
 #define OPS_FEAT_BOOTANIM     1
 #define OPS_FEAT_IDLE_SAVER   1
 #define OPS_SS_DIM_MIN        60
+#define OPS_FEAT_LAUNCHER_STYLE 0
+#define OPS_LAUNCHER_DEFAULT  0
 #define OPS_FEAT_SOUND        1
 #define OPS_SPK_BCLK          7   // MAX98357A amplifier, no setup
 #define OPS_SPK_WS            5

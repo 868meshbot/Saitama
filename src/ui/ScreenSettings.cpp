@@ -277,6 +277,24 @@ static lv_obj_t* _addRow(lv_obj_t* list, const char* icon, const char* label,
     return btn;
 }
 
+// Updates one row's value and on/off colours in place. A plain toggle uses
+// this instead of show(): rebuilding the list holds two copies of it at once,
+// which the Cardputer's LVGL memory can't fit.
+static void _setRowValue(lv_obj_t* btn, const char* value, RowState state = ROW_NEUTRAL) {
+    lv_obj_t* iconLbl = lv_obj_get_child(btn, 0);
+    lv_obj_t* nameLbl = lv_obj_get_child(btn, 1);
+    lv_obj_t* valLbl  = lv_obj_get_child(btn, 2);
+    if (!iconLbl || !nameLbl || !valLbl) return;
+    lv_label_set_text(valLbl, value);
+    lv_obj_set_style_text_color(iconLbl, (state == ROW_ON)  ? theme::GREEN
+                                       : (state == ROW_OFF) ? theme::TEXT_MUTED
+                                                            : theme::ACCENT, 0);
+    lv_obj_set_style_text_color(nameLbl,
+        (state == ROW_OFF) ? theme::TEXT_MUTED : theme::TEXT, 0);
+    lv_obj_set_style_border_color(btn,
+        (state == ROW_ON) ? theme::GREEN : theme::BORDER, 0);
+}
+
 // Forward declarations — defined with their respective dialogs below.
 static void _fmtTimeoutVal(char* buf, size_t len, int sec);
 static void _fmtScreenOffVal(char* buf, size_t len, int sec);
@@ -506,6 +524,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
             kLayoutShort[cfg.kbLayout < ops::keymap::LAYOUT_COUNT ? cfg.kbLayout : 0], 23);
     _addRow(_list, LV_SYMBOL_USB, "Serial Output", cfg.serialLog ? on : off, 47,
             cfg.serialLog ? ROW_ON : ROW_OFF);
+#if OPS_FEAT_LAUNCHER_STYLE
+    _addRow(_list, LV_SYMBOL_HOME, "Launcher",
+            cfg.launcherStyle == 1 ? "Carousel" : "Menu", 48);
+#endif
 
     // Date/Time row — display in local time
     time_t now = ops::config::localEpoch();
@@ -5678,8 +5700,19 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             OPS_LOG("Settings", "Serial output %s", cfg.serialLog ? "on" : "off");
             ops::log::g_serialOn = cfg.serialLog;
             ops::config::save();
-            ScreenSettings::show();
+            _setRowValue(lv_event_get_current_target(e),
+                         lang::tr(cfg.serialLog ? lang::TR_ON : lang::TR_OFF),
+                         cfg.serialLog ? ROW_ON : ROW_OFF);
             return;
+
+#if OPS_FEAT_LAUNCHER_STYLE
+        case 48:  // Launcher → Menu / Carousel (the launcher rebuilds on show)
+            cfg.launcherStyle = cfg.launcherStyle == 1 ? 0 : 1;
+            ops::config::save();
+            _setRowValue(lv_event_get_current_target(e),
+                         cfg.launcherStyle == 1 ? "Carousel" : "Menu");
+            return;
+#endif
 
         case 45:  // Telemetry → what we answer to telemetry requests
             _openTelemetryDialog();
