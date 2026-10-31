@@ -5,9 +5,10 @@
 [![Release Date](https://img.shields.io/github/release-date/868meshbot/Saitama)](https://github.com/868meshbot/Saitama/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/868meshbot/Saitama/platformio.yaml?branch=main)](https://github.com/868meshbot/Saitama/actions)
 [![Platform](https://img.shields.io/badge/platform-T--Deck%20Plus-orange)](https://www.lilygo.cc/products/t-deck)
+[![Platform](https://img.shields.io/badge/platform-Cardputer%20ADV%20(beta)-orange)](https://docs.m5stack.com/en/core/Cardputer-Adv)
 [![MeshCore](https://img.shields.io/badge/mesh-MeshCore-green)](https://github.com/meshcore-dev/MeshCore)
 
-Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.com/meshcore-dev/MeshCore) messenger for the LilyGo T-Deck and T-Deck Plus: encrypted channels and DMs, a live view of every station around you, offline maps, and repeater and region tools, all on the device, with **full touchscreen support** alongside the keyboard and trackball. No phone, no internet, no subscription. Free and open source.
+Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.com/meshcore-dev/MeshCore) messenger for the LilyGo T-Deck and T-Deck Plus (and, in beta, the M5Stack Cardputer ADV): encrypted channels and DMs, a live view of every station around you, offline maps, and repeater and region tools, all on the device, with **full touchscreen support** alongside the keyboard and trackball. No phone, no internet, no subscription. Free and open source.
 
 **A phone in your pocket, without the phone, and without the paywall.**
 
@@ -56,7 +57,7 @@ Saitama is a community project. Development tooling includes AI coding assistant
 |--------|--------|-------|
 | LilyGo T-Deck (ESP32-S3) | Untested | 320x240 IPS, keyboard, trackball, SX1262 LoRa |
 | LilyGo T-Deck Plus | **Working** | Primary target — compiled and hardware-tested |
-| M5Stack Cardputer ADV + Cap LoRa-1262 | **Beta** | Cut-down build (`cardputer-adv`), not yet hardware-tested — see below |
+| M5Stack Cardputer ADV + Cap LoRa-1262 | **Beta** | Cut-down build (`cardputer-adv`), hardware-tested — see below |
 | Other ESP32-S3 devices | Future | PlatformIO abstraction allows porting |
 
 ### Cardputer ADV build
@@ -67,14 +68,20 @@ settings and `/ops/` SD backup as the T-Deck.
 
 - **Included:** Chat, Contacts, Repeaters (with admin tools), Heard, Finder,
   Regions, Signal, GPS status (text), Terminal, Settings. Adverts are in
-  Settings > Advert. The screensaver defaults to **Mesh rain** (two channels
-  and three stations falling, joined by a line when a message arrives).
+  Settings > Advert. Notification sounds play through the built-in speaker.
+- **Launcher:** a carousel, one big icon at a time with its neighbours and a
+  live line under it (unread messages, contact and repeater counts, GPS
+  fix...). Left/Right move round it. Settings > Launcher switches to a plain
+  list instead.
+- **Screensaver:** **Mesh rain** — channels, stations and the clock fall
+  down the screen, joined by a line when a message arrives.
 - **Left out:** map, spectrum/waterfall, channel scan, signal generator,
-  trace, games, PCAP, BT foxhunt, MP3, picture viewer, file manager. No
-  speaker sounds yet (the ES8311 codec is not driven).
-- **Keys:** Fn + `;` `.` `,` `/` are up, down, left and right. Enter (or the
-  G0 button) selects. Fn + `` ` `` (Esc) or Backspace goes back and closes
-  popups. Any key wakes the screen.
+  trace, games, PCAP, BT foxhunt, MP3, picture viewer, file manager.
+- **Keys:** `;` `.` `,` `/` are up, down, left and right (in a text box, hold
+  Fn). Enter (or the G0 button) selects. Fn + `` ` `` (Esc) or Backspace
+  goes back and closes popups; any key closes a QR code. Esc or Backspace
+  wakes the screensaver, any key wakes a blank screen.
+- Settings > Serial Output turns the USB serial log on or off.
 - Holds 100 contacts and 60 repeaters (250 each on the T-Deck).
 
 ## Branches
@@ -260,7 +267,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.5.2** (compiled and tested on LilyGo T-Deck Plus)
+Current version: **1.6.0** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
@@ -270,7 +277,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for full details.
 
 ## Status
 
-Compiled and hardware-tested on a LilyGo T-Deck Plus. Core features (chat, mesh, region scopes, GPS, repeater management, BLE companion) are functional. Edge cases and untested hardware variants are expected — contributions welcome.
+Compiled and hardware-tested on a LilyGo T-Deck Plus; the Cardputer ADV build is in beta. Core features (chat, mesh, region scopes, GPS, repeater management, BLE companion) are functional. Edge cases and untested hardware variants are expected — contributions welcome.
 
 ## License
 
