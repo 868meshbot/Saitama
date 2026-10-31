@@ -20,24 +20,44 @@ static constexpr int     QR_PX      = QR_MODULES * QR_SCALE; // 164
 static lv_color_t* s_qrBuf = nullptr;
 #else
 // No PSRAM (Cardputer): a 1-bit canvas (~2 KB instead of 53 KB), 3 px per
-// module so it fits the 135 px screen, freed when the popup closes; the
-// title and Close sit beside the code.
+// module so it fits the 135 px screen, freed when the popup closes. Only
+// the code is shown (a title or button beside it covered part of it); the
+// overlay takes the focus and any key closes it.
 static constexpr int     QR_SCALE   = 3;
 static constexpr int     QR_PX      = QR_MODULES * QR_SCALE; // 123
 static constexpr int     QR_STRIDE  = (QR_PX + 7) / 8;
-static uint8_t* s_qrBuf = nullptr;
+static uint8_t*  s_qrBuf     = nullptr;
+static lv_obj_t* s_qrOverlay = nullptr;   // open popup, cleared once closing
+static lv_obj_t* s_prevFocus = nullptr;   // focus to give back on close
+
+// Key, click, or the focus moving away (arrow keys) closes the popup.
+static void _onQrAnyKey(lv_event_t* /*e*/)
+{
+    if (!s_qrOverlay) return;   // already closing
+    lv_obj_t* o = s_qrOverlay;
+    s_qrOverlay = nullptr;
+    lv_obj_del_async(o);
+}
+
 static void _onQrDeleted(lv_event_t* /*e*/)
 {
     free(s_qrBuf);
-    s_qrBuf = nullptr;
+    s_qrBuf     = nullptr;
+    s_qrOverlay = nullptr;
+    lv_obj_t* prev = s_prevFocus;
+    s_prevFocus = nullptr;
+    lv_group_t* g = lv_group_get_default();
+    if (g && prev && lv_obj_is_valid(prev)) lv_group_focus_obj(prev);
 }
 #endif
 
+#if OPS_HAS_PSRAM
 static void _onQrClose(lv_event_t* e)
 {
     lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
     lv_obj_del_async(overlay);
 }
+#endif
 
 void showQrPopup(const char* title, const char* data)
 {
@@ -72,8 +92,13 @@ void showQrPopup(const char* title, const char* data)
     lv_obj_set_style_bg_opa(overlay, LV_OPA_70, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+#if OPS_HAS_PSRAM
     lv_obj_add_event_cb(overlay, _onQrClose, LV_EVENT_CLICKED, overlay);
-#if !OPS_HAS_PSRAM
+#else
+    s_qrOverlay = overlay;
+    lv_obj_add_event_cb(overlay, _onQrAnyKey, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(overlay, _onQrAnyKey, LV_EVENT_KEY, nullptr);
+    lv_obj_add_event_cb(overlay, _onQrAnyKey, LV_EVENT_DEFOCUSED, nullptr);
     lv_obj_add_event_cb(overlay, _onQrDeleted, LV_EVENT_DELETE, nullptr);
 #endif
 
@@ -82,7 +107,8 @@ void showQrPopup(const char* title, const char* data)
 #if OPS_HAS_PSRAM
     lv_obj_set_width(panel, QR_PX + 16);
 #else
-    lv_obj_set_width(panel, OPS_SCREEN_W - 4);
+    lv_obj_set_width(panel, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_CLICKABLE);   // clicks reach the overlay
 #endif
     lv_obj_set_height(panel, LV_SIZE_CONTENT);
     lv_obj_set_style_max_height(panel, OPS_SCREEN_H - 4, 0);
@@ -102,11 +128,6 @@ void showQrPopup(const char* title, const char* data)
     static constexpr int SIDE_W = QR_PX;
 #else
     lv_obj_set_style_pad_all(panel, 3, 0);   // 123 + 2*3 + 2 = 131 = H - 4
-    lv_obj_set_style_pad_column(panel, 6, 0);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(panel,
-        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    static constexpr int SIDE_W = OPS_SCREEN_W - 4 - 2 - 6 - QR_PX - 6;
 #endif
 
 #if OPS_HAS_PSRAM
@@ -159,24 +180,17 @@ void showQrPopup(const char* title, const char* data)
         }
     }
 
-    lv_obj_t* side = lv_obj_create(panel);
-    lv_obj_set_size(side, SIDE_W, QR_PX);
-    lv_obj_set_style_bg_opa(side, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(side, 0, 0);
-    lv_obj_set_style_pad_all(side, 0, 0);
-    lv_obj_clear_flag(side, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_flex_flow(side, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(side,
-        LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t* titleLbl = lv_label_create(side);
-    lv_label_set_text(titleLbl, title);
-    lv_label_set_long_mode(titleLbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(titleLbl, SIDE_W);
-    lv_obj_set_style_text_color(titleLbl, lv_color_black(), 0);
-    lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_align(titleLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        s_prevFocus = lv_group_get_focused(g);
+        lv_group_add_obj(g, overlay);
+        lv_group_focus_obj(overlay);
+    }
 #endif
 
+#if OPS_HAS_PSRAM
     // Close button
     lv_obj_t* closeBtn = lv_btn_create(side);
     lv_group_remove_obj(closeBtn);
@@ -192,6 +206,7 @@ void showQrPopup(const char* title, const char* data)
     lv_obj_set_style_text_color(closeLbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(closeLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(closeLbl);
+#endif
 
     OPS_LOG("QR", "Shown: %s", title);
 }
