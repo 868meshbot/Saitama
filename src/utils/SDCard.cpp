@@ -19,8 +19,21 @@ static SPIClass s_spi(FSPI);
 bool sdcard::isMounted() { return s_mounted; }
 
 void sdcard::init() {
+    // Runs before the LoRa (and T-Deck TFT) drivers drive their CS lines; left
+    // floating on the shared bus they made the first mount fail (issue #11).
+    pinMode(P_LORA_NSS, OUTPUT); digitalWrite(P_LORA_NSS, HIGH);
+#if OPS_SD_BUS_TFT_CS >= 0
+    pinMode(OPS_SD_BUS_TFT_CS, OUTPUT); digitalWrite(OPS_SD_BUS_TFT_CS, HIGH);
+#endif
+    pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
+    delay(10);
     s_spi.begin(OPS_SD_SCK, OPS_SD_MISO, OPS_SD_MOSI, -1);   // SCK, MISO, MOSI, SS (CS handled by SD lib)
-    if (!SD.begin(SD_CS, s_spi)) {
+    bool ok = false;
+    for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+        if (attempt) { SD.end(); delay(100); }
+        ok = SD.begin(SD_CS, s_spi);
+    }
+    if (!ok) {
         OPS_LOG("SD", "No card or mount failed");
         return;
     }

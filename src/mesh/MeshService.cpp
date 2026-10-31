@@ -169,9 +169,11 @@ static CustomSX1262              sx1262(new Module(P_LORA_NSS, P_LORA_DIO_1, P_L
 // attaches MeshCore's "packet ready" ISR to DIO1 as a *rising edge*, and that
 // edge happens while the CPU is asleep, so the ISR never runs. MeshCore's flag
 // lives in a file-static in RadioLibWrappers.cpp, so it can't be set from
-// here. Instead MeshService::lightSleep() flags s_rxMissedInSleep when it wakes
-// to DIO1 already high in RX mode, and this wrapper reads that packet exactly
-// as RadioLibWrapper::recvRaw() would.
+// here. Instead MeshService::lightSleep() sleeps in timer slices shorter than
+// a packet (DIO1 is not a wake source: its level type stormed the ISR, issue
+// #11), flags s_rxMissedInSleep when it wakes to DIO1 already high in RX mode,
+// and this wrapper reads that packet exactly as RadioLibWrapper::recvRaw()
+// would.
 static volatile bool s_rxMissedInSleep = false;
 static MeshService::SleepStats s_sleepStats = {};
 
@@ -3989,10 +3991,11 @@ bool MeshService::lightSleep(uint32_t maxMs) {
 
     const gpio_num_t dio1 = (gpio_num_t)P_LORA_DIO_1;
     if (_initialized) {
-        // Level wake with the CPU interrupt masked: wakes on a received packet
-        // without a level-triggered ISR storm.
+        // No DIO1 GPIO wake: switching the pin to a level type set off an
+        // interrupt storm (INT WDT in gpio_intr_service) right after waking
+        // (issue #11). The timer slice above is short enough to read every
+        // packet; a DIO1 that rose during sleep is caught via s_rxMissedInSleep.
         gpio_intr_disable(dio1);
-        gpio_wakeup_enable(dio1, GPIO_INTR_HIGH_LEVEL);
     }
     esp_sleep_enable_gpio_wakeup();
     esp_sleep_enable_timer_wakeup((uint64_t)maxMs * 1000ULL);
@@ -4009,10 +4012,8 @@ bool MeshService::lightSleep(uint32_t maxMs) {
     }
 
     if (_initialized) {
-        gpio_wakeup_disable(dio1);
-        gpio_set_intr_type(dio1, GPIO_INTR_POSEDGE);
-        // Drop any status latched by the level type so the ISR doesn't fire for
-        // this event too — recvRaw() picks it up via s_rxMissedInSleep instead.
+        // Drop any edge latched while masked so the ISR doesn't fire for this
+        // event too — recvRaw() picks it up via s_rxMissedInSleep instead.
 #if P_LORA_DIO_1 >= 32
         REG_WRITE(GPIO_STATUS1_W1TC_REG, 1UL << (P_LORA_DIO_1 - 32));
 #else

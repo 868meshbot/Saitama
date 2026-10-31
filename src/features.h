@@ -49,6 +49,7 @@
 #define OPS_SD_SCK   40
 #define OPS_SD_MISO  39
 #define OPS_SD_MOSI  14
+#define OPS_SD_BUS_TFT_CS -1  // display is on its own bus
 
 #define OPS_CONTACTS_CAPACITY  100
 #define OPS_REPEATERS_CAPACITY 60
@@ -99,6 +100,7 @@
 #define OPS_SD_SCK   40
 #define OPS_SD_MISO  38
 #define OPS_SD_MOSI  41
+#define OPS_SD_BUS_TFT_CS 12  // TFT shares the SD bus: deselect it before mounting
 
 #define OPS_CONTACTS_CAPACITY  250
 #define OPS_REPEATERS_CAPACITY 250

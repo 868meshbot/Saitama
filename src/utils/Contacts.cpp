@@ -78,21 +78,38 @@ static void _saveToSD() {
         OPS_LOG("SD", "contacts.json NOT written: out of memory building it");
         return;
     }
-    File f = SD.open("/ops/contacts.json", FILE_WRITE);
+    // Write a temp file and swap it in, so a crash mid-write never leaves an
+    // empty contacts.json; the previous list is kept as .bak (issue #11).
+    File f = SD.open("/ops/contacts.json.tmp", FILE_WRITE);
     if (!f) { OPS_LOG("SD", "contacts.json open failed"); return; }
-    serializeJson(doc, f);
+    size_t n = serializeJson(doc, f);
     f.close();
+    if (n == 0 || n != measureJson(doc)) {
+        OPS_LOG("SD", "contacts.json NOT written: short write (%u bytes)", (unsigned)n);
+        SD.remove("/ops/contacts.json.tmp");
+        return;
+    }
+    SD.remove("/ops/contacts.json.bak");
+    SD.rename("/ops/contacts.json", "/ops/contacts.json.bak");
+    SD.rename("/ops/contacts.json.tmp", "/ops/contacts.json");
     OPS_LOG("Contacts", "SD backup: %d contacts", s_count);
 }
 
 static bool _loadFromSD() {
     if (!sdcard::isMounted()) return false;
-    File f = SD.open("/ops/contacts.json", FILE_READ);
-    if (!f) return false;
     JsonDocument doc(psramJson());   // PSRAM: a full list is tens of KB
-    DeserializationError err = deserializeJson(doc, f);
-    f.close();
-    if (err) { OPS_LOG("SD", "contacts.json parse: %s", err.c_str()); return false; }
+    // Fall back to the previous save if the main file is missing or damaged.
+    static const char* const kPaths[] = { "/ops/contacts.json", "/ops/contacts.json.bak" };
+    bool ok = false;
+    for (const char* path : kPaths) {
+        File f = SD.open(path, FILE_READ);
+        if (!f) continue;
+        DeserializationError err = deserializeJson(doc, f);
+        f.close();
+        if (!err) { ok = true; break; }
+        OPS_LOG("SD", "%s parse: %s", path, err.c_str());
+    }
+    if (!ok) return false;
 
     JsonArray arr = doc["contacts"].as<JsonArray>();
     s_count = 0;
