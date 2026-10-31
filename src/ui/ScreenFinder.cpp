@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenFinder.h"
+#include "../features.h"
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
@@ -21,7 +22,7 @@
 namespace ops { namespace ui {
 
 // ── Layout ───────────────────────────────────────────────────────────
-static constexpr int TOP_H  = 28;
+static constexpr int TOP_H  = OPS_TOP_H;
 static constexpr int BTN_H  = 36;
 static constexpr int LIST_Y = TOP_H + BTN_H;
 
@@ -314,6 +315,19 @@ void ScreenFinder::_rebuildList()
         lv_obj_set_style_text_font(snrLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_width(snrLbl, 58);
         lv_obj_set_style_text_align(snrLbl, LV_TEXT_ALIGN_RIGHT, 0);
+
+        if (OPS_SCREEN_W < 300) {
+            // Narrow screen: RSSI and SNR on a second line under the type,
+            // so the name gets the whole first line.
+            lv_obj_set_height(row, LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+            lv_obj_set_style_pad_row(row, 0, 0);
+            lv_obj_add_flag(rssiLbl, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
+            lv_obj_set_width(rssiLbl, LV_SIZE_CONTENT);
+            lv_obj_set_width(snrLbl, LV_SIZE_CONTENT);
+            lv_obj_set_style_pad_left(rssiLbl, 48, 0);
+            lv_obj_set_style_pad_left(snrLbl, 8, 0);
+        }
     }
 }
 
@@ -447,6 +461,10 @@ void ScreenFinder::_buildScreen()
     lv_obj_set_flex_align(_list,
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scrollbar_mode(_list, LV_SCROLLBAR_MODE_AUTO);
+    // Esc goes back (the only way out on a board without touch).
+    lv_obj_add_event_cb(_list, [](lv_event_t* e) {
+        if (lv_event_get_key(e) == LV_KEY_ESC) _onBack(e);
+    }, LV_EVENT_KEY, nullptr);
     lv_group_focus_obj(_list);
 }
 

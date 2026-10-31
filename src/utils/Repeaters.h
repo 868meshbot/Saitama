@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #pragma once
+#include "../features.h"
 #include "Contacts.h"   // PATH_AT_PINNED, outPathByteCount()
 #include <Arduino.h>
 #include <cstdint>
@@ -34,7 +35,7 @@ struct Repeater {
 };
 
 namespace repeaters {
-    static constexpr int CAPACITY = 250;
+    static constexpr int CAPACITY = OPS_REPEATERS_CAPACITY;
 
     void init();   // loads from SD; no-op if SD not mounted
     void save();   // writes /ops/repeaters.json

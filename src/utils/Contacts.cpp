@@ -2,6 +2,8 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Contacts.h"
+#include "../features.h"
+#include "PsramAlloc.h"
 #include "SDCard.h"
 #include "Log.h"
 #include <Preferences.h>
@@ -16,6 +18,10 @@ namespace ops {
 static Contact* s_contacts     = nullptr;  // PSRAM; allocated in init()
 static Contact* s_contactsSnap = nullptr;  // PSRAM rollback buffer for reloadFromSD()
 static int      s_count = 0;
+// True once the card's list has been read, or found absent. While false (card
+// missing at boot, mounted later) save() merges into the card's file instead
+// of overwriting the saved archive with this session's entries.
+static bool     s_sdChecked = false;
 
 // ── SD JSON helpers ────────────────────────────────────────────────
 
@@ -260,8 +266,10 @@ static void _clearLegacyNvs();
 void contacts::init()
 {
     if (!s_contacts) {
-        s_contacts     = (Contact*)ps_malloc((size_t)contacts::CAPACITY * sizeof(Contact));
-        s_contactsSnap = (Contact*)ps_malloc((size_t)contacts::CAPACITY * sizeof(Contact));
+        s_contacts     = (Contact*)ops::psram::alloc((size_t)contacts::CAPACITY * sizeof(Contact));
+#if OPS_HAS_PSRAM
+        s_contactsSnap = (Contact*)ops::psram::alloc((size_t)contacts::CAPACITY * sizeof(Contact));
+#endif
         memset(s_contacts, 0, (size_t)contacts::CAPACITY * sizeof(Contact));
     }
     // ── SD is always authoritative ────────────────────────────────────────
@@ -271,6 +279,7 @@ void contacts::init()
     // always at least as fresh as NVS and usually fresher.
     if (_loadFromSD()) {
         OPS_LOG("Contacts", "Loaded %d from SD", s_count);
+        s_sdChecked = true;
         _clearLegacyNvs();
         return;
     }
@@ -281,10 +290,12 @@ void contacts::init()
         OPS_LOG("Contacts", "SD not mounted at init, attempting remount");
         if (sdcard::tryMount() && _loadFromSD()) {
             OPS_LOG("Contacts", "Loaded %d from SD after remount", s_count);
+            s_sdChecked = true;
             _clearLegacyNvs();
             return;
         }
     }
+    s_sdChecked = sdcard::isMounted();   // mounted: no file yet, or unreadable
 
     // ── NVS fallback (SD absent or no file yet) ───────────────────────────
     // Read legacy per-blob NVS data with full version migration, write to SD,
@@ -409,12 +420,25 @@ int contacts::reloadFromSD()
 {
     if (!sdcard::isMounted()) return -1;
     int snapN = s_count;
+#if !OPS_HAS_PSRAM
+    // No PSRAM: borrow the rollback copy only for the reload.
+    s_contactsSnap = snapN > 0 ? (Contact*)malloc((size_t)snapN * sizeof(Contact)) : nullptr;
+    if (snapN > 0 && !s_contactsSnap) return -1;
+#endif
     if (snapN > 0) memcpy(s_contactsSnap, s_contacts, (size_t)snapN * sizeof(Contact));
     if (!_loadFromSD()) {
         s_count = snapN;
         if (snapN > 0) memcpy(s_contacts, s_contactsSnap, (size_t)snapN * sizeof(Contact));
+#if !OPS_HAS_PSRAM
+        free(s_contactsSnap);
+        s_contactsSnap = nullptr;
+#endif
         return -1;
     }
+#if !OPS_HAS_PSRAM
+    free(s_contactsSnap);
+    s_contactsSnap = nullptr;
+#endif
     save();
     return s_count;
 }
@@ -492,8 +516,41 @@ void contacts::clearPath(int idx)
     OPS_LOG("Contacts", "Path cleared: %s", s_contacts[idx].name);
 }
 
+// The card mounted after boot: load its list, then lay this session's
+// entries over it (same key = session copy, it is newer). On a read failure
+// the session list is kept and saved as before.
+static void _mergeLateSd()
+{
+    if (!SD.exists("/ops/contacts.json")) return;   // nothing to protect
+    int n = s_count;
+#if !OPS_HAS_PSRAM
+    s_contactsSnap = n > 0 ? (Contact*)malloc((size_t)n * sizeof(Contact)) : nullptr;
+    if (n > 0 && !s_contactsSnap) return;
+#endif
+    if (n > 0) memcpy(s_contactsSnap, s_contacts, (size_t)n * sizeof(Contact));
+    if (_loadFromSD()) {
+        for (int i = 0; i < n; i++) {
+            int idx;
+            if (contacts::findByKey(s_contactsSnap[i].pubKeyPrefix, &idx)) s_contacts[idx] = s_contactsSnap[i];
+            else if (s_count < contacts::CAPACITY)               s_contacts[s_count++] = s_contactsSnap[i];
+        }
+        OPS_LOG("Contacts", "SD mounted late: merged %d into %d saved", n, s_count);
+    } else {
+        s_count = n;
+        if (n > 0) memcpy(s_contacts, s_contactsSnap, (size_t)n * sizeof(Contact));
+    }
+#if !OPS_HAS_PSRAM
+    free(s_contactsSnap);
+    s_contactsSnap = nullptr;
+#endif
+}
+
 void contacts::save()
 {
+    if (!s_sdChecked && sdcard::isMounted()) {
+        _mergeLateSd();
+        s_sdChecked = true;
+    }
     _saveToSD();
 }
 

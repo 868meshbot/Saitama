@@ -23,6 +23,11 @@
 // when off) — see RowState in _addRow().
 
 #include "ScreenSettings.h"
+#include "../features.h"
+#include "../utils/AutoAdvert.h"
+#if !OPS_FEAT_ADVERT_APP
+#include "cardputer/AdvertWindow.h"
+#endif
 #include "UIScreen.h"
 #include "ScreenLauncher.h"
 #include "QRPopup.h"
@@ -61,7 +66,7 @@ extern const lv_font_t font_montserrat_12_ext;
 
 namespace ops { namespace ui {
 
-static constexpr int TOP_H = 28;
+static constexpr int TOP_H = OPS_TOP_H;
 
 lv_obj_t* ScreenSettings::_screen = nullptr;
 lv_obj_t* ScreenSettings::_list   = nullptr;
@@ -125,6 +130,17 @@ void ScreenSettings::show() {
 
     lv_scr_load(_screen);
     OPS_LOG("UI", "Settings shown");
+}
+
+void ScreenSettings::release() {
+    if (!_screen || lv_scr_act() == _screen) return;
+    lv_obj_t* scr = _screen;
+    _screen   = nullptr;
+    _list     = nullptr;
+    s_listPtr = nullptr;
+    lv_obj_remove_event_cb(scr, _onScreenChildDeleted);
+    lv_obj_del(scr);
+    OPS_LOG("UI", "Settings released");
 }
 
 // ── _buildTopBar() ───────────────────────────────────────────────────
@@ -393,8 +409,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         : kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2];
     _addRow(_list, LV_SYMBOL_WIFI, lang::tr(lang::TR_RADIO), radioLabel, 6);
     char pwrBuf[10];
-    bool pwrOn = (cfg.radioTX >= 10 && cfg.radioTX <= 22);
-    if (pwrOn) snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX);
+    // 0 = no override: the radio runs at the SX1262 default of 22 dBm,
+    // so show that rather than "Off" (it never stops transmitting).
+    bool pwrOn = (cfg.radioTX == 0 || (cfg.radioTX >= 10 && cfg.radioTX <= 22));
+    if (pwrOn) snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX ? cfg.radioTX : 22);
     else       snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
     _addRow(_list, LV_SYMBOL_CHARGE, lang::tr(lang::TR_POWER), pwrBuf, 25,
             pwrOn ? ROW_ON : ROW_OFF);
@@ -429,6 +447,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         snprintf(pinStr, sizeof(pinStr), "%06lu", (unsigned long)ops::btpin::get());
         _addRow(_list, LV_SYMBOL_BLUETOOTH, "Bluetooth PIN", pinStr, 41);
     }
+#if OPS_FEAT_SOUND
     {
         char spkStr[16];
         if (cfg.speakerEnabled) snprintf(spkStr, sizeof(spkStr), "%s %d%%", on, (int)cfg.speakerVolume);
@@ -436,6 +455,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, LV_SYMBOL_VOLUME_MAX, lang::tr(lang::TR_SPEAKER),
                 spkStr, 8, cfg.speakerEnabled ? ROW_ON : ROW_OFF);
     }
+#endif
     {
         char ntStr[16];
         if (cfg.nightMode)
@@ -447,10 +467,21 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, "\xF0\x9F\x8C\x99", "Night Mode", ntStr, 42,   // U+1F319 moon
                 cfg.nightMode ? ROW_ON : ROW_OFF);
     }
+#if OPS_FEAT_MAP
     {
         static const char* kMapStyle[] = { "Day", "Night", "Auto" };
         _addRow(_list, LV_SYMBOL_IMAGE, "Map Style", kMapStyle[cfg.mapStyle < 3 ? cfg.mapStyle : 2], 43);
     }
+#endif
+#if !OPS_FEAT_ADVERT_APP
+    {
+        int ch = ops::autoadvert::choice();
+        char advStr[16];
+        if (ch <= 0) snprintf(advStr, sizeof(advStr), "Auto off");
+        else         snprintf(advStr, sizeof(advStr), "Every %d h", (int)ops::autoadvert::HOURS[ch]);
+        _addRow(_list, LV_SYMBOL_UPLOAD, "Advert", advStr, 46, ch > 0 ? ROW_ON : ROW_NEUTRAL);
+    }
+#endif
     {
         const char* tv = !cfg.telemAllow ? off
                        : cfg.telemLocation ? "On + loc" : on;
@@ -461,6 +492,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     _addRow(_list, LV_SYMBOL_GPS, lang::tr(lang::TR_GPS),
             gpsModeNames[cfg.gpsMode < 3 ? cfg.gpsMode : 2], 9,
             cfg.gpsMode == 0 ? ROW_OFF : ROW_ON);
+#if OPS_FEAT_KB_BACKLIGHT
     char kbBuf[16];
     bool kbOn = cfg.kbAutoNight || cfg.kbBrightness != 0;
     if (cfg.kbAutoNight) snprintf(kbBuf, sizeof(kbBuf), "Auto");
@@ -468,9 +500,12 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     else snprintf(kbBuf, sizeof(kbBuf), "%d", cfg.kbBrightness);
     _addRow(_list, LV_SYMBOL_KEYBOARD, lang::tr(lang::TR_KB_LIGHT), kbBuf, 21,
             kbOn ? ROW_ON : ROW_OFF);
+#endif
     static const char* kLayoutShort[] = { "English", "FR AZERTY", "DE QWERTZ" };
     _addRow(_list, LV_SYMBOL_KEYBOARD, lang::tr(lang::TR_KB_LAYOUT),
             kLayoutShort[cfg.kbLayout < ops::keymap::LAYOUT_COUNT ? cfg.kbLayout : 0], 23);
+    _addRow(_list, LV_SYMBOL_USB, "Serial Output", cfg.serialLog ? on : off, 47,
+            cfg.serialLog ? ROW_ON : ROW_OFF);
 
     // Date/Time row — display in local time
     time_t now = ops::config::localEpoch();
@@ -511,11 +546,13 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, LV_SYMBOL_POWER, lang::tr(lang::TR_SCR_OFF), soStr, 27);
     }
     _addRow(_list, LV_SYMBOL_IMAGE, "Screensaver",
-            cfg.screensaverStyle == 1 ? "Saitama" : "Clock", 44);
+            cfg.screensaverStyle == 1 ? OPS_SAVER1_NAME : "Clock", 44);
     _addRow(_list, LV_SYMBOL_BELL, lang::tr(lang::TR_NOTIFICATIONS), "", 16);
+#if OPS_FEAT_SOUND
     static const char* kSndNames[] = { "Default", "Pluck", "Clear", "Whoosh" };
     _addRow(_list, LV_SYMBOL_AUDIO, lang::tr(lang::TR_NOTIFY_SOUND),
             kSndNames[cfg.notifySoundChoice < 4 ? cfg.notifySoundChoice : 0], 22);
+#endif
     _addRow(_list, LV_SYMBOL_SD_CARD, lang::tr(lang::TR_SAVE_MSGS),
             cfg.saveMsgs ? on : off, 14, cfg.saveMsgs ? ROW_ON : ROW_OFF);
     _addRow(_list, LV_SYMBOL_DIRECTORY, lang::tr(lang::TR_SHOW_HOPS),
@@ -1076,7 +1113,9 @@ static void _openEditChannelDialog(int ch) {
     s_editCtx.ch    = ch;
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 300, LV_SIZE_CONTENT);
+    // 300 px on the T-Deck; the full width less a margin on a narrow screen.
+    static constexpr bool kNarrow = OPS_SCREEN_W < 310;
+    lv_obj_set_size(panel, kNarrow ? OPS_SCREEN_W - 6 : 300, LV_SIZE_CONTENT);
     lv_obj_set_style_max_height(panel, OPS_SCREEN_H - 2, 0);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
@@ -1225,6 +1264,29 @@ static void _openEditChannelDialog(int ch) {
     lv_obj_set_style_text_color(exitLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_10, 0);
     lv_obj_center(exitLbl);
+
+    if (kNarrow) {
+        // Three equal buttons that fill the row instead of 80/100/80 px.
+        lv_obj_set_style_pad_column(btnRow, 4, 0);
+        lv_obj_t* btns[3] = { qrBtn, saveBtn, exitBtn };
+        for (lv_obj_t* b : btns) {
+            lv_obj_set_width(b, 1);
+            lv_obj_set_flex_grow(b, 1);
+            lv_obj_set_style_pad_hor(b, 0, 0);
+        }
+        // Short labels: QR, a green tick, a red cross.
+        lv_label_set_text(qrLbl, "QR");
+        lv_obj_set_style_bg_color(saveBtn, theme::BG, 0);
+        lv_obj_set_style_border_color(saveBtn, theme::GREEN, 0);
+        lv_obj_set_style_border_width(saveBtn, 1, 0);
+        lv_label_set_text(saveLbl, LV_SYMBOL_OK);
+        lv_obj_set_style_text_color(saveLbl, theme::GREEN, 0);
+        lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_border_color(exitBtn, theme::RED, 0);
+        lv_label_set_text(exitLbl, LV_SYMBOL_CLOSE);
+        lv_obj_set_style_text_color(exitLbl, theme::RED, 0);
+        lv_obj_set_style_text_font(exitLbl, &lv_font_montserrat_14, 0);
+    }
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -2299,10 +2361,73 @@ static void _openDmRetryDialog() {
     }
 }
 
-// ── Keyboard brightness slider dialog ────────────────────────────────
-// lv_slider from 0 (off) to 255. Applies immediately on Save.
+// ── Time-of-day row (hour + 5-minute dropdowns) ──────────────────────
+// Shared by the Keyboard Light and Night Mode dialogs. Minutes after local
+// midnight in; read back with _timeRowMinutes(). keyCb handles ESC.
 
-struct KbBrightCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; lv_obj_t* autoCb; uint8_t origVal; };
+static const char* kTimeHours =
+    "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n"
+    "12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23";
+static const char* kTimeMins = "00\n05\n10\n15\n20\n25\n30\n35\n40\n45\n50\n55";
+
+static lv_obj_t* _makeTimeDropdown(lv_obj_t* row, const char* opts, uint16_t sel,
+                                   lv_event_cb_t keyCb)
+{
+    lv_obj_t* dd = lv_dropdown_create(row);
+    lv_obj_set_size(dd, 70, 30);
+    lv_dropdown_set_options_static(dd, opts);
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_style_bg_color(dd, theme::BG, 0);
+    lv_obj_set_style_text_color(dd, theme::TEXT, 0);
+    lv_obj_set_style_border_color(dd, theme::BORDER, 0);
+    lv_obj_set_style_border_color(dd, theme::ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_12, 0);
+    if (lv_obj_t* list = lv_dropdown_get_list(dd)) {
+        lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
+        lv_obj_set_style_text_color(list, theme::TEXT, 0);
+        lv_obj_set_style_text_font(list, &lv_font_montserrat_12, 0);
+    }
+    lv_obj_add_event_cb(dd, keyCb, LV_EVENT_KEY, nullptr);
+    return dd;
+}
+
+static void _makeTimeRow(lv_obj_t* parent, const char* label, uint16_t minutes,
+                         lv_obj_t*& hDd, lv_obj_t*& mDd, lv_event_cb_t keyCb)
+{
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_size(row, 240, 32);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 4, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* l = lv_label_create(row);
+    lv_label_set_text(l, label);
+    lv_obj_set_width(l, 70);
+    lv_obj_set_style_text_color(l, theme::TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+
+    hDd = _makeTimeDropdown(row, kTimeHours, (uint16_t)((minutes / 60) % 24), keyCb);
+    lv_obj_t* colon = lv_label_create(row);
+    lv_label_set_text(colon, ":");
+    lv_obj_set_style_text_color(colon, theme::TEXT, 0);
+    mDd = _makeTimeDropdown(row, kTimeMins, (uint16_t)((minutes % 60) / 5), keyCb);
+}
+
+static uint16_t _timeRowMinutes(lv_obj_t* hDd, lv_obj_t* mDd)
+{
+    return (uint16_t)(lv_dropdown_get_selected(hDd) * 60 + lv_dropdown_get_selected(mDd) * 5);
+}
+
+// ── Keyboard brightness slider dialog ────────────────────────────────
+// lv_slider from 0 (off) to 255. Applies immediately on Save. The Auto
+// window (start/end time) only matters while Auto is ticked.
+
+struct KbBrightCtx { lv_obj_t* modal; lv_obj_t* slider; lv_obj_t* valLbl; lv_obj_t* autoCb;
+                     lv_obj_t* sh; lv_obj_t* sm; lv_obj_t* eh; lv_obj_t* em; uint8_t origVal; };
 static KbBrightCtx s_kbCtx;
 
 static void _onKbSlide(lv_event_t* /*e*/) {
@@ -2325,6 +2450,8 @@ static void _onKbSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.kbBrightness = v;
     cfg.kbAutoNight  = autoOn;
+    cfg.kbAutoStartMin = _timeRowMinutes(s_kbCtx.sh, s_kbCtx.sm);
+    cfg.kbAutoEndMin   = _timeRowMinutes(s_kbCtx.eh, s_kbCtx.em);
     ops::config::save();
     ops::Board::instance().setKeyboardBacklight(v);
     resetKbBacklight();  // let tick() re-evaluate auto/manual state immediately
@@ -2358,13 +2485,14 @@ static void _openKbBrightDialog() {
     lv_obj_add_event_cb(modal, _onKbKey, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 195);
+    lv_obj_set_size(panel, 260, LV_SIZE_CONTENT);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_radius(panel, 6, 0);
     lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 4, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel,
@@ -2395,12 +2523,15 @@ static void _openKbBrightDialog() {
     lv_obj_add_event_cb(s_kbCtx.slider, _onKbSlide, LV_EVENT_VALUE_CHANGED, nullptr);
 
     s_kbCtx.autoCb = lv_checkbox_create(panel);
-    lv_checkbox_set_text(s_kbCtx.autoCb, "Auto (21:00-07:00 + night mode)");
+    lv_checkbox_set_text(s_kbCtx.autoCb, "Auto (lit between these times + night mode)");
     lv_obj_set_style_text_font(s_kbCtx.autoCb, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(s_kbCtx.autoCb, theme::TEXT, 0);
     lv_obj_set_style_bg_color(s_kbCtx.autoCb, theme::PRIMARY, LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_border_color(s_kbCtx.autoCb, theme::BORDER, LV_PART_INDICATOR);
     if (ops::config::get().kbAutoNight) lv_obj_add_state(s_kbCtx.autoCb, LV_STATE_CHECKED);
+
+    _makeTimeRow(panel, "Start", ops::config::get().kbAutoStartMin, s_kbCtx.sh, s_kbCtx.sm, _onKbKey);
+    _makeTimeRow(panel, "End",   ops::config::get().kbAutoEndMin,   s_kbCtx.eh, s_kbCtx.em, _onKbKey);
 
     lv_obj_t* row = lv_obj_create(panel);
     lv_obj_set_size(row, 220, 32);
@@ -2445,6 +2576,8 @@ static void _openKbBrightDialog() {
     if (gKb) {
         lv_group_add_obj(gKb, s_kbCtx.slider);
         lv_group_add_obj(gKb, s_kbCtx.autoCb);
+        lv_group_add_obj(gKb, s_kbCtx.sh); lv_group_add_obj(gKb, s_kbCtx.sm);
+        lv_group_add_obj(gKb, s_kbCtx.eh); lv_group_add_obj(gKb, s_kbCtx.em);
         lv_group_add_obj(gKb, saveBtn);
         lv_group_add_obj(gKb, exitBtn);
         lv_group_focus_obj(s_kbCtx.slider);
@@ -2513,14 +2646,18 @@ static void _openTxPowerDialog() {
 
     s_txCtx.boostOn = ops::config::get().rxBoost;
 
+    // 240 x 198 on the T-Deck; cut to the screen on a short one (Cardputer).
+    static constexpr int TX_PW = OPS_SCREEN_W - 6 < 240 ? OPS_SCREEN_W - 6 : 240;
+    static constexpr int TX_PH = OPS_SCREEN_H - 4 < 198 ? OPS_SCREEN_H - 4 : 198;
+    static constexpr int TX_IW = TX_PW - 20 < 220 ? TX_PW - 20 : 220;
     lv_obj_t* panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 240, 198);
+    lv_obj_set_size(panel, TX_PW, TX_PH);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, theme::BG_CARD, 0);
     lv_obj_set_style_border_color(panel, theme::BORDER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_radius(panel, 6, 0);
-    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_set_style_pad_all(panel, TX_PH < 198 ? 4 : 8, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel,
@@ -2542,7 +2679,7 @@ static void _openTxPowerDialog() {
     lv_obj_set_style_text_font(s_txCtx.valLbl, &lv_font_montserrat_12, 0);
 
     s_txCtx.slider = lv_slider_create(panel);
-    lv_obj_set_width(s_txCtx.slider, 220);
+    lv_obj_set_width(s_txCtx.slider, TX_IW);
     lv_slider_set_range(s_txCtx.slider, 10, 22);
     lv_slider_set_value(s_txCtx.slider, (int)curVal, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s_txCtx.slider, theme::PRIMARY, LV_PART_INDICATOR);
@@ -2553,7 +2690,7 @@ static void _openTxPowerDialog() {
     // ── RX Boost toggle ──────────────────────────────────────────────
     lv_obj_t* boostBtn = lv_btn_create(panel);
     s_txCtx.boostBtn = boostBtn;
-    lv_obj_set_size(boostBtn, 220, 26);
+    lv_obj_set_size(boostBtn, TX_IW, TX_PH < 198 ? 22 : 26);
     lv_obj_set_style_bg_color(boostBtn,
         s_txCtx.boostOn ? theme::PRIMARY : theme::BG, 0);
     lv_obj_set_style_bg_color(boostBtn, theme::ACCENT, LV_STATE_PRESSED);
@@ -2572,7 +2709,7 @@ static void _openTxPowerDialog() {
     lv_obj_center(boostLbl);
 
     lv_obj_t* btnRow = lv_obj_create(panel);
-    lv_obj_set_size(btnRow, 220, 32);
+    lv_obj_set_size(btnRow, TX_IW, TX_PH < 198 ? 26 : 32);
     lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btnRow, 0, 0);
     lv_obj_set_style_pad_all(btnRow, 0, 0);
@@ -3536,10 +3673,8 @@ static void _onNightToggle(lv_event_t* /*e*/) {
 static void _onNightSave(lv_event_t* /*e*/) {
     auto& cfg = const_cast<ops::Config&>(ops::config::get());
     cfg.nightMode     = s_ntCtx.on;
-    cfg.nightStartMin = (uint16_t)(lv_dropdown_get_selected(s_ntCtx.sh) * 60 +
-                                   lv_dropdown_get_selected(s_ntCtx.sm) * 5);
-    cfg.nightEndMin   = (uint16_t)(lv_dropdown_get_selected(s_ntCtx.eh) * 60 +
-                                   lv_dropdown_get_selected(s_ntCtx.em) * 5);
+    cfg.nightStartMin = _timeRowMinutes(s_ntCtx.sh, s_ntCtx.sm);
+    cfg.nightEndMin   = _timeRowMinutes(s_ntCtx.eh, s_ntCtx.em);
     ops::config::save();
     OPS_LOG("Settings", "Night mode %s %02u:%02u-%02u:%02u", cfg.nightMode ? "on" : "off",
             cfg.nightStartMin / 60, cfg.nightStartMin % 60, cfg.nightEndMin / 60, cfg.nightEndMin % 60);
@@ -3588,61 +3723,19 @@ static void _openNightDialog() {
     lv_obj_t* note = lv_label_create(panel);
     lv_obj_set_width(note, 240);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+#if OPS_FEAT_KB_BACKLIGHT
     lv_label_set_text(note, "Between these times notification sounds are muted. "
                             "A keyboard light set to Auto stays on.");
+#else
+    lv_label_set_text(note, "Between these times notification sounds are muted.");
+#endif
     lv_obj_set_style_text_color(note, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(note, &lv_font_montserrat_10, 0);
 
     s_ntCtx.onLbl = _makeToggleRow(panel, "Night mode", s_ntCtx.on, _onNightToggle, modal);
 
-    static const char* kHours =
-        "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n"
-        "12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23";
-    static const char* kMins = "00\n05\n10\n15\n20\n25\n30\n35\n40\n45\n50\n55";
-
-    auto timeRow = [&](const char* label, uint16_t minutes, lv_obj_t*& hDd, lv_obj_t*& mDd) {
-        lv_obj_t* row = lv_obj_create(panel);
-        lv_obj_set_size(row, 240, 32);
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_set_style_pad_column(row, 4, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-        lv_obj_t* l = lv_label_create(row);
-        lv_label_set_text(l, label);
-        lv_obj_set_width(l, 70);
-        lv_obj_set_style_text_color(l, theme::TEXT, 0);
-        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
-
-        auto mkDd = [&](const char* opts, uint16_t sel) {
-            lv_obj_t* dd = lv_dropdown_create(row);
-            lv_obj_set_size(dd, 70, 30);
-            lv_dropdown_set_options_static(dd, opts);
-            lv_dropdown_set_selected(dd, sel);
-            lv_obj_set_style_bg_color(dd, theme::BG, 0);
-            lv_obj_set_style_text_color(dd, theme::TEXT, 0);
-            lv_obj_set_style_border_color(dd, theme::BORDER, 0);
-            lv_obj_set_style_border_color(dd, theme::ACCENT, LV_STATE_FOCUSED);
-            lv_obj_set_style_text_font(dd, &lv_font_montserrat_12, 0);
-            if (lv_obj_t* list = lv_dropdown_get_list(dd)) {
-                lv_obj_set_style_bg_color(list, theme::BG_CARD, 0);
-                lv_obj_set_style_text_color(list, theme::TEXT, 0);
-                lv_obj_set_style_text_font(list, &lv_font_montserrat_12, 0);
-            }
-            lv_obj_add_event_cb(dd, _onNightKey, LV_EVENT_KEY, nullptr);
-            return dd;
-        };
-        hDd = mkDd(kHours, (uint16_t)((minutes / 60) % 24));
-        lv_obj_t* colon = lv_label_create(row);
-        lv_label_set_text(colon, ":");
-        lv_obj_set_style_text_color(colon, theme::TEXT, 0);
-        mDd = mkDd(kMins, (uint16_t)((minutes % 60) / 5));
-    };
-    timeRow("Start", cfg.nightStartMin, s_ntCtx.sh, s_ntCtx.sm);
-    timeRow("End",   cfg.nightEndMin,   s_ntCtx.eh, s_ntCtx.em);
+    _makeTimeRow(panel, "Start", cfg.nightStartMin, s_ntCtx.sh, s_ntCtx.sm, _onNightKey);
+    _makeTimeRow(panel, "End",   cfg.nightEndMin,   s_ntCtx.eh, s_ntCtx.em, _onNightKey);
 
     lv_obj_t* row = lv_obj_create(panel);
     lv_obj_set_size(row, 240, 32);
@@ -4043,7 +4136,7 @@ static void _openScreensaverDialog() {
 
     lv_obj_t* dd = lv_dropdown_create(panel);
     s_ssCtx.dd = dd;
-    lv_dropdown_set_options(dd, "Clock\nSaitama");
+    lv_dropdown_set_options(dd, "Clock\n" OPS_SAVER1_NAME);
     lv_dropdown_set_selected(dd, cfg.screensaverStyle <= 1 ? cfg.screensaverStyle : 0);
     lv_obj_set_width(dd, 210);
     lv_obj_set_style_bg_color(dd, theme::BG, 0);
@@ -5528,6 +5621,11 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             _openNightDialog();
             return;
 
+#if !OPS_FEAT_ADVERT_APP
+        case 46:  // Advert → send now + auto interval (the T-Deck has an app)
+            openAdvertWindow();
+            break;
+#endif
         case 9:  // GPS — cycle Off → Intermittent → On
             cfg.gpsMode = (cfg.gpsMode + 1) % 3;
             ops::config::save();
@@ -5572,6 +5670,15 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
 
         case 27:  // Screen Off → slider dialog
             _openScreenOffDialog();
+            return;
+
+        case 47:  // Serial Output → toggle logs + terminal echo on USB serial
+            cfg.serialLog = !cfg.serialLog;
+            ops::log::g_serialOn = true;   // so the change itself is logged
+            OPS_LOG("Settings", "Serial output %s", cfg.serialLog ? "on" : "off");
+            ops::log::g_serialOn = cfg.serialLog;
+            ops::config::save();
+            ScreenSettings::show();
             return;
 
         case 45:  // Telemetry → what we answer to telemetry requests

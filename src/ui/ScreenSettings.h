@@ -9,6 +9,10 @@ namespace ops { namespace ui {
 class ScreenSettings {
 public:
     static void show();
+
+    // No-PSRAM boards: frees the screen when it is not shown (rebuilt by
+    // the next show()).
+    static void release();
     // Asks for the storage password when the SD identity backup is locked
     // (MeshService::identityLocked()). Shown over the current screen.
     static void showIdentityUnlock();

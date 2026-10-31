@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenHeard.h"
+#include "../features.h"
 #include "../mesh/MeshService.h"
 #include "../utils/Contacts.h"
 #include "../utils/Log.h"
@@ -18,7 +19,7 @@ namespace ui {
 lv_obj_t *ScreenHeard::_screen = nullptr;
 bool ScreenHeard::_isVisible = false;
 
-static constexpr int TOP_H = 28;
+static constexpr int TOP_H = OPS_TOP_H;
 
 static int s_pendingPeer = -1;
 // Key of the peer the open popup is about — its list position can change
@@ -142,15 +143,27 @@ void ScreenHeard::_build() {
     lv_obj_set_style_radius(b, 4, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_pad_hor(b, 6, 0);
+    if (TOP_H < 26) {
+      // Short title bar (Cardputer): a fixed size with no inner padding, or
+      // the label is clipped away.
+      lv_obj_set_size(b, 52, TOP_H - 4);
+      lv_obj_set_style_pad_all(b, 0, 0);
+    }
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text(l, text);
     lv_obj_set_style_text_color(l, col, 0);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(l, TOP_H < 26 ? &lv_font_montserrat_12
+                                             : &lv_font_montserrat_10, 0);
     lv_obj_center(l);
   };
+#if OPS_KEYBOARD_ONLY
+  // Esc closes the screen; the bar only has room for a short label.
+  barBtn("Clear", theme::ORANGE, _onClearList);
+#else
   barBtn("Clear List", theme::ORANGE, _onClearList);
   barBtn(LV_SYMBOL_CLOSE, theme::TEXT_MUTED, _onHomeClick);
+#endif
 
   // ── Peer list ─────────────────────────────────────────────────────
   lv_obj_t *list = lv_obj_create(_screen);
@@ -300,7 +313,8 @@ static lv_obj_t *_addField(lv_obj_t *box, const char *key, const char *value,
   lv_obj_t *v = lv_label_create(row);
   lv_label_set_text(v, value);
   lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(v, 200);
+  // 200 px on the T-Deck; on a narrow screen the rest of the box width.
+  lv_obj_set_width(v, OPS_SCREEN_W < 300 ? OPS_SCREEN_W - 6 - 18 - 56 : 200);
   lv_obj_set_pos(v, 56, 0);
   lv_obj_set_style_text_color(v, col, 0);
   lv_obj_set_style_text_font(v, theme::bodyFont10(), 0);

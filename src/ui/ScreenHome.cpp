@@ -27,6 +27,7 @@
 //   └──────────────────────────────────────┘
 
 #include "ScreenHome.h"
+#include "../features.h"
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
@@ -162,7 +163,7 @@ static void _notePreview(RowPreview& p, const char* tag, const char* sender, uin
 
 static lv_obj_t* s_actionOverlay    = nullptr;
 // Channel popup action waiting for the next frame (see _runPendingAction).
-enum PendingAct { ACT_NONE, ACT_CLOSE, ACT_CLEAR, ACT_DELETE, ACT_SCOPE };
+enum PendingAct { ACT_NONE, ACT_CLOSE, ACT_CLEAR, ACT_DELETE, ACT_SCOPE, ACT_ICON };
 static int       s_pendAct          = ACT_NONE;
 static int       s_pendCh           = -1;
 // Configure Scope dialog.
@@ -294,7 +295,7 @@ static void _expandMeshpic(const char* in, char* out, size_t outSize)
 bool ScreenHome::_ensureHistoryAlloc()
 {
     if (s_history) return true;
-    s_history = (MsgEntry*)ps_malloc(sizeof(MsgEntry) * HISTORY_MAX);
+    s_history = (MsgEntry*)ops::psram::alloc(sizeof(MsgEntry) * HISTORY_MAX);
     if (!s_history) {
         OPS_LOG("Chat", "ps_malloc failed for history (%u bytes)",
                 (unsigned)(sizeof(MsgEntry) * HISTORY_MAX));
@@ -701,7 +702,7 @@ void ScreenHome::_loadChannelHistory(const char* tag)
     // Tail of the log — enough for CHANNEL_HISTORY_MAX lines even at the
     // ~480-byte worst case per line.
     constexpr size_t BUFSIZE = 12288;
-    char* buf = (char*)ps_malloc(BUFSIZE);
+    char* buf = (char*)ops::psram::alloc(BUFSIZE);
     if (!buf) { OPS_LOG("Chat", "ps_malloc failed for msg log"); return; }
 
     size_t n = ops::sdcard::readMsgLog(tag, buf, BUFSIZE);
@@ -991,6 +992,18 @@ void ScreenHome::checkPendingAck()
 
 // ── List-row icon/summary helpers ───────────────────────────────────────
 
+// A popup box built for the 240 px T-Deck height: on a short screen
+// (Cardputer) cap it at the screen height and let it scroll.
+static void _fitShortBox(lv_obj_t* box)
+{
+    if (OPS_SCREEN_H >= 200) return;
+    lv_obj_set_style_max_height(box, OPS_SCREEN_H - 4, 0);
+    lv_obj_set_style_pad_all(box, 4, 0);
+    lv_obj_set_style_pad_row(box, 3, 0);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(box, LV_DIR_VER);
+}
+
 // Resolves the avatar glyph for a channel row: the custom icon if the user
 // has set one (emoji or up to 2 chars), else up to 2 uppercase alnum
 // initials auto-derived from the channel name.
@@ -1263,7 +1276,9 @@ void ScreenHome::_showList()
     lv_obj_set_style_radius(addBtn, 4, 0);
     lv_obj_set_style_shadow_width(addBtn, 0, 0);
     lv_obj_set_style_pad_all(addBtn, 2, 0);
-    lv_obj_set_style_translate_x(addBtn, -45, 0);
+#if !OPS_KEYBOARD_ONLY
+    lv_obj_set_style_translate_x(addBtn, -45, 0);   // the Cardputer has no X: + takes the corner
+#endif
     lv_group_remove_obj(addBtn);
     lv_obj_add_event_cb(addBtn, _onListAdd, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* addLbl = lv_label_create(addBtn);
@@ -1321,7 +1336,7 @@ void ScreenHome::_showList()
     // a name line + a "last message" subtitle line. Widths are resolved by
     // flex (avatar/blob/action fixed, text column flex_grow=1) rather than
     // hardcoded, so this no longer needs a pixel-budget comment.
-    static constexpr int ROW_H = 60;
+    static constexpr int ROW_H = OPS_LIST_ROW_H;
 
     auto addRow = [&](int chIdx, const char* name, bool hasAction) {
         lv_obj_t* row = lv_btn_create(listBody);
@@ -1346,7 +1361,8 @@ void ScreenHome::_showList()
 
         // ── Avatar (icon) — tap to customise for channels; fixed for DM ────
         lv_obj_t* avatar = lv_obj_create(row);
-        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_size(avatar, OPS_AVATAR_SZ, OPS_AVATAR_SZ);
+        if (OPS_AVATAR_SZ == 0) lv_obj_add_flag(avatar, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_pad_all(avatar, 0, 0);
         lv_obj_clear_flag(avatar, LV_OBJ_FLAG_SCROLLABLE);
@@ -1376,7 +1392,7 @@ void ScreenHome::_showList()
 
         // ── Text column: channel name + last-message subtitle ──────────────
         lv_obj_t* col = lv_obj_create(row);
-        lv_obj_set_height(col, 44);
+        lv_obj_set_height(col, OPS_LIST_COL_H);
         lv_obj_set_flex_grow(col, 1);
         lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(col, 0, 0);
@@ -1402,6 +1418,12 @@ void ScreenHome::_showList()
 
         lv_obj_t* nameLbl = lv_label_create(nameRow);
         lv_label_set_text(nameLbl, name);
+        if (OPS_AVATAR_SZ == 0 && chIdx >= 0 && chIdx < 10 && cfg.channelIcon[chIdx][0]) {
+            // No avatar circle here: a custom icon goes in front of the name.
+            char withIcon[48];
+            snprintf(withIcon, sizeof(withIcon), "%s %s", cfg.channelIcon[chIdx], name);
+            lv_label_set_text(nameLbl, withIcon);
+        }
         lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(nameLbl, LV_SIZE_CONTENT);
         lv_obj_set_style_max_width(nameLbl, LV_PCT(70), 0);
@@ -1556,7 +1578,7 @@ void ScreenHome::_showChat()
 
     // ── Header bar ────────────────────────────────────────────────────
     lv_obj_t* hdr = lv_obj_create(_screen);
-    lv_obj_set_size(hdr, OPS_SCREEN_W, 28);
+    lv_obj_set_size(hdr, OPS_SCREEN_W, OPS_TOP_H);
     lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(hdr, theme::BG_CARD, 0);
     lv_obj_set_style_border_width(hdr, 0, 0);
@@ -1609,8 +1631,8 @@ void ScreenHome::_showChat()
 
     // ── Message area ──────────────────────────────────────────────────
     _msgArea = lv_obj_create(_screen);
-    lv_obj_set_size(_msgArea, OPS_SCREEN_W, OPS_SCREEN_H - 28 - 36);
-    lv_obj_align(_msgArea, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_size(_msgArea, OPS_SCREEN_W, OPS_SCREEN_H - OPS_TOP_H - 36);
+    lv_obj_align(_msgArea, LV_ALIGN_TOP_LEFT, 0, OPS_TOP_H);
     lv_obj_set_style_bg_color(_msgArea, theme::BG, 0);
     lv_obj_set_style_border_width(_msgArea, 0, 0);
     lv_obj_set_style_pad_hor(_msgArea, 4, 0);
@@ -1659,6 +1681,13 @@ void ScreenHome::_showChat()
     lv_label_set_text(emojiToggleLbl, "\xF0\x9F\x98\x8A");
     lv_obj_set_style_text_font(emojiToggleLbl, theme::bodyFont12(), 0);  // emoji-capable
     lv_obj_center(emojiToggleLbl);
+#if OPS_KEYBOARD_ONLY
+    // Small screen: a smaller button. No transform zoom: it draws through
+    // an off-screen layer that can't be allocated without PSRAM, so the
+    // smiley vanished.
+    lv_obj_set_size(emojiToggle, 26, 26);
+    lv_obj_set_style_pad_all(emojiToggle, 0, 0);
+#endif
 
     _sendBtn = lv_btn_create(inputBar);
     lv_obj_set_size(_sendBtn, 36, 30);
@@ -1754,7 +1783,10 @@ void ScreenHome::_openActionPopup(int chIdx)
         lv_obj_center(lbl);
     };
 
+    _fitShortBox(box);
     mkBtn("Configure Scope", theme::PRIMARY, _onActionScope, (void*)(intptr_t)chIdx);
+    if (OPS_AVATAR_SZ == 0)
+        mkBtn("Channel Icon", theme::BG, _onActionIcon, (void*)(intptr_t)chIdx);
     mkBtn("Clear Messages", theme::ORANGE,  _onActionClear,  (void*)(intptr_t)chIdx);
     {
         bool notifyOn = cfg.channels[chIdx].notify;
@@ -1920,6 +1952,23 @@ void ScreenHome::_openAddChannelDialog()
     lv_obj_set_style_text_font(cancelLbl, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(cancelLbl, theme::TEXT, 0);
     lv_obj_center(cancelLbl);
+
+#if OPS_KEYBOARD_ONLY
+    // Small screen: shorter buttons, a green tick and a red cross.
+    lv_obj_set_height(btnRow, 26);
+    lv_obj_set_height(saveBtn, 24);
+    lv_obj_set_height(cancelBtn, 24);
+    lv_obj_set_style_bg_color(saveBtn, theme::BG, 0);
+    lv_obj_set_style_border_color(saveBtn, theme::GREEN, 0);
+    lv_obj_set_style_border_width(saveBtn, 1, 0);
+    lv_obj_set_style_border_color(cancelBtn, theme::RED, 0);
+    lv_label_set_text(saveLbl, LV_SYMBOL_OK);
+    lv_obj_set_style_text_color(saveLbl, theme::GREEN, 0);
+    lv_obj_set_style_text_font(saveLbl, &lv_font_montserrat_14, 0);
+    lv_label_set_text(cancelLbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(cancelLbl, theme::RED, 0);
+    lv_obj_set_style_text_font(cancelLbl, &lv_font_montserrat_14, 0);
+#endif
 
     // Focus the name field
     lv_group_t* grp = lv_group_get_default();
@@ -2168,6 +2217,11 @@ void ScreenHome::_onListKey(lv_event_t* e)
 void ScreenHome::_onChatKey(lv_event_t* e)
 {
     if (lv_event_get_key(e) == LV_KEY_ESC) {
+        // Esc with the emoji picker open closes the picker first.
+        if (_emojiPanel && lv_obj_is_valid(_emojiPanel)) {
+            _closeEmojiPanel();
+            return;
+        }
         s_mode = MODE_LIST;
         _showList();
     }
@@ -2229,6 +2283,9 @@ void ScreenHome::_runPendingAction(void* /*unused*/)
         case ACT_SCOPE:
             _openChannelScopeDialog(ch);
             break;
+        case ACT_ICON:
+            _openIconPicker(ch);
+            break;
         default:
             break;
     }
@@ -2237,6 +2294,12 @@ void ScreenHome::_runPendingAction(void* /*unused*/)
 void ScreenHome::_onActionScope(lv_event_t* e)
 {
     _queueAction(ACT_SCOPE, (int)(intptr_t)lv_event_get_user_data(e));
+    lv_async_call(_runPendingAction, nullptr);
+}
+
+void ScreenHome::_onActionIcon(lv_event_t* e)
+{
+    _queueAction(ACT_ICON, (int)(intptr_t)lv_event_get_user_data(e));
     lv_async_call(_runPendingAction, nullptr);
 }
 
@@ -2310,6 +2373,7 @@ void ScreenHome::_openChannelScopeDialog(int chIdx)
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     char titleBuf[40];
+    _fitShortBox(box);
     snprintf(titleBuf, sizeof(titleBuf), "Scope: %.24s", chName);
     lv_obj_t* tLbl = lv_label_create(box);
     lv_label_set_text(tLbl, titleBuf);
@@ -3033,16 +3097,93 @@ static void _codeToUtf8(uint32_t cp, char* buf)
     }
 }
 
+// Emoji buttons for the picker grid: all of them on the T-Deck (the search
+// box then hides non-matches); without PSRAM at most 48, so the grid is
+// rebuilt from the whole table on every search instead.
+#if OPS_HAS_PSRAM
+static constexpr int kMaxEmoji = 200;
+#else
+// 200 buttons run the LVGL heap (internal RAM) dry and lv_btn_create()
+// returns null.
+static constexpr int kMaxEmoji = 48;
+#endif
+static lv_event_cb_t s_emojiInsertCb = nullptr;
+
+static void _fillEmojiGrid(const char* q)
+{
+    if (!s_emojiGrid) return;
+    lv_obj_clean(s_emojiGrid);
+    s_emojiBtnCount = 0;
+    for (int i = 0; i < kOpsEmojiCount && s_emojiBtnCount < kMaxEmoji; i++) {
+        if (q && q[0] && !strstr(kOpsEmoji[i].name, q)) continue;
+        lv_obj_t* btn = lv_btn_create(s_emojiGrid);
+        if (!btn) break;
+        s_emojiBtns[s_emojiBtnCount++] = btn;
+
+        lv_obj_set_size(btn, 56, 26);
+        lv_obj_set_style_bg_color(btn, theme::BG, 0);
+        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 2, 0);
+        lv_obj_add_event_cb(btn, s_emojiInsertCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(
+                                static_cast<uintptr_t>(kOpsEmoji[i].codepoint)));
+
+        char utf8[5] = {};
+        _codeToUtf8(kOpsEmoji[i].codepoint, utf8);
+        lv_obj_t* lbl = lv_label_create(btn);
+        if (!lbl) break;
+        lv_label_set_text(lbl, utf8);
+        lv_obj_set_style_text_font(lbl, theme::bodyFont12(), 0);  // emoji-capable
+        lv_obj_center(lbl);
+    }
+}
+
 static void _onEmojiSearch(lv_event_t* e)
 {
     if (!s_emojiGrid || !lv_obj_is_valid(s_emojiGrid)) return;
     const char* q = lv_textarea_get_text((lv_obj_t*)lv_event_get_target(e));
+#if !OPS_HAS_PSRAM
+    _fillEmojiGrid(q);
+#else
     for (int i = 0; i < s_emojiBtnCount; i++) {
         if (!s_emojiBtns[i] || !lv_obj_is_valid(s_emojiBtns[i])) continue;
         bool show = (!q || !q[0]) || (strstr(kOpsEmoji[i].name, q) != nullptr);
         if (show) lv_obj_clear_flag(s_emojiBtns[i], LV_OBJ_FLAG_HIDDEN);
         else      lv_obj_add_flag  (s_emojiBtns[i], LV_OBJ_FLAG_HIDDEN);
     }
+#endif
+}
+
+bool ScreenHome::closeEmojiPicker()
+{
+    if (!_emojiPanel || !lv_obj_is_valid(_emojiPanel)) return false;
+    _closeEmojiPanel();
+    return true;
+}
+
+bool ScreenHome::scrollMessages(int dy)
+{
+    if (!dy || !_screen || lv_scr_act() != _screen) return false;
+    if (!_msgArea || !lv_obj_is_valid(_msgArea)) return false;
+    if (_emojiPanel && lv_obj_is_valid(_emojiPanel)) return false;
+    // A full-screen popup (on the chat screen or the top layer) takes the keys.
+    uint32_t cnt = lv_obj_get_child_cnt(_screen);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t* c = lv_obj_get_child(_screen, i);
+        if (c == _msgArea || lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+        if (lv_obj_get_width(c) >= OPS_SCREEN_W - 2 &&
+            lv_obj_get_height(c) >= OPS_SCREEN_H - 2) return false;
+    }
+    lv_obj_t* top = lv_layer_top();
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(top); i++)
+        if (!lv_obj_has_flag(lv_obj_get_child(top, i), LV_OBJ_FLAG_HIDDEN)) return false;
+    lv_coord_t step = lv_obj_get_height(_msgArea) / 2;
+    OPS_LOG("Chat", "scroll %d (at %d, %d more above)", dy,
+            (int)lv_obj_get_scroll_y(_msgArea), (int)lv_obj_get_scroll_top(_msgArea));
+    lv_obj_scroll_by_bounded(_msgArea, 0, dy < 0 ? step : -step, LV_ANIM_ON);
+    return true;
 }
 
 void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
@@ -3055,11 +3196,14 @@ void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
         return;
     }
 
-    static constexpr int PANEL_H  = 120;
-    static constexpr int SEARCH_H = 28;
+    // Above the 36 px compose bar; on a short screen (Cardputer) the panel
+    // fits what is left, so the search box stays visible (2 emoji rows).
+    static constexpr int PANEL_H  = OPS_SCREEN_H - 36 < 120 ? OPS_SCREEN_H - 36 : 120;
+    static constexpr int SEARCH_H = OPS_SCREEN_H < 200 ? 24 : 28;
     static constexpr int GRID_H   = PANEL_H - SEARCH_H;
 
     _emojiPanel = lv_obj_create(_screen);
+    if (!_emojiPanel) return;
     lv_obj_set_size(_emojiPanel, OPS_SCREEN_W, PANEL_H);
     lv_obj_align(_emojiPanel, LV_ALIGN_BOTTOM_LEFT, 0, -36);
     lv_obj_set_style_bg_color(_emojiPanel, theme::BG_CARD, 0);
@@ -3083,6 +3227,7 @@ void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
     lv_obj_set_style_pad_hor(searchTa, 6, 0);
     lv_obj_set_style_pad_ver(searchTa, 6, 0);
     lv_obj_add_event_cb(searchTa, _onEmojiSearch, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(searchTa, _onEmojiSearchKey, LV_EVENT_KEY, nullptr);
 
     // ── Scrollable emoji grid ─────────────────────────────────────────
     s_emojiGrid = lv_obj_create(_emojiPanel);
@@ -3101,29 +3246,8 @@ void ScreenHome::_onEmojiToggle(lv_event_t* /*e*/)
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     s_emojiBtnCount = 0;
-    int limit = (kOpsEmojiCount < 200) ? kOpsEmojiCount : 200;
-    for (int i = 0; i < limit; i++) {
-        lv_obj_t* btn = lv_btn_create(s_emojiGrid);
-        s_emojiBtns[i] = btn;
-        s_emojiBtnCount++;
-
-        lv_obj_set_size(btn, 56, 26);
-        lv_obj_set_style_bg_color(btn, theme::BG, 0);
-        lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
-        lv_obj_set_style_radius(btn, 4, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 2, 0);
-        lv_obj_add_event_cb(btn, _onEmojiInsert, LV_EVENT_CLICKED,
-                            reinterpret_cast<void*>(
-                                static_cast<uintptr_t>(kOpsEmoji[i].codepoint)));
-
-        char utf8[5] = {};
-        _codeToUtf8(kOpsEmoji[i].codepoint, utf8);
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, utf8);
-        lv_obj_set_style_text_font(lbl, theme::bodyFont12(), 0);  // emoji-capable
-        lv_obj_center(lbl);
-    }
+    s_emojiInsertCb = _onEmojiInsert;
+    _fillEmojiGrid(nullptr);
 }
 
 void ScreenHome::_onEmojiInsert(lv_event_t* e)
@@ -3134,10 +3258,25 @@ void ScreenHome::_onEmojiInsert(lv_event_t* e)
     _codeToUtf8(cp, utf8);
     if (_textarea && lv_obj_is_valid(_textarea))
         lv_textarea_add_text(_textarea, utf8);
-    if (_emojiPanel && lv_obj_is_valid(_emojiPanel)) {
-        lv_obj_del(_emojiPanel);
-        _emojiPanel = nullptr;
-    }
+    _closeEmojiPanel();
+}
+
+// Closes the picker from inside it (a button or the search box): deleted
+// async, since the event target is one of its children.
+void ScreenHome::_closeEmojiPanel()
+{
+    if (_emojiPanel && lv_obj_is_valid(_emojiPanel)) lv_obj_del_async(_emojiPanel);
+    _emojiPanel     = nullptr;
+    s_emojiGrid     = nullptr;
+    s_emojiBtnCount = 0;
+    lv_group_t* g = lv_group_get_default();
+    if (g && _textarea && lv_obj_is_valid(_textarea)) lv_group_focus_obj(_textarea);
+}
+
+// Esc in the search box closes the picker (back to the compose box).
+void ScreenHome::_onEmojiSearchKey(lv_event_t* e)
+{
+    if (lv_event_get_key(e) == LV_KEY_ESC) _closeEmojiPanel();
 }
 
 // ── Channel icon picker ─────────────────────────────────────────────────
@@ -3184,6 +3323,7 @@ void ScreenHome::_openIconPicker(int chIdx)
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     char titleBuf[36];
+    _fitShortBox(box);
     snprintf(titleBuf, sizeof(titleBuf), "Icon: %.24s", chName);
     lv_obj_t* tLbl = lv_label_create(box);
     lv_label_set_text(tLbl, titleBuf);
@@ -3304,7 +3444,9 @@ void ScreenHome::_onIconEmojiOpen(lv_event_t* /*e*/)
         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     s_iconEmojiBtnCount = 0;
-    int limit = (kOpsEmojiCount < 200) ? kOpsEmojiCount : 200;
+    // kMaxEmoji: 48 without PSRAM, as in the compose picker (200 buttons
+    // would take ~40 KB of internal RAM).
+    int limit = (kOpsEmojiCount < kMaxEmoji) ? kOpsEmojiCount : kMaxEmoji;
     for (int i = 0; i < limit; i++) {
         lv_obj_t* btn = lv_btn_create(s_iconEmojiGrid);
         s_iconEmojiBtns[i] = btn;

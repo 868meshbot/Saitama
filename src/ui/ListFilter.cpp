@@ -90,6 +90,9 @@ lv_obj_t* create(lv_obj_t* bar, State& st, lv_coord_t width, lv_coord_t insetRig
     if (st.text[0]) lv_textarea_set_text(ta, st.text);
     lv_obj_add_event_cb(ta, _onChanged, LV_EVENT_VALUE_CHANGED, &st);
     lv_obj_add_event_cb(ta, _onKey,     LV_EVENT_KEY,           &st);
+    // USER_2: a filter box, where the keyboard-only arrow keys (; , . /)
+    // move through the list instead of typing (see UIScreen).
+    lv_obj_add_flag(ta, LV_OBJ_FLAG_USER_2);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {

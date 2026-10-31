@@ -13,9 +13,11 @@
 // before. Falls back to internal RAM if PSRAM is missing.
 
 #pragma once
+#include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <stdlib.h>
 #include <type_traits>
+#include "../features.h"
 
 namespace ops {
 namespace psram {
@@ -29,6 +31,17 @@ T& array()
     void* m = heap_caps_calloc(1, sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!m) m = calloc(1, sizeof(T));
     return *static_cast<T*>(m);
+}
+
+// ps_malloc() for boards with PSRAM; plain malloc() on boards without it
+// (Arduino's ps_malloc returns NULL when no PSRAM was found).
+inline void* alloc(size_t size)
+{
+#if OPS_HAS_PSRAM
+    return ps_malloc(size);
+#else
+    return malloc(size);
+#endif
 }
 
 }  // namespace psram

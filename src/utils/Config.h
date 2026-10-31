@@ -43,7 +43,7 @@ struct Config {
     char       mapTileDir[32];
     int        theme;             // 0 = dark
     bool       fontExtLatin;     // use extended Latin font (covers Polish, Czech, etc.)
-    uint8_t    radioProfile;      // 0=NAR 1=MED 2=LON
+    uint8_t    radioProfile;      // 0..13, MeshService::applyLoraProfile() table
     bool       showAdverts;       // print incoming advert packets in terminal
     // Radio parameter overrides — applied after profile when radioCustom is true
     bool       radioCustom;       // true = use individual overrides below
@@ -78,7 +78,7 @@ struct Config {
     // ── fields added after v1.0.0 — MUST stay at the end so older NVS blobs ──
     // ── (which lack these bytes) can still be accepted and migrated cleanly. ──
     uint8_t    uiLanguage;       // 0=EN, 1=IT, 2=FR, 3=DE, 4=ES (ops::lang::UiLang)
-    bool       kbAutoNight;      // true = auto keyboard backlight 21:00-07:00 or in night mode (at kbBrightness level), off otherwise
+    bool       kbAutoNight;      // true = auto keyboard backlight between kbAutoStartMin-kbAutoEndMin or in night mode (at kbBrightness level), off otherwise
     // Per-channel-slot custom icon shown in the chat list: an emoji (UTF-8, up
     // to 4 bytes) or up to 2 ASCII initials. Empty = auto-derive initials from
     // the channel name. Kept as a top-level array (not a ChannelCfg field) so
@@ -116,6 +116,13 @@ struct Config {
     bool       telemAllow;
     bool       telemLocation;
     bool       telemEnv;
+    // Keyboard light Auto window (minutes after local midnight, may wrap past
+    // midnight); default 21:00-07:00. See kbAutoNight.
+    uint16_t   kbAutoStartMin;
+    uint16_t   kbAutoEndMin;
+    // Log lines and the terminal echo on the USB serial port (Settings >
+    // Serial Output); default on. Mirrored into ops::log::g_serialOn.
+    bool       serialLog;
 };
 
 // Values for Config::radioPowerMode.
@@ -153,6 +160,9 @@ namespace config {
     // True while night mode is on and the local time is inside its window
     // (false until the clock is set).
     bool   nightModeActive();
+    // True while the local time is inside the keyboard light Auto window
+    // (also true until the clock is set, so the keyboard stays usable).
+    bool   kbAutoWindowActive();
 
     // Write calibration coefficients and persist (NVS + SD).
     void setTouchCal(float xScale, float xOff, float yScale, float yOff);

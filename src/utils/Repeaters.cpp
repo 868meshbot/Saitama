@@ -2,6 +2,8 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Repeaters.h"
+#include "../features.h"
+#include "PsramAlloc.h"
 #include "Crypto.h"
 #include "SDCard.h"
 #include "Log.h"
@@ -16,6 +18,10 @@ namespace ops {
 static Repeater* s_reps     = nullptr;  // PSRAM; allocated in init()
 static Repeater* s_repsSnap = nullptr;  // PSRAM rollback buffer for reloadFromSD()
 static int       s_count = 0;
+// True once the card's list has been read, or found absent. While false (card
+// missing at boot, mounted later) save() merges into the card's file instead
+// of overwriting the saved archive with this session's entries.
+static bool     s_sdChecked = false;
 
 // ── SD JSON helpers ────────────────────────────────────────────────
 
@@ -180,8 +186,10 @@ static void _clearLegacyNvs()
 void repeaters::init()
 {
     if (!s_reps) {
-        s_reps     = (Repeater*)ps_malloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
-        s_repsSnap = (Repeater*)ps_malloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
+        s_reps     = (Repeater*)ops::psram::alloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
+#if OPS_HAS_PSRAM
+        s_repsSnap = (Repeater*)ops::psram::alloc((size_t)repeaters::CAPACITY * sizeof(Repeater));
+#endif
         memset(s_reps, 0, (size_t)repeaters::CAPACITY * sizeof(Repeater));
     }
     // ── SD is always authoritative ────────────────────────────────────────
@@ -190,6 +198,7 @@ void repeaters::init()
     // at least as fresh as NVS.
     if (_loadFromSD()) {
         OPS_LOG("Repeaters", "Loaded %d from SD", s_count);
+        s_sdChecked = true;
         _clearLegacyNvs();
         return;
     }
@@ -200,10 +209,12 @@ void repeaters::init()
         OPS_LOG("Repeaters", "SD not mounted at init, attempting remount");
         if (sdcard::tryMount() && _loadFromSD()) {
             OPS_LOG("Repeaters", "Loaded %d from SD after remount", s_count);
+            s_sdChecked = true;
             _clearLegacyNvs();
             return;
         }
     }
+    s_sdChecked = sdcard::isMounted();   // mounted: no file yet, or unreadable
 
     // ── NVS fallback (SD absent or no file yet) ───────────────────────────
     // One-time migration: read legacy per-blob NVS data, write to SD, clear namespace.
@@ -239,12 +250,25 @@ int repeaters::reloadFromSD()
 {
     if (!sdcard::isMounted()) return -1;
     int snapN = s_count;
+#if !OPS_HAS_PSRAM
+    // No PSRAM: borrow the rollback copy only for the reload.
+    s_repsSnap = snapN > 0 ? (Repeater*)malloc((size_t)snapN * sizeof(Repeater)) : nullptr;
+    if (snapN > 0 && !s_repsSnap) return -1;
+#endif
     if (snapN > 0) memcpy(s_repsSnap, s_reps, (size_t)snapN * sizeof(Repeater));
     if (!_loadFromSD()) {
         s_count = snapN;
         if (snapN > 0) memcpy(s_reps, s_repsSnap, (size_t)snapN * sizeof(Repeater));
+#if !OPS_HAS_PSRAM
+        free(s_repsSnap);
+        s_repsSnap = nullptr;
+#endif
         return -1;
     }
+#if !OPS_HAS_PSRAM
+    free(s_repsSnap);
+    s_repsSnap = nullptr;
+#endif
     save();
     return s_count;
 }
@@ -261,8 +285,41 @@ void repeaters::clearPath(int idx)
     OPS_LOG("Repeaters", "Path cleared: %s", s_reps[idx].name);
 }
 
+// The card mounted after boot: load its list, then lay this session's
+// entries over it (same key = session copy, it is newer). On a read failure
+// the session list is kept and saved as before.
+static void _mergeLateSd()
+{
+    if (!SD.exists("/ops/repeaters.json")) return;   // nothing to protect
+    int n = s_count;
+#if !OPS_HAS_PSRAM
+    s_repsSnap = n > 0 ? (Repeater*)malloc((size_t)n * sizeof(Repeater)) : nullptr;
+    if (n > 0 && !s_repsSnap) return;
+#endif
+    if (n > 0) memcpy(s_repsSnap, s_reps, (size_t)n * sizeof(Repeater));
+    if (_loadFromSD()) {
+        for (int i = 0; i < n; i++) {
+            int idx;
+            if (repeaters::findByKey(s_repsSnap[i].pubKeyPrefix, &idx)) s_reps[idx] = s_repsSnap[i];
+            else if (s_count < repeaters::CAPACITY)               s_reps[s_count++] = s_repsSnap[i];
+        }
+        OPS_LOG("Repeaters", "SD mounted late: merged %d into %d saved", n, s_count);
+    } else {
+        s_count = n;
+        if (n > 0) memcpy(s_reps, s_repsSnap, (size_t)n * sizeof(Repeater));
+    }
+#if !OPS_HAS_PSRAM
+    free(s_repsSnap);
+    s_repsSnap = nullptr;
+#endif
+}
+
 void repeaters::save()
 {
+    if (!s_sdChecked && sdcard::isMounted()) {
+        _mergeLateSd();
+        s_sdChecked = true;
+    }
     _saveToSD();
 }
 

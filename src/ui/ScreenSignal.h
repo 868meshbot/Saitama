@@ -15,6 +15,10 @@ class ScreenSignal {
 public:
     static void show();
 
+    // No-PSRAM boards: frees the screen when it is not shown (rebuilt by
+    // the next show()).
+    static void release();
+
 private:
     static lv_obj_t*   _screen;
     static lv_obj_t*   _body;       // scrollable content area

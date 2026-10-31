@@ -5,6 +5,7 @@
 // touching the LittleFS/spiffs partition that MeshCore owns.
 
 #include "Config.h"
+#include "../features.h"
 #include "SDCard.h"
 #include "Log.h"
 #include "Crypto.h"
@@ -13,6 +14,8 @@
 #include <ArduinoJson.h>
 
 namespace ops {
+
+namespace log { bool g_serialOn = true; }
 
 static Config      s_cfg;
 static Preferences prefs;
@@ -50,7 +53,7 @@ static void setDefaults(Config& c) {
     c.notifySoundChoice = 0;
     strncpy(c.mapTileDir, "/map", sizeof(c.mapTileDir));
     c.theme            = 0;
-    c.radioProfile     = 0;
+    c.radioProfile     = 2;   // EU/UK Narrow (index into applyLoraProfile())
     c.showAdverts      = false;
     c.radioCustom      = false;
     c.freqMHz          = 0.0f;
@@ -73,10 +76,13 @@ static void setDefaults(Config& c) {
     c.nightStartMin    = 22 * 60;
     c.nightEndMin      = 7 * 60;
     c.mapStyle         = 0;   // day
-    c.screensaverStyle = 0;   // clock
+    c.screensaverStyle = OPS_DEFAULT_SAVER;   // T-Deck: clock; Cardputer: mesh rain
     c.telemAllow       = false;   // MeshCore companion default: deny
     c.telemLocation    = false;
     c.telemEnv         = false;
+    c.kbAutoStartMin   = 21 * 60;
+    c.kbAutoEndMin     = 7 * 60;
+    c.serialLog        = true;
     c.rxBoost          = true;   // matches MeshCore's T-Deck variant (SX126X_RX_BOOSTED_GAIN)
     c.cpuGovernor      = 2;  // Normal — scales down during screensaver/screen-off
     c.fontExtLatin     = false;  // default Standard font; Extended Latin is opt-in
@@ -157,6 +163,9 @@ static void _saveToSD() {
     doc["fontExt"]      = s_cfg.fontExtLatin;
     doc["uiLang"]       = s_cfg.uiLanguage;
     doc["kbAutoNight"]  = s_cfg.kbAutoNight;
+    doc["kbAutoStart"]  = s_cfg.kbAutoStartMin;
+    doc["kbAutoEnd"]    = s_cfg.kbAutoEndMin;
+    doc["serialLog"]    = s_cfg.serialLog;
     doc["tcXScale"]     = s_cfg.touchCalXScale;
     doc["tcXOff"]       = s_cfg.touchCalXOff;
     doc["tcYScale"]     = s_cfg.touchCalYScale;
@@ -254,7 +263,7 @@ static bool _loadFromSD() {
     s_cfg.nightEndMin     = (uint16_t)(doc["nightEnd"]   | 7 * 60) % 1440;
     s_cfg.mapStyle        = (uint8_t)(doc["mapStyle"] | 0);
     if (s_cfg.mapStyle > 2) s_cfg.mapStyle = 2;
-    s_cfg.screensaverStyle = (uint8_t)(doc["ssStyle"] | 0);
+    s_cfg.screensaverStyle = (uint8_t)(doc["ssStyle"] | OPS_DEFAULT_SAVER);
     if (s_cfg.screensaverStyle > 1) s_cfg.screensaverStyle = 0;
     s_cfg.telemAllow    = doc["telBase"] | false;
     s_cfg.telemLocation = doc["telLoc"]  | false;
@@ -263,6 +272,9 @@ static bool _loadFromSD() {
     s_cfg.fontExtLatin  = doc["fontExt"] | false;
     s_cfg.uiLanguage    = (uint8_t)(doc["uiLang"]  | 0);
     s_cfg.kbAutoNight   = doc["kbAutoNight"] | false;
+    s_cfg.kbAutoStartMin = (uint16_t)(doc["kbAutoStart"] | 21 * 60) % 1440;
+    s_cfg.kbAutoEndMin   = (uint16_t)(doc["kbAutoEnd"]   | 7 * 60) % 1440;
+    s_cfg.serialLog      = doc["serialLog"] | true;
     s_cfg.touchCalXScale = doc["tcXScale"] | 1.0f;
     s_cfg.touchCalXOff   = doc["tcXOff"]   | 0.0f;
     s_cfg.touchCalYScale = doc["tcYScale"] | 1.0f;
@@ -315,6 +327,26 @@ static bool _loadFromSD() {
 
 const Config& config::get() { return s_cfg; }
 
+// Repairs values the UI can never set — left by a corrupt blob or by other
+// firmware sharing the namespace. A backlight under the Settings minimum
+// (128) left a keyboard-only device on a black screen with no way back.
+// Returns true when something was changed (the caller saves).
+static bool _sanitize(Config& c) {
+    bool fixed = false;
+    if (c.brightness < 128 || c.brightness > 255) {
+        OPS_LOG("Config", "Brightness %d out of range - reset to 200", c.brightness);
+        c.brightness = 200;
+        fixed = true;
+    }
+    if (c.radioProfile >= 14) {
+        OPS_LOG("Config", "Radio profile %d out of range - reset to EU/UK Narrow",
+                c.radioProfile);
+        c.radioProfile = 2;
+        fixed = true;
+    }
+    return fixed;
+}
+
 void config::init() {
     setDefaults(s_cfg);
 
@@ -365,6 +397,7 @@ void config::init() {
                         n[0] = '\0'; sn[0] = '\0'; migrated = true;
                     }
                 }
+                if (_sanitize(s_cfg)) migrated = true;
                 if (migrated || loaded != sizeof(s_cfg)) {
                     OPS_LOG("Config", "NVS blob migrated (%u→%u bytes)", (unsigned)loaded, (unsigned)sizeof(s_cfg));
                     config::save();
@@ -390,6 +423,7 @@ void config::init() {
     // Try it whenever SD is mounted, not just when hasCompleteBackup() holds —
     // contacts.json or repeaters.json may not exist yet on a fresh device.
     if (_loadFromSD()) {
+        _sanitize(s_cfg);
         OPS_LOG("Config", "Restored from SD backup: callsign=%s", s_cfg.callsign);
         // Clear old per-key entries and write compact blob.
         if (prefs.begin("oms", false)) { prefs.clear(); prefs.end(); }
@@ -471,6 +505,7 @@ void config::init() {
         prefs.end();
         // Clear old per-key entries and write compact blob.
         if (prefs.begin("oms", false)) { prefs.clear(); prefs.end(); }
+        _sanitize(s_cfg);
         OPS_LOG("Config", "Migrated from legacy NVS keys: callsign=%s", s_cfg.callsign);
         save();
         return;
@@ -526,16 +561,27 @@ void config::setRegion(const char* reg) {
     save();
 }
 
-bool config::nightModeActive() {
-    if (!s_cfg.nightMode || time(nullptr) < 1700000000) return false;   // clock not set
-    time_t t = localEpoch();
+// True when the local time lies in [startMin, endMin); the window may wrap
+// past midnight. An empty window (start == end) is never active.
+static bool _inLocalWindow(uint16_t startMin, uint16_t endMin) {
+    time_t t = config::localEpoch();
     struct tm lt;
     gmtime_r(&t, &lt);
     int now = lt.tm_hour * 60 + lt.tm_min;
-    int s = s_cfg.nightStartMin % 1440, e = s_cfg.nightEndMin % 1440;
+    int s = startMin % 1440, e = endMin % 1440;
     if (s == e) return false;
     return (s < e) ? (now >= s && now < e)     // e.g. 01:00-06:00
                    : (now >= s || now < e);    // wraps midnight, e.g. 22:00-07:00
+}
+
+bool config::nightModeActive() {
+    if (!s_cfg.nightMode || time(nullptr) < 1700000000) return false;   // clock not set
+    return _inLocalWindow(s_cfg.nightStartMin, s_cfg.nightEndMin);
+}
+
+bool config::kbAutoWindowActive() {
+    if (time(nullptr) < 1700000000) return true;   // clock not set: keep it lit
+    return _inLocalWindow(s_cfg.kbAutoStartMin, s_cfg.kbAutoEndMin);
 }
 
 time_t config::localEpoch() {

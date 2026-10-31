@@ -34,6 +34,7 @@
 //   Total content ≈ 404 px → scrolls ~192 px inside 212 px body.
 
 #include "ScreenSignal.h"
+#include "../features.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
@@ -52,7 +53,7 @@
 namespace ops { namespace ui {
 
 // ── Constants ─────────────────────────────────────────────────────────
-static constexpr int  TOP_H   = 28;
+static constexpr int  TOP_H   = OPS_TOP_H;
 static constexpr int  BODY_H  = OPS_SCREEN_H - TOP_H;   // 212 px
 static constexpr int  SEC_H   = 20;    // section header height
 static constexpr int  ROW_H   = 18;    // data row height
@@ -275,7 +276,7 @@ void ScreenSignal::_build()
 
     // ── HARDWARE (partly live: heap/PSRAM) ───────────────────────────
     _addSection(_body, "HARDWARE");
-    _addRow(_body, "Board:", "LilyGo T-Deck Plus");
+    _addRow(_body, "Board:", OPS_BOARD_NAME);
     _addRow(_body, "FW:", OPS_VERSION_STRING);
     _addRow(_body, "CPU:", "ESP32-S3  240 MHz");
     _addRow(_body, "Heap:",  "--",  &s_heapLbl);
@@ -454,6 +455,17 @@ void ScreenSignal::_refresh()
                     battPct >= 20  ? theme::ORANGE :
                                      theme::RED;
     lv_obj_set_style_text_color(s_battLbl, bc, 0);
+}
+
+void ScreenSignal::release()
+{
+    if (!_screen || lv_scr_act() == _screen) return;
+    if (_timer) { lv_timer_del(_timer); _timer = nullptr; }
+    lv_obj_t* scr = _screen;
+    _screen = nullptr;
+    _body   = nullptr;
+    lv_obj_del(scr);
+    OPS_LOG("UI", "Signal released");
 }
 
 // ── show() ────────────────────────────────────────────────────────────

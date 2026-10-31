@@ -9,6 +9,7 @@
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #include "version.h"
+#include "features.h"
 #include "hardware/Board.h"
 #include "mesh/MeshService.h"
 #include "ui/UIScreen.h"
@@ -31,10 +32,15 @@ void setup() {
     // The terminal "shutdown" command holds the peripheral rail (GPIO10) low
     // through deep sleep; release it before Board::init() drives it high.
     gpio_deep_sleep_hold_dis();
+#if OPS_HAS_POWER_RAIL
     gpio_hold_dis(GPIO_NUM_10);
+#endif
     // ...and hand the trackball button (the wake pin) back to the digital
     // GPIO matrix, or the trackball click stays dead after the wake.
     rtc_gpio_deinit(GPIO_NUM_0);
+    // ...and drop any wake level type a panic restart left on the wake pins,
+    // before Board::init()'s pinMode() turns it into a live interrupt.
+    ops::ui::armWakePins(false);
 
     // Must precede begin(): HWCDC only creates its TX ring (default 256 B) if
     // none exists. With the zero timeout below, any burst larger than the
@@ -70,6 +76,7 @@ void setup() {
     ops::crypto::init();
     ops::btpin::init();
     ops::config::init();
+    ops::log::g_serialOn = ops::config::get().serialLog;
     ops::config::scrubSdSecrets();
     ops::contacts::init();
     ops::regions::init();

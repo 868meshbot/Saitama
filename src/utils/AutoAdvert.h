@@ -21,6 +21,7 @@ int  choice();                // index into HOURS
 bool setChoice(int idx);      // saves to SD; restarts the timer. False if the write failed.
 void noteAdvertSent();        // any advert restarts the countdown
 void tick();                  // call every UI frame; sends when due
+uint32_t secondsUntilNext();  // 0 when auto advert is off
 
 }  // namespace autoadvert
 }  // namespace ops

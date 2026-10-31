@@ -15,15 +15,22 @@
 //   └──────────────────────────────────────┘  y = 240
 
 #include "ScreenTerminal.h"
+#include "../features.h"
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenRepeaters.h"
+#if OPS_FEAT_RADIO_TOOLS
 #include "ScreenSpectrum.h"
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
+#endif
+#if OPS_FEAT_MEDIA
 #include "ScreenMP3Player.h"
-#include "ScreenPower.h"
 #include "ScreenFileManager.h"
+#endif
+#if OPS_FEAT_POWER
+#include "ScreenPower.h"
+#endif
 #include "UIScreen.h"
 #include "Theme.h"
 #include "../mesh/MeshService.h"
@@ -53,7 +60,7 @@
 
 namespace ops { namespace ui {
 
-static constexpr int TOP_H   = 28;
+static constexpr int TOP_H   = OPS_TOP_H;
 static constexpr int INPUT_H = 56;   // 44 input row + 12 hint row
 static constexpr int LOG_H   = OPS_SCREEN_H - TOP_H - INPUT_H;  // 156 px
 
@@ -75,14 +82,21 @@ char      ScreenTerminal::s_suggBase[32] = {};
 // bubble. Kept in sync manually with the strcmp(cmd, "...") table below —
 // "mobrep" is listed in help but never implemented, so it is omitted here.
 static const char* kCmdList[] = {
-    "advert", "adverts", "autorep", "battery", "card", "ch3", "ch4", "ch5",
+    "advert", "adverts", "autorep", "battery", "bl", "card", "ch3", "ch4", "ch5",
     "channel", "channels", "chscan", "clearcontacts", "clearmessages",
     "clearrep", "clock", "contacts", "control", "filemgr", "find", "get",
-    "getpath", "gps", "help", "i2c", "identity", "import", "kbbl", "list",
+    "getpath", "gps", "help", "i2c", "identity", "import",
+#if OPS_FEAT_KB_BACKLIGHT
+    "kbbl",
+#endif
+    "list",
     "local", "memory", "messages", "pathsize", "play", "power", "public",
     "quiet", "reboot", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
     "resetpath", "saitama-scr", "scope", "screenshot", "sd", "send", "set", "setchannel",
-    "setpath", "shutdown", "siggen", "spectrum", "tbdebug", "time", "to", "touch-cali",
+    "setpath", "shutdown", "siggen", "spectrum", "tbdebug", "time", "to",
+#if OPS_FEAT_TOUCH
+    "touch-cali",
+#endif
     nullptr
 };
 
@@ -105,7 +119,9 @@ static const char* kSubIdentity[]  = { "restore", "show", nullptr };
 static const char* kSubGps[]       = { "intermittent", "off", "on", nullptr };
 static const char* kSubClock[]     = { "analog", nullptr };
 static const char* kSubOnOff[]     = { "off", "on", nullptr };   // tbdebug
+#if OPS_FEAT_TOUCH
 static const char* kSubTouchCali[] = { "reset", nullptr };
+#endif
 static const char* kSubPathsize[]  = { "1", "2", "3", nullptr };
 static const char* kSubReset[]     = { "path", nullptr };
 static const char* kSubI2c[]       = { "scan", nullptr };
@@ -118,7 +134,9 @@ static const SubWordEntry kSubWordTable[] = {
     { "gps",        kSubGps       },
     { "clock",      kSubClock     },
     { "tbdebug",    kSubOnOff     },
+#if OPS_FEAT_TOUCH
     { "touch-cali", kSubTouchCali },
+#endif
     { "pathsize",   kSubPathsize  },
     { "reset",      kSubReset     },
     { "i2c",        kSubI2c       },
@@ -143,7 +161,7 @@ uint8_t   ScreenTerminal::s_adminKey[4]    = {};
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenTerminal::show() {
     if (!_logBuf) {
-        _logBuf = (char*)ps_malloc(LOG_BUF_SIZE);
+        _logBuf = (char*)ops::psram::alloc(LOG_BUF_SIZE);
         if (_logBuf) {
             static const char kHello[] = "Saitama Terminal - type help\n";
             memcpy(_logBuf, kHello, sizeof(kHello));
@@ -229,8 +247,10 @@ static void _shutdownNow()
     // GPIO10 is an RTC pad, so gpio_hold_en() alone keeps it low in deep
     // sleep. No gpio_deep_sleep_hold_en(): that froze every pad, the wake
     // pin included.
+#if OPS_HAS_POWER_RAIL
     digitalWrite(GPIO_NUM_10, LOW);
     gpio_hold_en(GPIO_NUM_10);
+#endif
 
     // Keep the trackball button pulled up through sleep so a click (low)
     // is a clean edge rather than a floating pin.
@@ -247,7 +267,8 @@ static void _shutdownNow()
 // ── appendLine() ─────────────────────────────────────────────────────
 void ScreenTerminal::appendLine(const char* line) {
     // Echo to CDC serial so the serial console sees all responses
-    Serial.println(line);
+    // (unless Settings > Serial Output is off).
+    if (ops::log::g_serialOn) Serial.println(line);
 
     if (!_logBuf) return;
     int remaining = LOG_BUF_SIZE - _logLen - 1;
@@ -721,6 +742,17 @@ static bool _extractJsonStr(const char* json, const char* key, char* out, int ou
     return true;
 }
 
+// Short name of a LoRa profile (MeshService::applyLoraProfile() order).
+static const char* _profileShort(uint8_t p)
+{
+    static const char* kNames[14] = {
+        "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
+        "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
+        "PT 868", "CH", "US/CA", "VN"
+    };
+    return kNames[p < 14 ? p : 2];
+}
+
 // ── _dispatch() ──────────────────────────────────────────────────────
 // Parses the user input (with or without leading /) and routes to handlers.
 // Self-contained commands run immediately; mesh commands print [mesh not connected].
@@ -792,13 +824,19 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("  repadmin [<hex>] <cmd>  - send admin cmd (login first)");
         appendLine("  gps [on|off|intermittent]  - status if no arg");
         appendLine("  i2c scan");
+        appendLine("  bl [<0-255>|raw]  - display backlight test (not saved)");
+#if OPS_FEAT_KB_BACKLIGHT
         appendLine("  kbbl <0-255>  - probe keyboard backlight protocols");
+#endif
         appendLine("  tbdebug on|off  - trackball ISR log to CDC serial");
+#if OPS_FEAT_TOUCH
         appendLine("  touch-cali  |  touch-cali reset  - touchscreen calibration");
+#endif
         return;
     }
 
     // ── touch-cali ────────────────────────────────────────────────────
+#if OPS_FEAT_TOUCH
     if (strcmp(cmd, "touch-cali") == 0) {
         if (strcmp(args, "reset") == 0) {
             ops::config::setTouchCal(1.0f, 0.0f, 1.0f, 0.0f);
@@ -810,6 +848,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         ops::ui::startTouchCalibration();
         return;
     }
+#endif
 
     // ── clock ─────────────────────────────────────────────────────────
     if (strcmp(cmd, "clock") == 0) {
@@ -867,10 +906,12 @@ void ScreenTerminal::_dispatch(const char* raw) {
     }
 
     // ── power ─────────────────────────────────────────────────────────
+#if OPS_FEAT_POWER
     if (strcmp(cmd, "power") == 0) {
         ScreenPower::show();
         return;
     }
+#endif
 
     // ── reboot / shutdown ─────────────────────────────────────────────
     // Run from a short timer so the reply line is drawn first.
@@ -1105,7 +1146,33 @@ void ScreenTerminal::_dispatch(const char* raw) {
         return;
     }
 
+    // ── bl — display backlight test ──────────────────────────────────
+    // bl: show the setting; bl <0-255>: PWM level now; bl raw: drop the
+    // PWM and drive the pin HIGH, to tell a PWM fault from a panel fault.
+    if (strcmp(cmd, "bl") == 0) {
+        char buf[64];
+        if (args[0] == '\0') {
+            snprintf(buf, sizeof(buf), "Backlight: GPIO%d, setting %d/255",
+                     TFT_BL, ops::config::get().brightness);
+        } else if (strcmp(args, "raw") == 0) {
+            ledcDetachPin(TFT_BL);
+            pinMode(TFT_BL, OUTPUT);
+            digitalWrite(TFT_BL, HIGH);
+            snprintf(buf, sizeof(buf), "Backlight GPIO%d driven HIGH (PWM detached)", TFT_BL);
+        } else {
+            int v = atoi(args);
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            Board::instance().initBacklightPWM();
+            Board::instance().setDisplayBrightness((uint8_t)v);
+            snprintf(buf, sizeof(buf), "Backlight PWM: %d/255", v);
+        }
+        appendLine(buf);
+        return;
+    }
+
     // ── kbbl — keyboard backlight probe ──────────────────────────────
+#if OPS_FEAT_KB_BACKLIGHT
     // Usage: kbbl <0-255>
     // Tries every plausible I2C protocol for the keyboard backlight and
     // reports which writes are ACKed.  Run i2c scan first to see addresses.
@@ -1151,6 +1218,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         appendLine("Done. ACK = device accepted the write.");
         return;
     }
+#endif
 
     // ── scope [<region> | clear]  (a legacy leading # is accepted) ────────────────────────────────────
     if (strcmp(cmd, "scope") == 0) {
@@ -1280,36 +1348,26 @@ void ScreenTerminal::_dispatch(const char* raw) {
     if (strcmp(cmd, "get") == 0) {
         if (strcmp(args, "radio") == 0) {
             const auto& cfg = ops::config::get();
-            uint8_t p = cfg.radioProfile > 2 ? 0 : cfg.radioProfile;
-            static const char*   kProfNames[] = { "NAR", "MED", "LON" };
-            static const uint8_t kProfSF[]    = { 8, 10, 11 };
-            static const float   kProfBW[]    = { 62.5f, 250.0f, 250.0f };
-            static const uint8_t kProfCR[]    = { 8, 5, 5 };
             auto& mesh = MeshService::instance();
             char buf[72];
-            snprintf(buf, sizeof(buf), "Profile: %s%s",
-                     kProfNames[p], cfg.radioCustom ? " (overrides active)" : "");
+            snprintf(buf, sizeof(buf), "Profile: %s%s", _profileShort(cfg.radioProfile),
+                     cfg.radioCustom ? " (overrides active)" : "");
             appendLine(buf);
+            if (!mesh.initialized()) { appendLine("  (radio not initialised)"); return; }
+            // Read back from the radio, so this is what is on air.
+            MeshService::RadioDiag d = mesh.radioDiag();
             snprintf(buf, sizeof(buf), "  Freq: %.3f MHz%s",
                      (double)mesh.getFreqMHz(),
                      (cfg.radioCustom && cfg.freqMHz > 0.0f) ? " *" : "");
             appendLine(buf);
-            uint8_t sf = (cfg.radioCustom && cfg.radioSF) ? cfg.radioSF : kProfSF[p];
             snprintf(buf, sizeof(buf), "  SF: %d%s",
-                     sf, (cfg.radioCustom && cfg.radioSF) ? " *" : "");
+                     (int)d.sf, (cfg.radioCustom && cfg.radioSF) ? " *" : "");
             appendLine(buf);
-            float bw;
-            if (cfg.radioCustom && cfg.radioBW) {
-                bw = (cfg.radioBW == 1) ? 62.5f : (cfg.radioBW == 2) ? 125.0f : 250.0f;
-            } else {
-                bw = kProfBW[p];
-            }
             snprintf(buf, sizeof(buf), "  BW: %.1f kHz%s",
-                     (double)bw, (cfg.radioCustom && cfg.radioBW) ? " *" : "");
+                     (double)d.bwKhz, (cfg.radioCustom && cfg.radioBW) ? " *" : "");
             appendLine(buf);
-            uint8_t cr = (cfg.radioCustom && cfg.radioCR) ? cfg.radioCR : kProfCR[p];
-            snprintf(buf, sizeof(buf), "  CR: %d%s",
-                     cr, (cfg.radioCustom && cfg.radioCR) ? " *" : "");
+            snprintf(buf, sizeof(buf), "  CR: 4/%d%s",
+                     (int)d.cr, (cfg.radioCustom && cfg.radioCR) ? " *" : "");
             appendLine(buf);
             if (cfg.radioCustom && cfg.radioTX) {
                 snprintf(buf, sizeof(buf), "  TX: %d dBm *", (int)cfg.radioTX);
@@ -1327,8 +1385,6 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── card ──────────────────────────────────────────────────────────
     if (strcmp(cmd, "card") == 0) {
         const auto& cfg = ops::config::get();
-        uint8_t p = cfg.radioProfile > 2 ? 0 : cfg.radioProfile;
-        static const char* kProfNames[] = { "NAR", "MED", "LON" };
         auto& mesh = MeshService::instance();
         char buf[64];
         snprintf(buf, sizeof(buf), "Callsign: %s",
@@ -1352,7 +1408,8 @@ void ScreenTerminal::_dispatch(const char* raw) {
             appendLine("Key: (mesh not initialised)");
         }
         snprintf(buf, sizeof(buf), "Radio: %s  %.3f MHz",
-                 kProfNames[p], (double)mesh.getFreqMHz());
+                 cfg.radioCustom ? "Custom" : _profileShort(cfg.radioProfile),
+                 (double)mesh.getFreqMHz());
         appendLine(buf);
         return;
     }
@@ -1932,7 +1989,7 @@ void ScreenTerminal::_dispatch(const char* raw) {
         // Show last n messages from tag — PSRAM-backed to avoid burning internal DRAM
         static char* logBuf = nullptr;
         static constexpr size_t LOG_READ_SIZE = 4096;
-        if (!logBuf) logBuf = (char*)ps_malloc(LOG_READ_SIZE);
+        if (!logBuf) logBuf = (char*)ops::psram::alloc(LOG_READ_SIZE);
         if (!logBuf) { appendLine("ERR: ps_malloc logBuf"); return; }
         size_t bytes = ops::sdcard::readMsgLog(tag, logBuf, LOG_READ_SIZE);
         if (bytes == 0) {
@@ -2281,12 +2338,15 @@ void ScreenTerminal::_dispatch(const char* raw) {
     // ── play [path] ─ hidden, not in help ───────────────────────────
     // play         → open the MP3 player screen (file browser)
     // play <path>  → open the screen and immediately start that file
+#if OPS_FEAT_MEDIA
     if (strcmp(cmd, "play") == 0) {
         ops::ui::ScreenMP3Player::show(args[0] ? args : nullptr);
         return;
     }
+#endif
 
     // ── spectrum ─ hidden, not in help ──────────────────────────────
+#if OPS_FEAT_RADIO_TOOLS
     if (strcmp(cmd, "spectrum") == 0) {
         ops::ui::ScreenSpectrum::show();
         return;
@@ -2305,12 +2365,15 @@ void ScreenTerminal::_dispatch(const char* raw) {
         ops::ui::ScreenChanScan::show();
         return;
     }
+#endif
 
     // ── filemgr ─ hidden, not in help ───────────────────────────────
+#if OPS_FEAT_MEDIA
     if (strcmp(cmd, "filemgr") == 0) {
         ops::ui::ScreenFileManager::show();
         return;
     }
+#endif
 
     // ── screenshot [filename] ─ hidden, not in help ──────────────────
     // Saves a PNG of the current screen to the SD card root.

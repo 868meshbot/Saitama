@@ -21,6 +21,12 @@ Import("env")
 _DEVICE_NAMES = {
     "t-deck":          "t-deck-plus",
     "t-deck-launcher": "t-deck-plus",
+    "cardputer-adv":   "cardputer-adv",
+}
+
+# Flash size for the merged image; boards not listed are 16 MB.
+_FLASH_SIZES = {
+    "cardputer-adv": "8MB",
 }
 
 def _git(args, cwd):
@@ -94,12 +100,13 @@ def build_firmware_artifacts(source, target, env):
         esptool = env.subst("$PYTHONEXE") + " -m esptool"
         cmd = (
             '%s --chip esp32s3 merge_bin'
-            ' --flash_mode dio --flash_freq 80m --flash_size 16MB'
+            ' --flash_mode dio --flash_freq 80m --flash_size %s'
             ' 0x0000  "%s"'
             ' 0x8000  "%s"'
             ' 0x10000 "%s"'
             ' -o "%s"'
-        ) % (esptool, bootloader, partitions, app, merged)
+        ) % (esptool, _FLASH_SIZES.get(env_name, "16MB"),
+               bootloader, partitions, app, merged)
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if r.returncode == 0:
             print("Merged binary → firmware/%s-merged.bin" % stem)

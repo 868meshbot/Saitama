@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #pragma once
+#include "../features.h"
 #include <Arduino.h>
 #include <cstdint>
 
@@ -54,7 +55,7 @@ inline int outPathByteCount(uint8_t encLen)
 }
 
 namespace contacts {
-    static constexpr int CAPACITY = 250;
+    static constexpr int CAPACITY = OPS_CONTACTS_CAPACITY;
 
     void init();
     void save();

@@ -5,6 +5,7 @@
 // top-level screen lifecycle:  Boot → Launcher → (app screens).
 
 #include "UIScreen.h"
+#include "../utils/PsramAlloc.h"
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 #include "ScreenBoot.h"
@@ -14,20 +15,37 @@
 #include "ScreenHome.h"
 #include "ScreenHeard.h"
 #include "ScreenTerminal.h"
+#include "../features.h"
+#if OPS_FEAT_TRACE
 #include "ScreenTrace.h"
+#endif
 #include "ScreenFinder.h"
 #include "ScreenRepeaters.h"
+#if OPS_FEAT_MAP
 #include "ScreenMap.h"
+#endif
+#if OPS_FEAT_POWER
 #include "ScreenPower.h"
+#endif
+#if OPS_FEAT_SKYPLOT
 #include "ScreenPlaceholder.h"
+#endif
 #include "../bt/BTCompanionService.h"
+#if OPS_FEAT_RADIO_TOOLS
 #include "ScreenSpectrum.h"
 #include "ScreenSigGen.h"
 #include "ScreenChanScan.h"
+#endif
+#if OPS_FEAT_GAMES
 #include "Screen2048.h"
 #include "ScreenSnake.h"
+#endif
+#if OPS_FEAT_PCAP
 #include "ScreenPcap.h"
+#endif
+#if OPS_FEAT_FOXHUNT
 #include "ScreenFoxhunt.h"
+#endif
 #include "Theme.h"
 #include "../hardware/Board.h"
 #include "../mesh/MeshService.h"
@@ -41,6 +59,9 @@
 #include "../utils/GpsMgr.h"
 #include "../utils/AutoAdvert.h"
 #include "Emoji.h"
+#if OPS_KEYBOARD_ONLY
+#include "cardputer/KeyNav.h"
+#endif
 
 #include <lvgl.h>
 #include <TFT_eSPI.h>
@@ -464,7 +485,7 @@ static void _activateScreensaver(bool analog = false, bool manual = false,
     if (bootAnim) {
         ops::bootanim::create(s_screensaverScreen);
     } else if (analog) {
-        s_ssCanvasBuf = ps_malloc((size_t)SS_CANVAS_W * SS_CANVAS_H * sizeof(lv_color_t));
+        s_ssCanvasBuf = ops::psram::alloc((size_t)SS_CANVAS_W * SS_CANVAS_H * sizeof(lv_color_t));
         s_ssCanvas    = lv_canvas_create(s_screensaverScreen);
         lv_canvas_set_buffer(s_ssCanvas, s_ssCanvasBuf,
                              SS_CANVAS_W, SS_CANVAS_H, LV_IMG_CF_TRUE_COLOR);
@@ -525,7 +546,7 @@ static void _activateScreensaver(bool analog = false, bool manual = false,
         // Idle timeout: dim to ~30% of configured brightness (min 60/255) —
         // clock must still be clearly visible.
         int dim = cfg_b * 30 / 100;
-        if (dim < 60) dim = 60;
+        if (dim < OPS_SS_DIM_MIN) dim = OPS_SS_DIM_MIN;
         Board::instance().setDisplayBrightness((uint8_t)dim);
     }
 }
@@ -551,7 +572,7 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
 
     lv_obj_t* parent = lv_scr_act();
     s_notifyPopup = lv_obj_create(parent);
-    lv_obj_set_size(s_notifyPopup, 260, 100);
+    lv_obj_set_size(s_notifyPopup, OPS_SCREEN_W < 280 ? OPS_SCREEN_W - 8 : 260, 100);
     lv_obj_align(s_notifyPopup, LV_ALIGN_TOP_MID, 0, 8);
     lv_obj_set_style_bg_color(s_notifyPopup, lv_color_hex(0x222222), LV_PART_MAIN);
     lv_obj_set_style_border_color(s_notifyPopup, lv_color_hex(0x555555), LV_PART_MAIN);
@@ -560,6 +581,11 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_set_style_radius(s_notifyPopup, 6, LV_PART_MAIN);
     lv_obj_add_flag(s_notifyPopup, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_notifyPopup, _onNotifyPopupClick, LV_EVENT_CLICKED, nullptr);
+    // Deleted with its screen when that is rebuilt: drop the pointer, or the
+    // next key "dismisses" a freed popup (and is swallowed).
+    lv_obj_add_event_cb(s_notifyPopup, [](lv_event_t* e) {
+        if (lv_event_get_target(e) == s_notifyPopup) s_notifyPopup = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     // Same cleanup as the chat bubbles: no boxes for skin tones, joiners etc.
     char nameBuf[sizeof(msg.senderName)];
@@ -580,7 +606,7 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_set_style_text_font(hdrLbl, theme::bodyFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(hdrLbl, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
     lv_label_set_text(hdrLbl, hdr);
-    lv_obj_set_width(hdrLbl, 244);
+    lv_obj_set_width(hdrLbl, LV_PCT(100));
     lv_label_set_long_mode(hdrLbl, LV_LABEL_LONG_CLIP);
     lv_obj_align(hdrLbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
@@ -588,14 +614,18 @@ static void _showNotifyPopup(const ops::RxMessage& msg)
     lv_obj_set_style_text_font(txtLbl, theme::bodyFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(txtLbl, lv_color_white(), LV_PART_MAIN);
     lv_label_set_text(txtLbl, textBuf);
-    lv_obj_set_width(txtLbl, 244);
+    lv_obj_set_width(txtLbl, LV_PCT(100));
     lv_label_set_long_mode(txtLbl, LV_LABEL_LONG_CLIP);
     lv_obj_align(txtLbl, LV_ALIGN_TOP_LEFT, 0, 20);
 
     lv_obj_t* hint = lv_label_create(s_notifyPopup);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), LV_PART_MAIN);
+#if OPS_KEYBOARD_ONLY
+    lv_label_set_text(hint, "any key to dismiss");
+#else
     lv_label_set_text(hint, "tap to dismiss");
+#endif
     lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 }
 
@@ -627,8 +657,8 @@ void init() {
                                             MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     s_buf2 = (lv_color_t*)heap_caps_malloc(BUF_PIXELS * sizeof(lv_color_t),
                                             MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    if (!s_buf1) s_buf1 = (lv_color_t*)ps_malloc(BUF_PIXELS * sizeof(lv_color_t));
-    if (!s_buf2) s_buf2 = (lv_color_t*)ps_malloc(BUF_PIXELS * sizeof(lv_color_t));
+    if (!s_buf1) s_buf1 = (lv_color_t*)ops::psram::alloc(BUF_PIXELS * sizeof(lv_color_t));
+    if (!s_buf2) s_buf2 = (lv_color_t*)ops::psram::alloc(BUF_PIXELS * sizeof(lv_color_t));
 
     if (!s_buf1 || !s_buf2) {
         OPS_LOG("UI", "FATAL: cannot allocate display buffers");
@@ -651,11 +681,13 @@ void init() {
     s_indev_drv.read_cb = encoder_read;
     s_indev = lv_indev_drv_register(&s_indev_drv);
 
+#if OPS_FEAT_TOUCH
     // Register GT911 touch indev
     lv_indev_drv_init(&s_touch_drv);
     s_touch_drv.type    = LV_INDEV_TYPE_POINTER;
     s_touch_drv.read_cb = touch_read;
     s_touch = lv_indev_drv_register(&s_touch_drv);
+#endif
 
     lv_group_t* g = lv_group_create();
     lv_group_set_default(g);   // screens use lv_group_get_default() to add widgets
@@ -665,8 +697,10 @@ void init() {
     theme::applyTheme((uint8_t)ops::config::get().theme);
     theme::apply(s_disp);
 
+#if OPS_FEAT_TOUCH
     // Probe GT911 (sets s_gt911 address, s_touchOk flag, logs product ID)
     gt911_probe();
+#endif
 
     // Initialise GPS power manager (applies starting mode from config).
     ops::GpsMgr::instance().init();
@@ -681,14 +715,11 @@ void init() {
 
     s_lastActivityMs = millis();
 
-    // Light-sleep wake source for the user: GPIO0 (trackball click, active-LOW).
-    // Touch INT and KB_INT are intentionally excluded. LoRa DIO1 is armed per
-    // sleep by MeshService::lightSleep() — MeshCore's edge-triggered ISR on
-    // that pin would otherwise override a level wake set here once at boot.
-    gpio_wakeup_enable(GPIO_NUM_0,  GPIO_INTR_LOW_LEVEL);   // trackball click
-    esp_sleep_enable_gpio_wakeup();
+    // The user wake pins are armed only around each light sleep (tick()),
+    // LoRa DIO1 by MeshService::lightSleep().
 
-    OPS_LOG("UI", "Display ready (%dx%d)", OPS_SCREEN_W, OPS_SCREEN_H);
+    OPS_LOG("UI", "Display ready (%dx%d), backlight GPIO%d at %d/255",
+            OPS_SCREEN_W, OPS_SCREEN_H, TFT_BL, ops::config::get().brightness);
 }
 
 // Trackball press / keyboard Enter on the focused widget. Sent as events
@@ -698,6 +729,9 @@ void init() {
 // CLICKED handler (e.g. a radio group) sees the new state.
 static void _activateFocused(lv_obj_t* obj)
 {
+#if OPS_KEYBOARD_ONLY
+    if (ops::ui::keynav::openDropdown(obj)) return;
+#endif
     uint32_t ek = LV_KEY_ENTER;
     if (lv_event_send(obj, LV_EVENT_KEY, &ek) != LV_RES_OK) return;   // deleted by its handler
     if (lv_obj_is_editable(obj)) return;
@@ -716,6 +750,10 @@ void tick() {
 
     // GPS power management state machine
     ops::GpsMgr::instance().tick();
+#if OPS_KEYBOARD_ONLY
+    ops::ui::keynav::fitTopLayer();
+    ops::ui::keynav::trimTopBars();
+#endif
 
     // Periodic advert (Advertise screen > Auto advertise)
     ops::autoadvert::tick();
@@ -774,25 +812,41 @@ void tick() {
             int ndy = (dy > 0) ? 1 : (dy < 0) ? -1 : 0;
             if (ndx || ndy) ScreenLauncher::navigate(ndx, ndy);
             if (tbPress) ScreenLauncher::confirmSelect();
+#if OPS_FEAT_MAP
         } else if (ScreenMap::isActive()) {
             // Route raw trackball delta directly to map pan (8 px per encoder tick).
             if (dx || dy) ScreenMap::navigate(dx * 8, dy * 8);
+#endif
+#if OPS_FEAT_RADIO_TOOLS
         } else if (ScreenSpectrum::isActive()) {
             if (dx || dy) ScreenSpectrum::navigate(dx, dy);
         } else if (ScreenSigGen::isActive()) {
             if (dx || dy) ScreenSigGen::navigate(dx, dy);
         } else if (ScreenChanScan::isActive()) {
             if (dx || dy) ScreenChanScan::navigate(dx, dy);
+#endif
+#if OPS_FEAT_GAMES
         } else if (Screen2048::isActive()) {
             if (dx || dy) Screen2048::navigate(dx, dy);
         } else if (ScreenSnake::isActive()) {
             if (dx || dy) ScreenSnake::navigate(dx, dy);
             if (tbPress) ScreenSnake::press();
+#endif
+#if OPS_FEAT_FOXHUNT
         } else if (ScreenFoxhunt::isActive()) {
             int ndy = (dy > 0) ? 1 : (dy < 0) ? -1 : 0;
             if (ndy) ScreenFoxhunt::navigate(0, ndy);
             if (tbPress) ScreenFoxhunt::confirmSelect();
+#endif
         } else {
+#if OPS_KEYBOARD_ONLY
+            // Chat / DM: up/down scroll the conversation (Tab moves between
+            // the compose box and the buttons).
+            if (dy && ScreenHome::scrollMessages(dy)) { dy = 0; }
+            // Touch-only rows and popup buttons: KeyNav highlights them.
+            if ((dx || dy) && ops::ui::keynav::handleMove(dx, dy)) { dx = 0; dy = 0; }
+            if (tbPress && ops::ui::keynav::handleEnter()) tbPress = false;
+#endif
             // dy (up/down) always changes group focus.
             // dx (left/right) moves a focused slider, or changes focus otherwise.
             if (dy != 0 || dx != 0) {
@@ -809,8 +863,21 @@ void tick() {
                 }
                 if (dx != 0) {
                     if (onSlider) {
+#if OPS_KEYBOARD_ONLY
+                        // One key press = 5 % of the range. LV_KEY_RIGHT moves
+                        // a single unit, which the trackball repeats but a
+                        // key doesn't (a 128-255 brightness slider looked dead).
+                        int32_t mn = lv_slider_get_min_value(nf);
+                        int32_t mx = lv_slider_get_max_value(nf);
+                        int32_t st = (mx - mn) / 20;
+                        if (st < 1) st = 1;
+                        lv_slider_set_value(nf, lv_slider_get_value(nf) + (dx > 0 ? st : -st),
+                                            LV_ANIM_OFF);
+                        lv_event_send(nf, LV_EVENT_VALUE_CHANGED, nullptr);
+#else
                         uint32_t sk = (dx > 0) ? LV_KEY_RIGHT : LV_KEY_LEFT;
                         lv_event_send(nf, LV_EVENT_KEY, &sk);
+#endif
                     } else {
                         enc_diff = (dx > 0) ? 1 : -1;
                     }
@@ -837,6 +904,12 @@ void tick() {
             bool kbRepl = xlat.replace;
             if (s_screensaverActive) {
                 // Keyboard during screensaver/off — swallow, only GPIO0 click wakes.
+#if OPS_KEYBOARD_ONLY
+                // No trackball: Esc or Backspace wakes (and is swallowed);
+                // with the backlight off any key does, so it can't look dead.
+                if (k == 27 || k == 8 || k == 127 || s_screenOff)
+                    _deactivateScreensaver();
+#endif
             } else if (s_calState != 0) {
                 // During calibration: backspace/ESC cancels; all other keys swallowed.
                 if (k == 8 || k == 127 || k == 27) {
@@ -845,9 +918,55 @@ void tick() {
                 }
             } else {
                 s_lastActivityMs = now;
-                if (k == '\r' || k == '\n') {
+#if OPS_KEYBOARD_ONLY
+                // No touch to tap the message popup away: any key closes it
+                // and is swallowed.
+                if (s_notifyPopup) {
+                    _onNotifyPopupClick(nullptr);
+                    k = 0;
+                }
+                // The arrow legends sit on ; , . / — outside a text box they
+                // move without Fn (Fn + key always moves, see Board.cpp).
+                if (k == ';' || k == '.' || k == ',' || k == '/') {
+                    lv_group_t* ag = lv_group_get_default();
+                    lv_obj_t*   af = ag ? lv_group_get_focused(ag) : nullptr;
+                    if (ScreenLauncher::isActive() || !af ||
+                        !lv_obj_has_class(af, &lv_textarea_class) ||
+                        lv_obj_has_flag(af, LV_OBJ_FLAG_USER_2)) {
+                        board.addTrackballDelta(k == ',' ? -1 : k == '/' ? 1 : 0,
+                                                k == ';' ? -1 : k == '.' ? 1 : 0);
+                        k = 0;
+                    }
+                }
+                if (k == '\t' && !ScreenLauncher::isActive() &&
+                    ops::ui::keynav::handleTab()) {
+                    k = 0;   // moved to the next field
+                }
+                if ((k == 27 || k == 8) && !ScreenLauncher::isActive() &&
+                    ops::ui::keynav::handleEsc(k == 8)) {
+                    k = 0;   // closed the top popup
+                } else if (k != '\r' && k != '\n' && k != 0) {
+                    ops::ui::keynav::clear();
+                }
+                // The title bar's Home / Close buttons are hidden here: Esc
+                // presses them (after closing the chat emoji picker), so it
+                // always leaves the screen, whatever has the focus.
+                if (k == 27 && !ScreenLauncher::isActive()) {
+                    if (ScreenHome::closeEmojiPicker() || ops::ui::keynav::clickTopBarBack())
+                        k = 0;
+                    else
+                        OPS_LOG("Keys", "Esc: no title-bar back button on this screen");
+                }
+#endif
+                if (k == 0) {
+                    // handled above
+                } else if (k == '\r' || k == '\n') {
                     if (ScreenLauncher::isActive()) {
                         ScreenLauncher::confirmSelect();
+#if OPS_KEYBOARD_ONLY
+                    } else if (ops::ui::keynav::handleEnter()) {
+                        // clicked the highlighted row/button
+#endif
                     } else {
                         // Send Enter directly to focused widget — bypasses the LVGL group
                         // editing-mode intercept that eats LV_KEY_ENTER before it reaches
@@ -910,6 +1029,7 @@ void tick() {
     }
 
     // Activate screensaver after configured idle period.
+#if OPS_FEAT_IDLE_SAVER
     {
         int timeoutSec = ops::config::get().screenTimeoutSec;
         if (!s_screensaverActive && timeoutSec > 0 && s_lastActivityMs > 0) {
@@ -924,6 +1044,7 @@ void tick() {
             }
         }
     }
+#endif
 
     // Screen off: cut backlight entirely after screenOffMin minutes of screensaver.
     if (s_screensaverActive && !s_screenOff) {
@@ -949,21 +1070,20 @@ void tick() {
         }
     }
 
-    // Keyboard backlight: Auto lights it in the dark (21:00-07:00 local, and
+    // Keyboard backlight: Auto lights it in the dark (the configurable
+    // kbAutoStartMin-kbAutoEndMin local window, default 21:00-07:00, and
     // also through the night-mode window when night mode is on), at the
     // kbBrightness level; manual keeps a fixed level. Night mode itself no
     // longer turns it off (it only mutes sounds). Off entirely during
     // screensaver/screen-off. Only writes I2C when the target changes.
+#if OPS_FEAT_KB_BACKLIGHT
     {
         const auto& cfg = ops::config::get();
         uint8_t desired;
         if (s_screensaverActive || s_screenOff) {
             desired = 0;  // low-power: KB off
         } else if (cfg.kbAutoNight) {
-            time_t t = ops::config::localEpoch();
-            struct tm lt;
-            gmtime_r(&t, &lt);
-            bool dark = lt.tm_hour >= 21 || lt.tm_hour < 7
+            bool dark = ops::config::kbAutoWindowActive()
                         || ops::config::nightModeActive();
             desired = dark ? cfg.kbBrightness : 0;
         } else if (cfg.kbBrightness == 0) {
@@ -983,6 +1103,7 @@ void tick() {
             s_kbApplied = desired;
         }
     }
+#endif
 
     // Drain incoming mesh messages every tick.
     // appendLine() echoes every line to CDC serial via Serial.println().
@@ -1029,18 +1150,32 @@ void tick() {
         ScreenHome::checkPendingAck();
     }
 
+#if OPS_FEAT_MAP
     ScreenMap::tick();
+#endif
+#if OPS_FEAT_TRACE
     ScreenTrace::tick();
+#endif
     ScreenRegions::tick();
     ScreenFinder::tick();
+#if OPS_FEAT_POWER
     ScreenPower::tick();
+#endif
+#if OPS_FEAT_SKYPLOT
     ScreenPlaceholder::tick();
+#endif
     ops::BTCompanionService::instance().tick();
+#if OPS_FEAT_RADIO_TOOLS
     ScreenSpectrum::update();
     ScreenSigGen::update();
     ScreenChanScan::update();
+#endif
+#if OPS_FEAT_PCAP
     ScreenPcap::tick();
+#endif
+#if OPS_FEAT_FOXHUNT
     ScreenFoxhunt::tick();
+#endif
 
     // Drain discover results → ScreenFinder
     {
@@ -1206,9 +1341,40 @@ void tick() {
     // the backlight output would drop LOW, making the screensaver invisible.
     // When s_screenOff is true, backlight is already 0 so the gate is harmless.
     if (s_screenOff) {
-        if (ops::MeshService::instance().lightSleep(60000))  // 60 s heartbeat
-            ops::loopstats::skipGap();
+        armWakePins(true);
+        bool slept = ops::MeshService::instance().lightSleep(60000);  // 60 s heartbeat
+        armWakePins(false);
+        if (slept) ops::loopstats::skipGap();
     }
+}
+
+// Light-sleep wake sources for the user: GPIO0 (trackball click / G0 button)
+// and the keyboard INT where there is one, all active-LOW. Touch INT is
+// excluded. A level type must never stay on these pins while awake: Arduino's
+// pinMode() keeps a pin's interrupt type and gpio_config() then enables its
+// CPU interrupt, and a panic restart resets the CPU but not the GPIO
+// registers. The next boot's pinMode() therefore armed a level ISR on a held
+// low pin, and the first attachInterrupt() (LoRa DIO1) started an interrupt
+// storm — an interrupt-watchdog boot loop.
+void armWakePins(bool on)
+{
+    static const gpio_num_t pins[] = {
+        GPIO_NUM_0,
+#ifdef OPS_WAKE_KEY_PIN
+        (gpio_num_t)OPS_WAKE_KEY_PIN,
+#endif
+    };
+    for (gpio_num_t pin : pins) {
+        gpio_intr_disable(pin);   // wake only; never a CPU interrupt
+        if (on) {
+            gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
+        } else {
+            gpio_wakeup_disable(pin);
+            gpio_set_intr_type(pin, GPIO_INTR_DISABLE);
+            REG_WRITE(GPIO_STATUS_W1TC_REG, 1UL << pin);   // both pins < 32
+        }
+    }
+    if (on) esp_sleep_enable_gpio_wakeup();
 }
 
 void showLauncher() {
@@ -1249,7 +1415,7 @@ bool takeScreenshot(const char* path)
 
     // Render current screen into an off-screen LVGL buffer.
     const size_t snapBytes = (size_t)W * H * sizeof(lv_color_t);
-    lv_color_t* snapBuf = (lv_color_t*)ps_malloc(snapBytes);
+    lv_color_t* snapBuf = (lv_color_t*)ops::psram::alloc(snapBytes);
     if (!snapBuf) { OPS_LOG("Screenshot", "ps_malloc snap failed"); return false; }
 
     lv_img_dsc_t dsc{};
@@ -1263,7 +1429,7 @@ bool takeScreenshot(const char* path)
 
     // Convert RGB565 → RGB888 for LodePNG.
     const size_t rgbBytes = (size_t)W * H * 3;
-    uint8_t* rgb = (uint8_t*)ps_malloc(rgbBytes);
+    uint8_t* rgb = (uint8_t*)ops::psram::alloc(rgbBytes);
     if (!rgb) { OPS_LOG("Screenshot", "ps_malloc rgb failed"); free(snapBuf); return false; }
 
     for (int i = 0; i < W * H; i++) {

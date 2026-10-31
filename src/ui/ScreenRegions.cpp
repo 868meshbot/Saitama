@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenRegions.h"
+#include "../features.h"
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "Theme.h"
@@ -24,7 +25,7 @@ lv_obj_t* ScreenRegions::_repList     = nullptr;
 lv_obj_t* ScreenRegions::_chips       = nullptr;
 lv_obj_t* ScreenRegions::_discoverBtn = nullptr;
 
-static constexpr int TOP_H   = 28;
+static constexpr int TOP_H   = OPS_TOP_H;
 static constexpr int MAX_REP = 8;   // matches MeshService's outstanding-request limit
 
 // Last discovery results — kept across visits to the screen.
@@ -93,6 +94,10 @@ void ScreenRegions::_refreshDefault()
 // ── Nearby repeaters ──────────────────────────────────────────────────
 // One row per reply: name, the regions it floods for, and reply SNR.
 
+// Below 300 px the reply rows have no room for name, regions and SNR side
+// by side.
+static constexpr bool kNarrowRows = OPS_SCREEN_W < 300;
+
 void ScreenRegions::_rebuildRepeaters()
 {
     if (!_repList) return;
@@ -142,7 +147,16 @@ void ScreenRegions::_rebuildRepeaters()
         lv_obj_t* rg = lv_label_create(row);
         lv_label_set_text(rg, regs);
         lv_label_set_long_mode(rg, LV_LABEL_LONG_WRAP);
-        lv_obj_set_flex_grow(rg, 1);
+        if (kNarrowRows) {
+            // Narrow screen: name and SNR on the first line, the regions
+            // across the full width below (the SNR label moves before it).
+            lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+            lv_obj_set_flex_grow(nm, 1);
+            lv_obj_set_width(rg, LV_PCT(100));
+            lv_obj_add_flag(rg, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
+        } else {
+            lv_obj_set_flex_grow(rg, 1);
+        }
         lv_obj_set_style_text_color(rg, r.regions[0] ? theme::ACCENT : theme::TEXT_MUTED, 0);
         lv_obj_set_style_text_font(rg, &lv_font_montserrat_12, 0);
 
@@ -153,6 +167,7 @@ void ScreenRegions::_rebuildRepeaters()
         lv_obj_set_style_text_font(sl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(sl, r.snr >= 5.0f ? theme::GREEN
                                       : r.snr >= -2.5f ? theme::ORANGE : theme::RED, 0);
+        if (kNarrowRows) lv_obj_move_to_index(sl, 1);
     }
 
     if (s_running) return;
@@ -218,6 +233,39 @@ static void _collectFound()
     }
 }
 
+// Chips: 24 px with 12 pt text on the T-Deck; on a short title bar
+// (Cardputer) taller with 14 pt text and no inner vertical padding.
+static const lv_font_t* const kChipFont =
+    OPS_TOP_H < 26 ? &lv_font_montserrat_14 : &lv_font_montserrat_12;
+
+static void _sizeChip(lv_obj_t* b)
+{
+    if (OPS_TOP_H < 26) {
+        lv_obj_set_height(b, 28);
+        lv_obj_set_style_pad_ver(b, 0, 0);
+        lv_obj_set_style_pad_hor(b, 12, 0);
+        lv_obj_set_style_radius(b, 14, 0);
+    } else {
+        lv_obj_set_height(b, 24);
+        lv_obj_set_style_pad_hor(b, 10, 0);
+    }
+}
+
+// On the Cardputer a content-sized chip came out as an empty bubble (the
+// same as the Discover button before it got a fixed size): measure the text
+// and give the chip a fixed width instead.
+static void _fixChipWidth(lv_obj_t* b, lv_obj_t* l, const char* txt)
+{
+    if (OPS_TOP_H >= 26) return;
+    lv_point_t sz;
+    lv_txt_get_size(&sz, txt, kChipFont, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_style_pad_hor(b, 0, 0);
+    lv_obj_set_width(b, sz.x + 26);
+    lv_obj_set_width(l, sz.x + 2);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(l);
+}
+
 void ScreenRegions::_rebuildChips()
 {
     if (!_chips) return;
@@ -230,8 +278,7 @@ void ScreenRegions::_rebuildChips()
         bool active = (i < 0) ? !cur[0] : strcmp(cur, name) == 0;
 
         lv_obj_t* b = lv_btn_create(_chips);
-        lv_obj_set_height(b, 24);
-        lv_obj_set_style_pad_hor(b, 10, 0);
+        _sizeChip(b);
         lv_obj_set_style_radius(b, 12, 0);
         lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_set_style_border_width(b, 1, 0);
@@ -246,15 +293,15 @@ void ScreenRegions::_rebuildChips()
         lv_obj_t* l = lv_label_create(b);
         lv_label_set_text(l, name);
         lv_obj_set_style_text_color(l, active ? theme::BG : theme::TEXT, 0);
-        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(l, kChipFont, 0);
         lv_obj_center(l);
+        _fixChipWidth(b, l, name);
     }
 
     _collectFound();
     for (int i = 0; i < s_foundCount; i++) {
         lv_obj_t* b = lv_btn_create(_chips);
-        lv_obj_set_height(b, 24);
-        lv_obj_set_style_pad_hor(b, 10, 0);
+        _sizeChip(b);
         lv_obj_set_style_radius(b, 12, 0);
         lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_TRANSP, 0);
@@ -273,8 +320,9 @@ void ScreenRegions::_rebuildChips()
         lv_obj_t* l = lv_label_create(b);
         lv_label_set_text(l, txt);
         lv_obj_set_style_text_color(l, theme::TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(l, kChipFont, 0);
         lv_obj_center(l);
+        _fixChipWidth(b, l, txt);
     }
 
     if (ops::regions::count() == 0 && s_foundCount == 0) {
@@ -480,6 +528,12 @@ void ScreenRegions::_build()
     lv_obj_set_style_radius(_discoverBtn, 4, 0);
     lv_obj_set_style_shadow_width(_discoverBtn, 0, 0);
     lv_obj_set_style_pad_hor(_discoverBtn, 8, 0);
+    if (TOP_H < 26) {
+        // Short title bar (Cardputer): a fixed size with no inner padding,
+        // or the label is clipped away.
+        lv_obj_set_size(_discoverBtn, 80, TOP_H - 4);
+        lv_obj_set_style_pad_all(_discoverBtn, 0, 0);
+    }
     lv_obj_add_event_cb(_discoverBtn, _onDiscoverClick, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(_discoverBtn, _onKey,           LV_EVENT_KEY,     nullptr);
     lv_obj_t* dl = lv_label_create(_discoverBtn);
@@ -523,7 +577,16 @@ void ScreenRegions::_build()
 
     _rebuildRepeaters();
     _rebuildChips();
+#if OPS_KEYBOARD_ONLY
+    // The body takes the keys: the arrow keys then step through Discover,
+    // the chips and scroll past the repeater replies (KeyNav).
+    if (g) {
+        lv_group_add_obj(g, _body);
+        lv_group_focus_obj(_body);
+    }
+#else
     if (g) lv_group_focus_obj(_discoverBtn);
+#endif
 
     lv_scr_load(_screen);
 }

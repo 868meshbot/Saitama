@@ -56,7 +56,26 @@ Saitama is a community project. Development tooling includes AI coding assistant
 |--------|--------|-------|
 | LilyGo T-Deck (ESP32-S3) | Untested | 320x240 IPS, keyboard, trackball, SX1262 LoRa |
 | LilyGo T-Deck Plus | **Working** | Primary target — compiled and hardware-tested |
+| M5Stack Cardputer ADV + Cap LoRa-1262 | **Beta** | Cut-down build (`cardputer-adv`), not yet hardware-tested — see below |
 | Other ESP32-S3 devices | Future | PlatformIO abstraction allows porting |
+
+### Cardputer ADV build
+
+The Cardputer ADV (240x135, keyboard only, ESP32-S3FN8 with no PSRAM) gets a
+smaller build from the same code, with the same identity, keys, routing,
+settings and `/ops/` SD backup as the T-Deck.
+
+- **Included:** Chat, Contacts, Repeaters (with admin tools), Heard, Finder,
+  Regions, Signal, GPS status (text), Terminal, Settings. Adverts are in
+  Settings > Advert. The screensaver defaults to **Mesh rain** (two channels
+  and three stations falling, joined by a line when a message arrives).
+- **Left out:** map, spectrum/waterfall, channel scan, signal generator,
+  trace, games, PCAP, BT foxhunt, MP3, picture viewer, file manager. No
+  speaker sounds yet (the ES8311 codec is not driven).
+- **Keys:** Fn + `;` `.` `,` `/` are up, down, left and right. Enter (or the
+  G0 button) selects. Fn + `` ` `` (Esc) or Backspace goes back and closes
+  popups. Any key wakes the screen.
+- Holds 100 contacts and 60 repeaters (250 each on the T-Deck).
 
 ## Branches
 
@@ -74,14 +93,15 @@ Workflow: contribute to `dev` via PR. When stable, merge to `main` and tag a rel
 
 - [PlatformIO](https://platformio.org/) installed (CLI or VS Code extension)
 - USB-C cable
-- A LilyGo T-Deck or T-Deck Plus
+- A LilyGo T-Deck or T-Deck Plus, or an M5Stack Cardputer ADV with the Cap LoRa-1262
 
 ### Build
 
 ```bash
 git clone --recurse-submodules https://github.com/868meshbot/Saitama.git
 cd Saitama
-pio run -e t-deck
+pio run -e t-deck          # T-Deck / T-Deck Plus
+pio run -e cardputer-adv   # Cardputer ADV
 ```
 
 ### Flash
@@ -94,6 +114,11 @@ pio run -e t-deck -t upload
 # Or manually with the merged binary:
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 saitama-merged.bin
 ```
+
+**Cardputer ADV:** hold G0 while plugging in USB for download mode, then
+`pio run -e cardputer-adv -t upload`, or flash
+`saitama-cardputer-adv-X.Y.Z-merged.bin` at `0x0` (8 MB flash). With
+M5Launcher on the card, install `saitama-cardputer-adv-X.Y.Z.bin` from it.
 
 See [docs/VERSIONING.md](docs/VERSIONING.md) for firmware variant details.
 

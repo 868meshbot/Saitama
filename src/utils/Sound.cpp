@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Sound.h"
+#include "../features.h"
 #include "Config.h"
 #include "Log.h"
 
@@ -9,12 +10,16 @@
 #include <cmath>
 #include <cstring>
 
-// MAX98357A I2S amplifier — LilyGo T-Deck Plus
-// Pins verified against T-Deck Plus schematic; not shared with TFT/LoRa/SD SPI.
+// T-Deck Plus: MAX98357A I2S amplifier (pins from the schematic, not shared
+// with the SPI bus). Cardputer ADV: ES8311 codec, set up over I2C below.
 #define SPK_I2S_PORT   I2S_NUM_0
-#define SPK_BCLK       7
-#define SPK_WS         5
-#define SPK_DOUT       6
+#define SPK_BCLK       OPS_SPK_BCLK
+#define SPK_WS         OPS_SPK_WS
+#define SPK_DOUT       OPS_SPK_DOUT
+
+#if OPS_SPK_ES8311
+#include <Wire.h>
+#endif
 
 // 8 kHz mono 16-bit, 150 ms ping = 1200 samples
 static constexpr int   SAMPLE_RATE  = 8000;
@@ -69,6 +74,8 @@ static void _writeScaled(const int16_t* buf, int count)
 
 // Waveform buffers live in PSRAM — allocated in init() to free ~29 KB of
 // internal DRAM for the Bluedroid stack. CPU-read only; never DMA-accessed.
+// Without PSRAM all of them (bar the jingle) share one scratch buffer and a
+// sound is rendered into it just before it plays (_render()).
 static int16_t* s_pingBuf   = nullptr;
 static int16_t* s_pluckBuf  = nullptr;
 static int16_t* s_clearBuf  = nullptr;
@@ -163,10 +170,97 @@ static void _generateJingle()
     }
 }
 
+#if !OPS_HAS_PSRAM
+static constexpr int SCRATCH_SAMPLES = CLEAR_SAMPLES > BEEP_MAX_SAMPLES
+                                     ? CLEAR_SAMPLES : BEEP_MAX_SAMPLES;
+#endif
+
+// Notification choice 0-3 → its buffer and length; renders it first when
+// the buffers are shared.
+static const int16_t* _render(uint8_t choice, int& count)
+{
+    switch (choice) {
+        case 1:
+#if !OPS_HAS_PSRAM
+            _generatePluck();
+#endif
+            count = PLUCK_SAMPLES;  return s_pluckBuf;
+        case 2:
+#if !OPS_HAS_PSRAM
+            _generateClear();
+#endif
+            count = CLEAR_SAMPLES;  return s_clearBuf;
+        case 3:
+#if !OPS_HAS_PSRAM
+            _generateWhoosh();
+#endif
+            count = WHOOSH_SAMPLES; return s_whooshBuf;
+        default:
+#if !OPS_HAS_PSRAM
+            _generatePing();
+#endif
+            count = PING_SAMPLES;   return s_pingBuf;
+    }
+}
+
+#if !OPS_HAS_PSRAM
+// The jingle is too long for the scratch buffer: render and play it a
+// buffer at a time (same notes and fades as _generateJingle()).
+static void _playJingleStreamed()
+{
+    int pos = 0, fill = 0;
+    for (int n = 0; n < JINGLE_NOTES; n++) {
+        const float freq = JINGLE_FREQS[n];
+        const int   len  = JINGLE_LENS[n];
+        const int   fade = len / 8;
+        for (int i = 0; i < len; i++) {
+            float t   = (float)pos++ / (float)SAMPLE_RATE;
+            float env = 1.0f;
+            if (i < fade)          env = (float)i / (float)fade;
+            else if (i > len-fade) env = (float)(len - i) / (float)fade;
+            s_beepBuf[fill++] = (int16_t)(sinf(2.0f * M_PI * freq * t) * env * 14000.0f);
+            if (fill == SCRATCH_SAMPLES) { _writeScaled(s_beepBuf, fill); fill = 0; }
+        }
+    }
+    if (fill) _writeScaled(s_beepBuf, fill);
+}
+#endif
+
+#if OPS_SPK_ES8311
+// ES8311 codec: DAC on, clocked from BCLK, output to the speaker driver.
+// The register sequence of M5Unified's Cardputer ADV speaker callback.
+static bool _initEs8311()
+{
+    static constexpr uint8_t ADDR = 0x18;
+    static const uint8_t kRegs[][2] = {
+        { 0x00, 0x80 },   // reset / CSM power on
+        { 0x01, 0xB5 },   // clock manager: MCLK = BCLK
+        { 0x02, 0x18 },   // clock manager: MULT_PRE = 3 (x8)
+        { 0x0D, 0x01 },   // power up the analog circuitry
+        { 0x12, 0x00 },   // power up the DAC
+        { 0x13, 0x10 },   // enable the output (HP drive)
+        { 0x32, 0xBF },   // DAC volume 0 dB
+        { 0x37, 0x08 },   // bypass the DAC equaliser
+    };
+    for (const auto& r : kRegs) {
+        Wire.beginTransmission(ADDR);
+        Wire.write(r[0]);
+        Wire.write(r[1]);
+        if (Wire.endTransmission(true) != 0) return false;
+    }
+    return true;
+}
+#endif
+
 namespace ops {
 
 void sound::init()
 {
+#if !OPS_FEAT_SOUND
+    OPS_LOG("Sound", "No speaker driver on this board");
+    return;
+#endif
+#if OPS_HAS_PSRAM
     s_pingBuf   = (int16_t*)ps_malloc(PING_SAMPLES   * sizeof(int16_t));
     s_pluckBuf  = (int16_t*)ps_malloc(PLUCK_SAMPLES  * sizeof(int16_t));
     s_clearBuf  = (int16_t*)ps_malloc(CLEAR_SAMPLES  * sizeof(int16_t));
@@ -183,6 +277,14 @@ void sound::init()
     _generateClear();
     _generateWhoosh();
     _generateJingle();
+#else
+    s_beepBuf = (int16_t*)malloc(SCRATCH_SAMPLES * sizeof(int16_t));
+    if (!s_beepBuf) {
+        OPS_LOG("Sound", "malloc failed for the waveform buffer");
+        return;
+    }
+    s_pingBuf = s_pluckBuf = s_clearBuf = s_whooshBuf = s_beepBuf;
+#endif
 
     i2s_config_t cfg = {};
     cfg.mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
@@ -212,6 +314,10 @@ void sound::init()
     }
     i2s_set_pin(SPK_I2S_PORT, &pins);
     i2s_zero_dma_buffer(SPK_I2S_PORT);
+#if OPS_SPK_ES8311
+    // After the I2S clocks run: the codec takes its clock from BCLK.
+    if (!_initEs8311()) OPS_LOG("Sound", "ES8311 codec not answering at 0x18");
+#endif
     s_initialized = true;
     OPS_LOG("Sound", "I2S ready BCLK=%d WS=%d DATA=%d @ %dHz", SPK_BCLK, SPK_WS, SPK_DOUT, SAMPLE_RATE);
 }
@@ -268,7 +374,9 @@ void sound::playPing()
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
 
-    _writeScaled(s_pingBuf, PING_SAMPLES);
+    int n;
+    const int16_t* buf = _render(0, n);
+    _writeScaled(buf, n);
 }
 
 void sound::playNotification()
@@ -281,12 +389,9 @@ void sound::playNotification()
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
 
-    switch (cfg.notifySoundChoice) {
-        case 1:  _writeScaled(s_pluckBuf,  PLUCK_SAMPLES);  break;
-        case 2:  _writeScaled(s_clearBuf,  CLEAR_SAMPLES);  break;
-        case 3:  _writeScaled(s_whooshBuf, WHOOSH_SAMPLES); break;
-        default: _writeScaled(s_pingBuf,   PING_SAMPLES);   break;
-    }
+    int n;
+    const int16_t* buf = _render(cfg.notifySoundChoice, n);
+    _writeScaled(buf, n);
 }
 
 void sound::playPreview(uint8_t choice)
@@ -295,12 +400,9 @@ void sound::playPreview(uint8_t choice)
     if (!s_initialized) return;
     if (getCpuFrequencyMhz() < 80) setCpuFrequencyMhz(80);
     s_soundEndMs = millis() + 300;
-    switch (choice) {
-        case 1:  _writeScaled(s_pluckBuf,  PLUCK_SAMPLES);  break;
-        case 2:  _writeScaled(s_clearBuf,  CLEAR_SAMPLES);  break;
-        case 3:  _writeScaled(s_whooshBuf, WHOOSH_SAMPLES); break;
-        default: _writeScaled(s_pingBuf,   PING_SAMPLES);   break;
-    }
+    int n;
+    const int16_t* buf = _render(choice, n);
+    _writeScaled(buf, n);
 }
 
 void sound::playStartupJingle()
@@ -310,7 +412,11 @@ void sound::playStartupJingle()
     if (ops::config::nightModeActive()) return;   // night mode: quiet
 
     // 10240 samples at 8 kHz = ~1.3 s. Called before ui::init() — blocking is acceptable.
+#if OPS_HAS_PSRAM
     _writeScaled(s_jingleBuf, JINGLE_TOTAL);
+#else
+    _playJingleStreamed();
+#endif
 }
 
 }  // namespace ops

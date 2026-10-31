@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "Theme.h"
+#include "../features.h"
 #include "Emoji.h"
 #include "../utils/Config.h"
 #include <cctype>
@@ -389,6 +390,19 @@ void applyTheme(uint8_t choice)
 }
 
 // ── apply() ──────────────────────────────────────────────────────────
+#if OPS_KEYBOARD_ONLY
+// Small screen: the shared screens were laid out for 320x240. Cap every
+// object's width at its parent's, so a popup sized for the T-Deck fits and
+// its flex content wraps instead of running off the edge.
+static lv_style_t s_fitStyle;
+static lv_theme_t s_fitTheme;
+
+static void _fitApply(lv_theme_t* /*th*/, lv_obj_t* obj)
+{
+    if (lv_obj_get_parent(obj)) lv_obj_add_style(obj, &s_fitStyle, 0);
+}
+#endif
+
 void apply(lv_disp_t* disp)
 {
     lv_theme_t* th = lv_theme_default_init(
@@ -398,7 +412,20 @@ void apply(lv_disp_t* disp)
         true,
         LV_FONT_DEFAULT
     );
+#if OPS_KEYBOARD_ONLY
+    static bool s_fitInit = false;
+    if (!s_fitInit) {
+        s_fitInit = true;
+        lv_style_init(&s_fitStyle);
+        lv_style_set_max_width(&s_fitStyle, lv_pct(100));
+        s_fitTheme = *th;
+        lv_theme_set_parent(&s_fitTheme, th);
+        lv_theme_set_apply_cb(&s_fitTheme, _fitApply);
+    }
+    lv_disp_set_theme(disp, &s_fitTheme);
+#else
     (void)th;
+#endif
 }
 
 // Return the selected base font wrapped with emoji support (heap copy whose

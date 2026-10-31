@@ -6,9 +6,10 @@
 #include "Log.h"
 #include <SPI.h>
 #include <SD.h>
+#include "../features.h"
 
-// T-Deck Plus: SD CS = GPIO 39; shared SPI bus SCK=40 MISO=38 MOSI=41
-static constexpr int SD_CS = 39;
+// Pins per board in features.h (T-Deck Plus: CS 39 on SCK 40 / MISO 38 / MOSI 41)
+static constexpr int SD_CS = OPS_SD_CS;
 
 namespace ops {
 
@@ -18,7 +19,7 @@ static SPIClass s_spi(FSPI);
 bool sdcard::isMounted() { return s_mounted; }
 
 void sdcard::init() {
-    s_spi.begin(40, 38, 41, -1);   // SCK, MISO, MOSI, SS (CS handled by SD lib)
+    s_spi.begin(OPS_SD_SCK, OPS_SD_MISO, OPS_SD_MOSI, -1);   // SCK, MISO, MOSI, SS (CS handled by SD lib)
     if (!SD.begin(SD_CS, s_spi)) {
         OPS_LOG("SD", "No card or mount failed");
         return;

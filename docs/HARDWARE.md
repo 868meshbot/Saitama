@@ -109,3 +109,39 @@ The only hardware difference is the GPS module.
 - [ESP32-S3 Datasheet](https://www.espressif.com/en/products/socs/esp32-s3)
 - [SX1262 Datasheet](https://www.semtech.com/products/wireless-rf/lora-transceivers/sx1262)
 - [MeshCore Hardware Support](https://meshcore.io/flasher)
+## M5Stack Cardputer ADV + Cap LoRa-1262
+
+Built with `pio run -e cardputer-adv`. Board code: `src/hardware/cardputer/Board.cpp`;
+feature switches and capacities: `src/features.h`. Pins come from M5Stack's
+M5Unified, M5GFX and M5Cardputer sources and the Cap LoRa-1262 example; they
+have not been checked on hardware yet.
+
+### MCU
+
+Stamp-S3A (ESP32-S3FN8): 8 MB flash, **no PSRAM** (Espressif's "FN8" has no
+"R"). Everything that lives in PSRAM on the T-Deck is in internal RAM here, so
+lists are smaller (100 contacts, 60 repeaters, 60 chat messages in RAM) and
+the map, spectrum and other large-buffer screens are left out.
+
+| Signal | GPIO | Notes |
+|---|---|---|
+| TFT MOSI / SCLK | 35 / 36 | ST7789V2 135x240, own SPI host (HSPI), offset 52/40 |
+| TFT CS / DC / RST | 37 / 34 / 33 | |
+| TFT backlight | 38 | ledc PWM |
+| I2C SDA / SCL | 8 / 9 | TCA8418 keyboard (0x34), PI4IOE5V6408 expander on the cap (0x43), ES8311 codec (0x18) |
+| Keyboard INT | 11 | TCA8418, active low; also the light-sleep wake |
+| G0 button | 0 | Select; wakes from deep sleep |
+| LoRa NSS / DIO1 / RST / BUSY | 5 / 4 / 3 / 6 | SX1262 on the Cap LoRa-1262, TCXO 3.0 V |
+| LoRa + SD SPI | SCK 40, MOSI 14, MISO 39 | Shared bus |
+| LoRa RF switch | expander P0 | Driven high at boot |
+| SD CS | 12 | |
+| GPS RX / TX | 15 / 13 | ATGM336H on the cap, 115200 baud |
+| Battery | 10 | ADC, VBAT / 2 |
+| Speaker I2S | BCK 41, WS 43, DOUT 42 | ES8311 codec — not driven yet (no sounds) |
+
+### Keyboard
+
+56 keys in a 4x14 layout read through the TCA8418. Fn + `;` `.` `,` `/` are the
+arrow keys and stand in for the trackball; Fn + `` ` `` is Esc. There is no
+touchscreen: rows and popup buttons that the T-Deck only offers to touch are
+reached with the arrow keys (`src/ui/cardputer/KeyNav.cpp`).

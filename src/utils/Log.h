@@ -11,4 +11,10 @@
 // carriage, so output marches diagonally down the screen. Arduino's
 // Serial.println() already emits "\r\n" — this brings printf-style logging in
 // line with it.
-#define OPS_LOG(tag, fmt, ...) Serial.printf("[OPS] %s: " fmt "\r\n", tag, ##__VA_ARGS__)
+//
+// Settings > Serial Output (Config::serialLog) turns it off; until the config
+// is loaded at boot it is on.
+namespace ops { namespace log { extern bool g_serialOn; } }
+#define OPS_LOG(tag, fmt, ...) \
+    do { if (ops::log::g_serialOn) \
+        Serial.printf("[OPS] %s: " fmt "\r\n", tag, ##__VA_ARGS__); } while (0)

@@ -5,6 +5,7 @@
 // Owns the SX1262 radio, identity, and the BaseChatMesh loop.
 
 #include "MeshService.h"
+#include "../features.h"
 #include "Fhss.h"
 #include "../bt/BTCompanionService.h"
 #include "../version.h"
@@ -124,7 +125,7 @@ public:
         uint8_t pct = Board::instance().batteryPercent();
         return (uint16_t)(3200 + pct * 10);
     }
-    const char* getManufacturerName() const override { return "LilyGo T-Deck Plus"; }
+    const char* getManufacturerName() const override { return OPS_BOARD_NAME; }
     uint8_t getStartupReason() const override { return BD_STARTUP_NORMAL; }
 };
 
@@ -760,7 +761,7 @@ class OMSMesh : public BaseChatMesh {
             memset(&_outFrame[i], 0, 12); // build date
             strncpy((char*)&_outFrame[i], "2026-05-01", 12); i += 12;
             memset(&_outFrame[i], 0, 40); // manufacturer
-            strncpy((char*)&_outFrame[i], "LilyGo T-Deck Plus", 39); i += 40;
+            strncpy((char*)&_outFrame[i], OPS_BOARD_NAME, 39); i += 40;
             memset(&_outFrame[i], 0, 20); // firmware version
             strncpy((char*)&_outFrame[i], OPS_VERSION_STRING, 19); i += 20;
             _outFrame[i++] = 0; // client_repeat
@@ -2534,7 +2535,7 @@ public:
     void preloadStoredContacts() {
         const int nc = ops::contacts::count();
         const int nr = ops::repeaters::count();
-        PreloadCand* cand = (PreloadCand*)ps_malloc((size_t)(nc + nr + 1) * sizeof(PreloadCand));
+        PreloadCand* cand = (PreloadCand*)ops::psram::alloc((size_t)(nc + nr + 1) * sizeof(PreloadCand));
         if (!cand) { OPS_LOG("Mesh", "Preload: out of memory"); return; }
 
         int n = 0;
@@ -3669,7 +3670,7 @@ void MeshService::init() {
         OPS_LOG("Mesh", "SX1262 init failed — mesh disabled");
         return;
     }
-    OPS_LOG("Mesh", "SX1262 OK %.1f MHz SF%d BW%d", (double)LORA_FREQ, LORA_SF, LORA_BW);
+    OPS_LOG("Mesh", "SX1262 OK");
 
     const auto& cfg = ops::config::get();
     the_mesh.begin_mesh(cfg.callsign[0] ? cfg.callsign : "OMS-NODE");
@@ -3679,6 +3680,9 @@ void MeshService::init() {
     // Config is the source of truth: std_init() switched boost on from the
     // build flag, so apply the saved choice explicitly in both directions.
     sx1262.setRxBoostedGainMode(cfg.rxBoost);
+    OPS_LOG("Mesh", "Radio: %.3f MHz SF%d BW%.1f CR4/%d",
+            (double)sx1262.freqMHz, (int)sx1262.spreadingFactor,
+            (double)sx1262.bandwidthKhz, (int)sx1262.codingRate + 4);
     the_mesh.sendSelfAdvert(random(500, 2500), false);  // zero-hop on boot
 
     _initialized = true;
@@ -4009,7 +4013,11 @@ bool MeshService::lightSleep(uint32_t maxMs) {
         gpio_set_intr_type(dio1, GPIO_INTR_POSEDGE);
         // Drop any status latched by the level type so the ISR doesn't fire for
         // this event too — recvRaw() picks it up via s_rxMissedInSleep instead.
+#if P_LORA_DIO_1 >= 32
         REG_WRITE(GPIO_STATUS1_W1TC_REG, 1UL << (P_LORA_DIO_1 - 32));
+#else
+        REG_WRITE(GPIO_STATUS_W1TC_REG, 1UL << P_LORA_DIO_1);
+#endif
         // While DIO1 stays high no new rising edge can occur, so there is no
         // race with the ISR: the next edge only follows our read clearing it.
         if (digitalRead(P_LORA_DIO_1) == HIGH) s_rxMissedInSleep = true;

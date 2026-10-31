@@ -1,13 +1,16 @@
 // Saitama — Board.h
 // Copyright 2026 Saitama — GPL-3.0-or-later
 //
-// Hardware abstraction for the LilyGo T-Deck Plus.
-// Pin map verified against the official LilyGo T-Deck Plus schematic.
+// Hardware abstraction shared by every board. Board.cpp implements it for the
+// LilyGo T-Deck Plus (pin map verified against the official schematic);
+// cardputer/Board.cpp for the M5Stack Cardputer ADV. On the Cardputer the
+// "trackball" is the keyboard's arrow keys and the press is Enter/G0.
 
 #pragma once
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "../features.h"
 #ifdef OPS_HAS_BUILTIN_GPS
 #include <TinyGPSPlus.h>
 #endif
@@ -27,6 +30,8 @@ public:
     void consumeTrackballDelta(int16_t &dx, int16_t &dy);
     bool consumeTrackballPress();
     void signalTrackballPress() { _trackballPressed = true; }
+    // Adds to the direction the next consumeTrackballDelta() returns.
+    void addTrackballDelta(int16_t dx, int16_t dy) { _trackballX += dx; _trackballY += dy; }
 
     // Battery level 0-100 % via voltage divider on BOARD_BAT_ADC (GPIO4)
     int  batteryPercent() const;
@@ -71,16 +76,16 @@ public:
 #endif
     }
 
-    // Screen backlight PWM on GPIO 42 via ledc (channel 0, 5 kHz, 8-bit).
+    // Screen backlight PWM on TFT_BL (T-Deck GPIO 42) via ledc (channel 0, 5 kHz, 8-bit).
     // Call initBacklightPWM() once after Board::init(); then setDisplayBrightness()
     // anytime. Range: 0 = off/blank, 128 = 50%, 255 = full.
     static constexpr uint8_t  BL_LEDC_CH   = 0;
-    static constexpr uint32_t BL_LEDC_FREQ = 5000;
+    static constexpr uint32_t BL_LEDC_FREQ = OPS_BL_PWM_HZ;
     static constexpr uint8_t  BL_LEDC_BITS = 8;
 
     void initBacklightPWM() {
         ledcSetup(BL_LEDC_CH, BL_LEDC_FREQ, BL_LEDC_BITS);
-        ledcAttachPin(42, BL_LEDC_CH);
+        ledcAttachPin(TFT_BL, BL_LEDC_CH);
     }
     void setDisplayBrightness(uint8_t val) { ledcWrite(BL_LEDC_CH, val); }
 
@@ -89,6 +94,9 @@ public:
     // mirroring exactly what the /kbbl terminal probe does, which is confirmed to work.
     // All three ACK; the MCU firmware determines which one it acts on.
     void setKeyboardBacklight(uint8_t brightness) {
+#if !OPS_FEAT_KB_BACKLIGHT
+        (void)brightness;
+#else
         Wire.beginTransmission((uint8_t)0x55);  // A: single byte
         Wire.write(brightness);
         Wire.endTransmission(true);
@@ -100,6 +108,7 @@ public:
         Wire.write((uint8_t)0x01);
         Wire.write(brightness);
         Wire.endTransmission(true);
+#endif
     }
 
     bool initialized() const { return _initialized; }
@@ -117,6 +126,17 @@ private:
     bool    _trackballPressed    = false;
     bool    _trackballPrevDown   = false;  // for falling-edge debounce
     uint32_t _trackballPressMs   = 0;      // millis() of last accepted press
+
+#ifdef OPS_BOARD_CARDPUTER
+    // Keyboard (TCA8418): key events are queued by the driver and drained by
+    // pollKeyboard(); arrow keys go to the trackball delta instead.
+    bool _fnHeld    = false;
+    bool _shiftHeld = false;
+    bool _ctrlHeld  = false;
+    void _drainKeyEvents();
+    char    _keyQueue[16] = {};
+    uint8_t _keyHead = 0, _keyTail = 0;
+#endif
 
 #ifdef OPS_HAS_BUILTIN_GPS
     HardwareSerial      _gpsSerial{1};

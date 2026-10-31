@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #pragma once
+#include "../features.h"
 
 #include <lvgl.h>
 #include "../mesh/MeshService.h"
@@ -30,6 +31,13 @@ public:
     // Called each tick to update sent-bubble check indicator if ACK has arrived.
     static void checkPendingAck();
 
+    // Keyboard-only boards: scroll the open conversation (dy < 0 = older).
+    // False when no conversation is in front (another screen, a popup).
+    static bool scrollMessages(int dy);
+
+    // Closes the chat emoji picker; false when it was not open.
+    static bool closeEmojiPicker();
+
 private:
     enum Mode { MODE_LIST, MODE_CHAT };
 
@@ -50,12 +58,12 @@ private:
         int8_t   repeats;         // repeaters heard re-sending it; -1 = still listening
     };
 
-    // 200 slots shared across all channels/DMs, ps_malloc'd in PSRAM on first
+    // OPS_CHAT_HISTORY slots (200 on the T-Deck) shared across all channels/DMs, ps_malloc'd in PSRAM on first
     // use. Eviction is per-tag (see _historyAdd) so a busy channel/DM can only
     // push out its own oldest messages, never another conversation's. Each
     // channel/DM keeps at most CHANNEL_HISTORY_MAX in RAM (and on screen);
     // the SD log still records everything.
-    static constexpr int HISTORY_MAX = 200;
+    static constexpr int HISTORY_MAX = OPS_CHAT_HISTORY;
     static constexpr int CHANNEL_HISTORY_MAX = 20;
     static MsgEntry*  s_history;    // allocated by _ensureHistoryAlloc()
     static int        s_histCount;
@@ -149,6 +157,7 @@ private:
 
     static void _onListAdd     (lv_event_t* e);   // list header + → Add Channel
     static void _onActionScope (lv_event_t* e);   // popup → Configure Scope
+    static void _onActionIcon  (lv_event_t* e);   // popup → Channel Icon (no avatar to tap)
     static void _onActionClear (lv_event_t* e);   // popup → Clear
     static void _onActionDelete(lv_event_t* e);   // popup → Delete
     static void _onActionNotify(lv_event_t* e);   // popup → Notify toggle
@@ -176,6 +185,8 @@ private:
     static void _onPathKey          (lv_event_t* e);
     static void _onAddContactSave   (lv_event_t* e);
     static void _onAddContactCancel (lv_event_t* e);
+    static void _closeEmojiPanel();
+    static void _onEmojiSearchKey(lv_event_t* e);
     static void _onEmojiToggle     (lv_event_t* e);
     static void _onEmojiInsert     (lv_event_t* e);
 };

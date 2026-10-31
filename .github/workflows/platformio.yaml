@@ -16,6 +16,18 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+    # One job per board. device = the release file name; flash = merged-image size.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: t-deck
+            device: t-deck-plus
+            flash: 16MB
+          - env: cardputer-adv
+            device: cardputer-adv
+            flash: 8MB
+
     steps:
     - uses: actions/checkout@v4
       with:
@@ -38,40 +50,41 @@ jobs:
         path: |
           ~/.platformio
           ~/.piocache
-        key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio.ini') }}
+        key: ${{ runner.os }}-pio-${{ matrix.env }}-${{ hashFiles('**/platformio.ini') }}
         restore-keys: |
+          ${{ runner.os }}-pio-${{ matrix.env }}-
           ${{ runner.os }}-pio-
 
     - name: Build firmware
       run: |
         mkdir -p ~/.piocache
         export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
-        pio run -e t-deck
+        pio run -e ${{ matrix.env }}
 
     - name: Copy firmware artifacts (cache fallback)
       run: |
         # post_build.py only fires when SCons actually rebuilds the binary.
         # On a cache hit the hook is skipped, so copy manually if needed.
         mkdir -p firmware
-        if [ -z "$(ls firmware/saitama-*.bin 2>/dev/null | grep -v merged)" ]; then
+        if [ -z "$(ls firmware/saitama-${{ matrix.device }}-*.bin 2>/dev/null | grep -v merged)" ]; then
           VERSION=$(python3 -c "import re; m=re.search(r'OPS_VERSION_STRING\s+\"([^\"]+)\"', open('src/version.h').read()); print(m.group(1))")
-          cp .pio/build/t-deck/firmware.bin "firmware/saitama-t-deck-plus-${VERSION}.bin"
-          echo "Fallback copy → firmware/saitama-t-deck-plus-${VERSION}.bin"
+          cp .pio/build/${{ matrix.env }}/firmware.bin "firmware/saitama-${{ matrix.device }}-${VERSION}.bin"
+          echo "Fallback copy → firmware/saitama-${{ matrix.device }}-${VERSION}.bin"
         else
-          echo "post_build already created: $(ls firmware/saitama-*.bin | grep -v merged)"
+          echo "post_build already created: $(ls firmware/saitama-${{ matrix.device }}-*.bin | grep -v merged)"
         fi
 
     - name: Merge firmware (CI fallback)
       run: |
-        APP=$(ls firmware/saitama-*.bin 2>/dev/null | grep -v merged | head -1)
+        APP=$(ls firmware/saitama-${{ matrix.device }}-*.bin 2>/dev/null | grep -v merged | head -1)
         if [ -z "$APP" ]; then echo "No app binary found"; exit 1; fi
         MERGED="${APP%.bin}-merged.bin"
         if [ -f "$MERGED" ]; then echo "Merged binary already exists"; exit 0; fi
-        BOOT=.pio/build/t-deck/bootloader.bin
-        PART=.pio/build/t-deck/partitions.bin
-        FW=.pio/build/t-deck/firmware.bin
+        BOOT=.pio/build/${{ matrix.env }}/bootloader.bin
+        PART=.pio/build/${{ matrix.env }}/partitions.bin
+        FW=.pio/build/${{ matrix.env }}/firmware.bin
         python -m esptool --chip esp32s3 merge_bin \
-          --flash_mode dio --flash_freq 80m --flash_size 16MB \
+          --flash_mode dio --flash_freq 80m --flash_size ${{ matrix.flash }} \
           0x0000 "$BOOT" 0x8000 "$PART" 0x10000 "$FW" \
           -o "$MERGED"
         echo "Merged → $MERGED"
@@ -82,14 +95,28 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: firmware-binaries
-        path: firmware/saitama-*.bin
+        name: firmware-${{ matrix.device }}
+        path: firmware/saitama-${{ matrix.device }}-*.bin
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all boards' binaries
+      uses: actions/download-artifact@v4
+      with:
+        pattern: firmware-*
+        path: firmware
+        merge-multiple: true
 
     - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/')
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        ls -lh firmware/
         gh release create "${{ github.ref_name }}" \
           --title "${{ github.ref_name }}" \
           --generate-notes \

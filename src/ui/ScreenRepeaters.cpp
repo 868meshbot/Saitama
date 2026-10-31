@@ -5,7 +5,10 @@
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenTerminal.h"
+#include "../features.h"
+#if OPS_FEAT_TRACE
 #include "ScreenTrace.h"
+#endif
 #include "Theme.h"
 #include "ListFilter.h"
 #include "Emoji.h"
@@ -42,7 +45,7 @@ lv_obj_t* ScreenRepeaters::s_adminScreen      = nullptr;
 lv_obj_t* ScreenRepeaters::s_adminRespLbl     = nullptr;
 char      (&ScreenRepeaters::s_adminRespBuf)[2048] = ops::psram::array<char[2048]>();
 
-static constexpr int REP_TOP_H = 28;
+static constexpr int REP_TOP_H = OPS_TOP_H;
 // Type-to-filter box in the top bar: matches name or id.
 static listfilter::State s_filter;
 static void _filterRowText(int key, char* out, size_t outMax)
@@ -193,7 +196,7 @@ void ScreenRepeaters::_build()
     for (int i = 0; i < cnt; i++) { Repeater r; if (repeaters::get(i, r) && r.favourite)  s_order[j++] = i; }
     for (int i = 0; i < cnt; i++) { Repeater r; if (repeaters::get(i, r) && !r.favourite) s_order[j++] = i; }
 
-    static constexpr int kRowH = 60;  // matches ScreenContacts' row height
+    static constexpr int kRowH = OPS_LIST_ROW_H;  // matches ScreenContacts' row height
 
     for (int vi = 0; vi < cnt; vi++) {
         int si = s_order[vi];   // storage index — passed as user_data
@@ -236,7 +239,8 @@ void ScreenRepeaters::_build()
 
         // ── Icon: auto-derived initials on a hashed-colour circle ──────────
         lv_obj_t* avatar = lv_obj_create(row);
-        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_size(avatar, OPS_AVATAR_SZ, OPS_AVATAR_SZ);
+        if (OPS_AVATAR_SZ == 0) lv_obj_add_flag(avatar, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(avatar, _repAvatarColor(si), 0);
         lv_obj_set_style_border_width(avatar, 0, 0);
@@ -253,7 +257,7 @@ void ScreenRepeaters::_build()
 
         // ── Text column: name, then "id | rssi | last seen" subtitle ───────
         lv_obj_t* col = lv_obj_create(row);
-        lv_obj_set_height(col, 44);
+        lv_obj_set_height(col, OPS_LIST_COL_H);
         lv_obj_set_flex_grow(col, 1);
         lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(col, 0, 0);
@@ -351,14 +355,16 @@ void ScreenRepeaters::_onRowClick(lv_event_t* e)
 
     // ── Action box: name + id, then a 2-column grid of big buttons; Admin
     //    Login and Close span both columns (same style as Contacts). ─────
-    static constexpr int BOX_W  = 296;
+    // Narrow screen (Cardputer): the full width less a margin, one column.
+    static constexpr bool NARROW = OPS_SCREEN_W < 300;
+    static constexpr int BOX_W  = NARROW ? OPS_SCREEN_W - 6 : 296;
     static constexpr int GAP    = 6;
     static constexpr int BORDER = 1;
     // Content width = box minus padding AND border, or two halves + the gap
     // overflow it and flex wraps every button onto its own row.
     static constexpr int FULL_W = BOX_W - 2 * 8 - 2 * BORDER;
-    static constexpr int HALF_W = (FULL_W - GAP) / 2;
-    static constexpr int BTN_H  = 30;
+    static constexpr int HALF_W = NARROW ? FULL_W : (FULL_W - GAP) / 2;
+    static constexpr int BTN_H  = NARROW ? 26 : 30;
 
     lv_obj_t* box = lv_obj_create(overlay);
     lv_obj_set_width(box, BOX_W);
@@ -375,6 +381,14 @@ void ScreenRepeaters::_onRowClick(lv_event_t* e)
     lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);   // taps on the box don't close it
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    if (NARROW)
+    {
+        // One column is taller than the screen: cap the box at the screen
+        // height and let it scroll, or the top buttons sit above the edge.
+        lv_obj_set_style_max_height(box, OPS_SCREEN_H - 4, 0);
+        lv_obj_add_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(box, LV_DIR_VER);
+    }
 
     // Title row: name left, id right
     lv_obj_t* head = lv_obj_create(box);
@@ -431,8 +445,12 @@ void ScreenRepeaters::_onRowClick(lv_event_t* e)
     makeBtn("Remove Favourite", HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupUnfavourite, r.favourite);
     makeBtn("Set Path",         HALF_W, theme::TEXT,   theme::BG, theme::BORDER, _onPopupSetPath);
     makeBtn("Reset Path",       HALF_W, theme::ORANGE, theme::BG, theme::ORANGE, _onPopupResetPath);
+#if OPS_FEAT_TRACE
     makeBtn("Trace Repeater",   HALF_W, theme::ACCENT, theme::BG, theme::ACCENT, _onPopupTrace);
     makeBtn("Delete Repeater",  HALF_W, theme::RED,    theme::BG, theme::RED,    _onPopupDelete);
+#else
+    makeBtn("Delete Repeater",  FULL_W, theme::RED,    theme::BG, theme::RED,    _onPopupDelete);
+#endif
     makeBtn("Close",            FULL_W, theme::TEXT_MUTED, theme::BG, theme::BORDER, _onPopupClose);
 }
 
@@ -473,7 +491,9 @@ void ScreenRepeaters::_onPopupTrace(lv_event_t* e)
     static uint8_t prefix[4];
     memcpy(prefix, r.pubKeyPrefix, 4);
     // Switch screens next frame, once this button's handler has returned.
+#if OPS_FEAT_TRACE
     lv_async_call([](void*) { ScreenTrace::showFor(prefix); }, nullptr);
+#endif
 }
 
 // ── _onPopupSetPath() — close popup and open set-path dialog ──────────
@@ -1229,7 +1249,7 @@ void ScreenRepeaters::_onRetryLogin(lv_event_t* e)
 // Admin panel screen (shown after successful login)
 // ─────────────────────────────────────────────────────────────────────
 
-static constexpr int ADM_TOP_H  = 28;
+static constexpr int ADM_TOP_H  = OPS_TOP_H;
 static constexpr int ADM_BTN_H  = 34;   // action dropdown + Open
 static constexpr int ADM_RESP_Y = ADM_TOP_H + ADM_BTN_H;
 static constexpr int ADM_RESP_H = OPS_SCREEN_H - ADM_RESP_Y;

@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "ScreenContacts.h"
+#include "../features.h"
 #include "../utils/PsramAlloc.h"
 #include "ScreenLauncher.h"
 #include "ScreenHome.h"
@@ -25,7 +26,7 @@ namespace ops { namespace ui {
 
 lv_obj_t* ScreenContacts::_screen = nullptr;
 
-static constexpr int TOP_H = 28;
+static constexpr int TOP_H = OPS_TOP_H;
 // Type-to-filter box in the top bar: matches name or id.
 static listfilter::State s_filter;
 static void _filterRowText(int key, char* out, size_t outMax)
@@ -216,7 +217,7 @@ void ScreenContacts::_build()
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && c.favourite)  s_order[j++] = i; }
     for (int i = 0; i < cnt; i++) { Contact c; if (contacts::get(i, c) && !c.favourite) s_order[j++] = i; }
 
-    static constexpr int kRowH = 60;  // matches ScreenHome's channel-list row height
+    static constexpr int kRowH = OPS_LIST_ROW_H;  // matches ScreenHome's channel-list row height
 
     for (int vi = 0; vi < cnt; vi++) {
         int si = s_order[vi];   // storage index — passed as user_data
@@ -254,7 +255,8 @@ void ScreenContacts::_build()
 
         // ── Avatar: auto-derived initials on a hashed-colour circle ────────
         lv_obj_t* avatar = lv_obj_create(row);
-        lv_obj_set_size(avatar, 44, 44);
+        lv_obj_set_size(avatar, OPS_AVATAR_SZ, OPS_AVATAR_SZ);
+        if (OPS_AVATAR_SZ == 0) lv_obj_add_flag(avatar, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(avatar, _avatarColor(si), 0);
         lv_obj_set_style_border_width(avatar, 0, 0);
@@ -271,7 +273,7 @@ void ScreenContacts::_build()
 
         // ── Text column: name + "id | distance | last seen" subtitle ───────
         lv_obj_t* col = lv_obj_create(row);
-        lv_obj_set_height(col, 44);
+        lv_obj_set_height(col, OPS_LIST_COL_H);
         lv_obj_set_flex_grow(col, 1);
         lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(col, 0, 0);
@@ -392,14 +394,16 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
 
     // ── Action box: name + id, then a 2-column grid of big buttons; Direct
     //    Message and Close span both columns. ──────────────────────────
-    static constexpr int BOX_W  = 296;
+    // Narrow screen (Cardputer): the full width less a margin, one column.
+    static constexpr bool NARROW = OPS_SCREEN_W < 300;
+    static constexpr int BOX_W  = NARROW ? OPS_SCREEN_W - 6 : 296;
     static constexpr int GAP    = 6;
     static constexpr int BORDER = 1;
     // Content width = box minus padding AND border; two halves + the gap
     // must fit in it or flex wraps every button onto its own row.
     static constexpr int FULL_W = BOX_W - 2 * 8 - 2 * BORDER;
-    static constexpr int HALF_W = (FULL_W - GAP) / 2;
-    static constexpr int BTN_H  = 30;
+    static constexpr int HALF_W = NARROW ? FULL_W : (FULL_W - GAP) / 2;
+    static constexpr int BTN_H  = NARROW ? 26 : 30;
 
     lv_obj_t* box = lv_obj_create(overlay);
     lv_obj_set_width(box, BOX_W);
@@ -416,6 +420,14 @@ void ScreenContacts::_onRowClick(lv_event_t* e)
     lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);   // taps on the box don't close it
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    if (NARROW)
+    {
+        // One column is taller than the screen: cap the box at the screen
+        // height and let it scroll, or the top buttons sit above the edge.
+        lv_obj_set_style_max_height(box, OPS_SCREEN_H - 4, 0);
+        lv_obj_add_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(box, LV_DIR_VER);
+    }
 
     // Title row: callsign left, id right
     lv_obj_t* head = lv_obj_create(box);
@@ -609,8 +621,11 @@ static void _openDetailsBox(const Contact& c)
     lv_obj_set_style_border_width(overlay, 0, 0);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 300 px on the T-Deck; the full width less a margin on a narrow screen.
+    static constexpr int BOX_W = OPS_SCREEN_W < 300 ? OPS_SCREEN_W - 6 : 300;
+    static constexpr int IN_W  = BOX_W - 18;   // inside the padding and border
     lv_obj_t* box = lv_obj_create(overlay);
-    lv_obj_set_size(box, 300, LV_SIZE_CONTENT);
+    lv_obj_set_size(box, BOX_W, LV_SIZE_CONTENT);
     lv_obj_set_style_max_height(box, OPS_SCREEN_H - 8, 0);
     lv_obj_center(box);
     lv_obj_set_style_bg_color(box, theme::BG_CARD, 0);
@@ -628,7 +643,7 @@ static void _openDetailsBox(const Contact& c)
     snprintf(shown, sizeof(shown), "%s", c.name);
     theme::sanitizeText(shown);
     lv_obj_t* nameLbl = lv_label_create(box);
-    lv_obj_set_width(nameLbl, 282);
+    lv_obj_set_width(nameLbl, IN_W);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_WRAP);
     lv_label_set_text(nameLbl, shown);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
@@ -637,7 +652,7 @@ static void _openDetailsBox(const Contact& c)
     auto row = [&](const char* label, const char* value, lv_color_t col, lv_obj_t** valOut = nullptr,
                    bool fitValue = false) {
         lv_obj_t* r = lv_obj_create(box);
-        lv_obj_set_size(r, 282, LV_SIZE_CONTENT);
+        lv_obj_set_size(r, IN_W, LV_SIZE_CONTENT);
         lv_obj_set_style_bg_opa(r, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(r, 0, 0);
         lv_obj_set_style_pad_all(r, 0, 0);
@@ -653,7 +668,7 @@ static void _openDetailsBox(const Contact& c)
         lv_obj_t* v = lv_label_create(r);
         lv_label_set_text(v, value);
         lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(v, fitValue ? LV_SIZE_CONTENT : 204);   // fit: room for an icon after it
+        lv_obj_set_width(v, fitValue ? LV_SIZE_CONTENT : IN_W - 78);   // fit: room for an icon after it
         lv_obj_set_style_text_color(v, col, 0);
         lv_obj_set_style_text_font(v, &lv_font_montserrat_12, 0);
         if (valOut) *valOut = r;
@@ -740,7 +755,7 @@ static void _openDetailsBox(const Contact& c)
 
     lv_obj_t* btn = lv_btn_create(box);
     lv_group_remove_obj(btn);
-    lv_obj_set_size(btn, 282, 30);
+    lv_obj_set_size(btn, IN_W, 30);
     lv_obj_set_style_bg_color(btn, theme::BG, 0);
     lv_obj_set_style_bg_color(btn, theme::PRIMARY, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, theme::BORDER, 0);

@@ -9,18 +9,27 @@
 #pragma once
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include "../features.h"
 
 namespace ops {
 
 struct PsramJsonAllocator : ArduinoJson::Allocator {
     void* allocate(size_t size) override {
+#if OPS_HAS_PSRAM
         return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+#else
+        return heap_caps_malloc(size, MALLOC_CAP_8BIT);
+#endif
     }
     void deallocate(void* ptr) override {
         heap_caps_free(ptr);
     }
     void* reallocate(void* ptr, size_t newSize) override {
+#if OPS_HAS_PSRAM
         return heap_caps_realloc(ptr, newSize, MALLOC_CAP_SPIRAM);
+#else
+        return heap_caps_realloc(ptr, newSize, MALLOC_CAP_8BIT);
+#endif
     }
 };
 

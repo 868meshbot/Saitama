@@ -51,6 +51,8 @@ Saitama is open-source standalone firmware for the LilyGo T-Deck Plus (ESP32-S3,
 
 **Contacts / repeaters capacity** — `contacts::CAPACITY` and `repeaters::CAPACITY` are 250 each, held in PSRAM. The live store is the SD JSON (`/ops/contacts.json`, `/ops/repeaters.json`); the legacy NVS blobs (namespace `opsct`) are only read as a fallback when the SD JSON cannot be loaded. `Contact` is a fixed 160-byte record (static_assert) — new fields go into its padding bytes (`blocked`, `lastHopsP1`) or need a migration case. The JSON is built with the PSRAM allocator (`utils/PsramJson.h`); in internal DRAM a long list silently truncated.
 
+**Second board — M5Stack Cardputer ADV** (`pio run -e cardputer-adv`, beta, not hardware-tested): same code, cut down. `src/features.h` holds the per-board switches (`OPS_FEAT_*`), capacities, layout sizes and SD pins — shared code tests those switches, never the board name, and the env's `build_src_filter` drops the files of switched-off features. Cardputer-only code lives in `src/hardware/cardputer/` (its `Board.cpp`: TCA8418 keyboard, arrow keys → trackball delta) and `src/ui/cardputer/` (list `ScreenLauncher.cpp`, `MeshRain.cpp` = the bootanim API for the "Mesh rain" screensaver, `KeyNav.cpp` = keyboard highlight for touch-only rows/popups, `AdvertWindow`, `ScreenGpsText`). No PSRAM there: allocate big buffers with `ops::psram::alloc()` (ps_malloc on the T-Deck, malloc on the Cardputer), never `ps_malloc()` directly. A change to shared code must keep the T-Deck build unchanged unless intended — compare `xtensa-esp32s3-elf-size` of `firmware.elf` before/after.
+
 ---
 
 ## Project Layout

@@ -23,7 +23,11 @@
 /* Override: use PSRAM for large allocations */
 #define LV_MEM_CUSTOM 1
 #define LV_MEM_CUSTOM_INCLUDE <Arduino.h>
+#ifdef OPS_BOARD_CARDPUTER
+#define LV_MEM_CUSTOM_ALLOC   malloc   /* no PSRAM on the Cardputer ADV */
+#else
 #define LV_MEM_CUSTOM_ALLOC   ps_malloc
+#endif
 #define LV_MEM_CUSTOM_FREE    free
 #define LV_MEM_SIZE          (32U * 1024)  /* 32KB minimal pool, custom alloc handles the rest */
 

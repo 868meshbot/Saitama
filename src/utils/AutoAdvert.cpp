@@ -87,6 +87,14 @@ void noteAdvertSent()
     s_lastSentMs = millis();
 }
 
+uint32_t secondsUntilNext()
+{
+    if (s_choice == 0) return 0;
+    uint32_t intervalMs = (uint32_t)HOURS[s_choice] * 3600UL * 1000UL;
+    uint32_t elapsed    = millis() - s_lastSentMs;
+    return elapsed >= intervalMs ? 0 : (intervalMs - elapsed) / 1000UL;
+}
+
 void tick()
 {
     uint32_t now = millis();

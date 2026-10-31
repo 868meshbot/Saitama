@@ -13,6 +13,11 @@ namespace ops { namespace ui {
 void init();
 void tick();
 
+// Arm (true) or clear (false) the user light-sleep wake pins. tick() arms
+// them only around each light sleep; setup() clears them first thing, since
+// a panic restart leaves the previous run's GPIO setup in place.
+void armWakePins(bool on);
+
 // Navigate to the main launcher from any screen (back / home action).
 void showLauncher();
 
