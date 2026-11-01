@@ -2,6 +2,7 @@
 // Copyright 2026 Saitama — GPL-3.0-or-later
 
 #include "AutoAdvert.h"
+#include "../features.h"
 #include "SDCard.h"
 #include "Log.h"
 #include "../mesh/MeshService.h"
@@ -30,13 +31,13 @@ static int _indexForHours(int hours)
 }
 
 // Reads the file into s_choice. True once the card was readable, whether or
-// not the file exists (no file = Off, not an error).
+// not the file exists (no file = the board default, OPS_AUTOADVERT_DEFAULT_H).
 static bool _load()
 {
     if (!sdcard::isMounted() && !sdcard::tryMount()) return false;
     File f = SD.open(PATH, FILE_READ);
     if (!f) {
-        OPS_LOG("AutoAdv", "%s not found - auto advert off", PATH);
+        OPS_LOG("AutoAdv", "%s not found - default %d h", PATH, HOURS[s_choice]);
         return true;
     }
     JsonDocument doc;
@@ -53,7 +54,7 @@ static bool _load()
 
 void init()
 {
-    s_choice     = 0;
+    s_choice     = _indexForHours(OPS_AUTOADVERT_DEFAULT_H);
     s_lastSentMs = millis();
     s_loaded     = _load();
     if (!s_loaded) OPS_LOG("AutoAdv", "SD not mounted - will retry");

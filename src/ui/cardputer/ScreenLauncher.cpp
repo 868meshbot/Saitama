@@ -30,6 +30,7 @@
 #include "../ScreenLauncher.h"
 #include "../ScreenHome.h"
 #include "../ScreenContacts.h"
+#include "../UIScreen.h"
 #include "../ScreenRepeaters.h"
 #include "../ScreenHeard.h"
 #include "../ScreenFinder.h"
@@ -45,6 +46,7 @@
 #include "../../utils/Config.h"
 #include "../../utils/Contacts.h"
 #include "../../utils/Repeaters.h"
+#include "../../utils/LvMem.h"
 #include "../../mesh/MeshService.h"
 #include "../../utils/Log.h"
 #include <stdio.h>
@@ -79,6 +81,24 @@ static const App kApps[] = {
     { LV_SYMBOL_SETTINGS,  "Settings",  [] { ScreenSettings::show(); } },
 };
 static constexpr int APP_COUNT = sizeof(kApps) / sizeof(kApps[0]);
+
+// Opens app i. With the heap nearly full, hidden screens are freed first; if
+// that still isn't enough the app stays shut (Settings always opens, so
+// Bluetooth can be turned off) rather than LVGL running out half-way.
+static void _openApp(int i)
+{
+    if (lvmem::largestFree() < lvmem::OPEN_MIN_BLOCK) {
+        ops::ui::releaseHiddenScreens();
+        OPS_LOG("Heap", "opening %s with largest block %u", kApps[i].name,
+                (unsigned)lvmem::largestFree());
+        if (lvmem::largestFree() < lvmem::OPEN_MIN_BLOCK / 2 &&
+            i != APP_COUNT - 1) {   // Settings is last
+            ops::ui::showNotice("Low memory: restart, or turn off Bluetooth");
+            return;
+        }
+    }
+    kApps[i].open();
+}
 
 static lv_obj_t* s_body = nullptr;         // the list or the carousel
 static int       s_builtStyle = -1;        // launcherStyle s_body was built for
@@ -309,12 +329,9 @@ void ScreenLauncher::show()
     refreshUnreadDot();
     lv_scr_load(_screen);
     _updateHighlight();
-#if !OPS_HAS_PSRAM
     // No PSRAM: LVGL objects live in internal RAM, which BLE and the radio
     // also need. Free the big screens that are rebuilt on every visit.
-    ScreenSettings::release();
-    ScreenSignal::release();
-#endif
+    ops::ui::releaseHiddenScreens();
     OPS_LOG("UI", "Launcher shown");
 }
 
@@ -443,7 +460,7 @@ void ScreenLauncher::_onIconClick(lv_event_t* e)
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if (i < 0 || i >= APP_COUNT) return;
     s_sel = i;
-    kApps[i].open();
+    _openApp(i);
 }
 
 // ── Navigation ──────────────────────────────────────────────────────
@@ -469,7 +486,7 @@ void ScreenLauncher::navigate(int dx, int dy)
 void ScreenLauncher::confirmSelect()
 {
     if (!_screen) return;
-    if (_carousel()) { kApps[s_sel].open(); return; }
+    if (_carousel()) { _openApp(s_sel); return; }
     if (s_rows[s_sel]) lv_event_send(s_rows[s_sel], LV_EVENT_CLICKED, nullptr);
 }
 

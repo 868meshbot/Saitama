@@ -21,6 +21,9 @@
 #endif
 #include "ScreenFinder.h"
 #include "ScreenRepeaters.h"
+#include "ScreenContacts.h"
+#include "ScreenSettings.h"
+#include "ScreenSignal.h"
 #if OPS_FEAT_MAP
 #include "ScreenMap.h"
 #endif
@@ -56,6 +59,7 @@
 #include "../utils/Sound.h"
 #include "../utils/Keymap.h"
 #include "../utils/SDCard.h"
+#include "../utils/LvMem.h"
 #include "../utils/GpsMgr.h"
 #include "../utils/AutoAdvert.h"
 #include "Emoji.h"
@@ -664,6 +668,7 @@ void init() {
         OPS_LOG("UI", "FATAL: cannot allocate display buffers");
         return;
     }
+    ops::lvmem::init();   // low-memory reserve (no-PSRAM boards)
 
     // Register LVGL 8 display driver
     lv_disp_draw_buf_init(&s_draw_buf, s_buf1, s_buf2, BUF_PIXELS);
@@ -770,6 +775,13 @@ void tick() {
                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+#if !OPS_HAS_PSRAM
+            ops::lvmem::restoreReserve();
+            OPS_LOG("Heap", "reserve %s  | low-mem %u  failed allocs %u (last %u B)",
+                    ops::lvmem::reserveHeld() ? "held" : "SPENT",
+                    (unsigned)ops::lvmem::hits(), (unsigned)ops::lvmem::failedAllocs(),
+                    (unsigned)ops::lvmem::lastFailedSize());
+#endif
             // Loop timing alongside: a slow loop misses short trackball
             // clicks (the press is polled, not interrupt-driven).
             OPS_LOG("Loop", "max gap %u ms  draw %u ms  | ss=%d off=%d %u MHz",
@@ -779,6 +791,17 @@ void tick() {
                     (unsigned)getCpuFrequencyMhz());
         }
     }
+
+#if !OPS_HAS_PSRAM
+    // An LVGL allocation spent the low-memory reserve: free what can be
+    // rebuilt before the next one fails for real.
+    if (ops::lvmem::lowMemHit()) {
+        OPS_LOG("Heap", "LOW MEMORY: reserve spent (largest %u) - freeing hidden screens",
+                (unsigned)ops::lvmem::largestFree());
+        releaseHiddenScreens();
+        showNotice("Low memory: closed other screens");
+    }
+#endif
 
     // Trackball: consume delta + press first so we can intercept for screensaver.
     int16_t dx, dy;
@@ -1408,10 +1431,55 @@ void startTouchCalibration()
     _calBuildOverlay(kCalTx1, kCalTy1, "Touch calibration\nTap the crosshair (1/2)");
 }
 
+void releaseHiddenScreens()
+{
+#if !OPS_HAS_PSRAM
+    // Each skips itself while it's the active screen.
+    ScreenSettings::release();
+    ScreenSignal::release();
+    ScreenContacts::release();
+    ScreenRepeaters::release();
+    ScreenHeard::release();
+    ScreenRegions::release();
+    ScreenHome::release();
+#endif
+}
+
+static lv_obj_t*   s_notice      = nullptr;
+static lv_timer_t* s_noticeTimer = nullptr;
+
+static void _onNoticeDone(lv_timer_t* /*t*/)
+{
+    if (s_notice) lv_obj_del(s_notice);
+    s_notice = nullptr;
+    lv_timer_del(s_noticeTimer);
+    s_noticeTimer = nullptr;
+}
+
+void showNotice(const char* text)
+{
+    if (!s_notice) {
+        s_notice = lv_label_create(lv_layer_top());
+        lv_obj_set_style_bg_color(s_notice, theme::BG_CARD, 0);
+        lv_obj_set_style_bg_opa(s_notice, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(s_notice, theme::ORANGE, 0);
+        lv_obj_set_style_border_width(s_notice, 1, 0);
+        lv_obj_set_style_radius(s_notice, 4, 0);
+        lv_obj_set_style_pad_all(s_notice, 4, 0);
+        lv_obj_set_style_text_color(s_notice, theme::TEXT, 0);
+        lv_obj_set_style_text_font(s_notice, &lv_font_montserrat_12, 0);
+        lv_obj_clear_flag(s_notice, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_align(s_notice, LV_ALIGN_BOTTOM_MID, 0, -4);
+    }
+    lv_label_set_text(s_notice, text);
+    if (s_noticeTimer) lv_timer_reset(s_noticeTimer);
+    else               s_noticeTimer = lv_timer_create(_onNoticeDone, 3000, nullptr);
+}
+
 bool takeScreenshot(const char* path)
 {
-    constexpr int W = OPS_SCREEN_W;  // 320
-    constexpr int H = OPS_SCREEN_H;  // 240
+    constexpr int W = OPS_SCREEN_W;  // 320 (Cardputer 240)
+    constexpr int H = OPS_SCREEN_H;  // 240 (Cardputer 135)
 
     // Render current screen into an off-screen LVGL buffer.
     const size_t snapBytes = (size_t)W * H * sizeof(lv_color_t);
@@ -1427,6 +1495,45 @@ bool takeScreenshot(const char* path)
         return false;
     }
 
+#if !OPS_HAS_PSRAM
+    // No PSRAM: a 24-bit BMP written a row at a time (bottom-up, BGR), so
+    // only the snapshot and one row are held — no RGB copy, no encoder.
+    constexpr uint32_t ROW  = ((uint32_t)W * 3 + 3) & ~3u;
+    constexpr uint32_t DATA = ROW * H;
+    uint8_t hdr[54] = { 'B', 'M' };
+    auto put32 = [&hdr](int at, uint32_t v)
+    {
+        for (int b = 0; b < 4; b++) hdr[at + b] = (uint8_t)(v >> (8 * b));
+    };
+    put32(2, 54 + DATA);   // file size
+    put32(10, 54);         // pixel data offset
+    put32(14, 40);         // BITMAPINFOHEADER
+    put32(18, W);
+    put32(22, H);          // positive: bottom-up
+    hdr[26] = 1;           // planes
+    hdr[28] = 24;          // bits per pixel
+    put32(34, DATA);
+
+    uint8_t row[ROW] = {};
+    File f = SD.open(path, FILE_WRITE);
+    bool ok = f && f.write(hdr, sizeof(hdr)) == sizeof(hdr);
+    for (int y = H - 1; ok && y >= 0; y--) {
+        const lv_color_t* src = snapBuf + (size_t)y * W;
+        for (int x = 0; x < W; x++) {
+            const lv_color_t c = src[x];
+            row[x * 3 + 0] = (uint8_t)((c.ch.blue  << 3) | (c.ch.blue  >> 2));
+            row[x * 3 + 1] = (uint8_t)((c.ch.green << 2) | (c.ch.green >> 4));
+            row[x * 3 + 2] = (uint8_t)((c.ch.red   << 3) | (c.ch.red   >> 2));
+        }
+        ok = f.write(row, ROW) == ROW;
+    }
+    if (f) f.close();
+    free(snapBuf);
+
+    if (ok) OPS_LOG("Screenshot", "saved %s (%u B)", path, (unsigned)(54 + DATA));
+    else    OPS_LOG("Screenshot", "write failed: %s", path);
+    return ok;
+#else
     // Convert RGB565 → RGB888 for LodePNG.
     const size_t rgbBytes = (size_t)W * H * 3;
     uint8_t* rgb = (uint8_t*)ops::psram::alloc(rgbBytes);
@@ -1459,6 +1566,7 @@ bool takeScreenshot(const char* path)
     if (ok) OPS_LOG("Screenshot", "saved %s (%zu B)", path, pngLen);
     else    OPS_LOG("Screenshot", "write failed: %s", path);
     return ok;
+#endif
 }
 
 void resetKbBacklight() { s_kbApplied = 0xFF; }

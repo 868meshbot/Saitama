@@ -452,11 +452,15 @@ int contacts::reloadFromSD()
 #endif
         return -1;
     }
+    // Write back only if the file differed from memory: every Contacts /
+    // Repeaters visit reloads, and re-saving rebuilt the whole JSON each time.
+    bool same = s_count == snapN &&
+                (snapN == 0 || memcmp(s_contacts, s_contactsSnap, (size_t)snapN * sizeof(Contact)) == 0);
 #if !OPS_HAS_PSRAM
     free(s_contactsSnap);
     s_contactsSnap = nullptr;
 #endif
-    save();
+    if (!same) save();
     return s_count;
 }
 

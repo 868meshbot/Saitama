@@ -464,7 +464,7 @@ void ScreenSignal::release()
     lv_obj_t* scr = _screen;
     _screen = nullptr;
     _body   = nullptr;
-    lv_obj_del(scr);
+    lv_obj_del_async(scr);   // may run from this screen's own Home/Esc handler
     OPS_LOG("UI", "Signal released");
 }
 

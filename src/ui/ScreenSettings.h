@@ -24,6 +24,7 @@ private:
     static void _buildTopBar(lv_obj_t* parent);
     static void _buildList  (lv_obj_t* parent);
     static void _refreshList();  // redraws all list items from Config
+    static void _finishRefresh(void* unused);   // no-PSRAM: rebuild after the old list is freed
 
     // Event handlers
 public:

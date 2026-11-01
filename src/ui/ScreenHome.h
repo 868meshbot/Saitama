@@ -13,6 +13,9 @@ class ScreenHome {
 public:
     // Show the channel list (LIST mode).
     static void show();
+    // OPS_CHAT_LITE: frees the list/chat screens while another screen is
+    // shown (messages and unread counts stay in the history). No-op otherwise.
+    static void release();
 
     // Navigate directly to a channel (0-9) in CHAT mode.
     static void openChannel(int chIdx);
@@ -61,10 +64,10 @@ private:
     // OPS_CHAT_HISTORY slots (200 on the T-Deck) shared across all channels/DMs, ps_malloc'd in PSRAM on first
     // use. Eviction is per-tag (see _historyAdd) so a busy channel/DM can only
     // push out its own oldest messages, never another conversation's. Each
-    // channel/DM keeps at most CHANNEL_HISTORY_MAX in RAM (and on screen);
+    // channel/DM keeps at most CHANNEL_HISTORY_MAX (OPS_CHAT_PER_CONV) in RAM (and on screen);
     // the SD log still records everything.
     static constexpr int HISTORY_MAX = OPS_CHAT_HISTORY;
-    static constexpr int CHANNEL_HISTORY_MAX = 20;
+    static constexpr int CHANNEL_HISTORY_MAX = OPS_CHAT_PER_CONV;
     static MsgEntry*  s_history;    // allocated by _ensureHistoryAlloc()
     static int        s_histCount;
     static lv_obj_t*  (&s_metaLabels)[HISTORY_MAX];   // PSRAM
@@ -123,6 +126,7 @@ private:
     // ── Screen builders ───────────────────────────────────────────────
     static void _showList();
     static void _showChat();
+    static void _nullScreenPtrs();   // forget every object of the list/chat screens
 
     // ── List-row live update helpers ────────────────────────────────────
     // Update a channel row's subtitle + unread blob in place (list must be showing).

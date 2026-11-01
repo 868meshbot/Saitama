@@ -491,6 +491,47 @@ static lv_obj_t* _addLockIcon(lv_obj_t* parent, lv_color_t c)
     return box;
 }
 
+#if OPS_CHAT_LITE
+// Shared bubble styles: every lite bubble points at these instead of holding
+// its own copy of each colour, border and padding.
+static lv_style_t s_stBubble, s_stSent, s_stRecv, s_stFocus, s_stText, s_stInfo;
+
+static void _initBubbleStyles()
+{
+    static bool inited = false;
+    if (!inited) {
+        lv_style_init(&s_stBubble);
+        lv_style_init(&s_stSent);
+        lv_style_init(&s_stRecv);
+        lv_style_init(&s_stFocus);
+        lv_style_init(&s_stText);
+        lv_style_init(&s_stInfo);
+        inited = true;
+    }
+    // Colours are set every time: the theme can change (night mode).
+    // Bubbles take 7/8 of the message area; a sent one is shifted right.
+    constexpr lv_coord_t AREA_W = OPS_SCREEN_W - 8;   // _msgArea minus its padding
+    lv_style_set_width(&s_stBubble, AREA_W * 7 / 8);
+    lv_style_set_height(&s_stBubble, LV_SIZE_CONTENT);
+    lv_style_set_radius(&s_stBubble, 5);
+    lv_style_set_bg_opa(&s_stBubble, LV_OPA_COVER);
+    lv_style_set_pad_all(&s_stBubble, 4);
+    lv_style_set_pad_row(&s_stBubble, 1);
+    lv_style_set_layout(&s_stBubble, LV_LAYOUT_FLEX);
+    lv_style_set_flex_flow(&s_stBubble, LV_FLEX_FLOW_COLUMN);
+    lv_style_set_bg_color(&s_stSent, theme::PRIMARY);
+    lv_style_set_translate_x(&s_stSent, AREA_W / 8);
+    lv_style_set_bg_color(&s_stRecv, theme::BG_CARD);
+    lv_style_set_border_width(&s_stFocus, 1);
+    lv_style_set_border_color(&s_stFocus, theme::ACCENT);
+    lv_style_set_width(&s_stText, lv_pct(100));
+    lv_style_set_text_font(&s_stText, theme::bodyFont12());
+    lv_style_set_text_line_space(&s_stText, 2);
+    lv_style_set_width(&s_stInfo, lv_pct(100));
+    lv_style_set_text_font(&s_stInfo, &lv_font_montserrat_10);   // LV_SYMBOL glyphs
+}
+#endif
+
 // ── Bubble helper ──────────────────────────────────────────────────────
 
 void ScreenHome::_addBubble(int         histIdx,
@@ -505,6 +546,99 @@ void ScreenHome::_addBubble(int         histIdx,
 {
     if (!_msgArea) return;
     const auto& cfg = ops::config::get();
+
+    // Time/status line, worked out once for both layouts.
+    char timeBuf[8];
+    _fmtTime(timeBuf, sizeof(timeBuf), ts);
+
+    char meta[48] = {};
+    if (sent) {
+        uint32_t expAck = (histIdx >= 0 && histIdx < HISTORY_MAX)
+                          ? s_history[histIdx].expectedAck : 1;
+        bool failed = (histIdx >= 0 && histIdx < HISTORY_MAX) && s_history[histIdx].isFailed;
+        int rep = (histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
+                  ? s_history[histIdx].repeats : -1;
+        if (failed && !isAcked) {
+            _fmtFailedMeta(meta, sizeof(meta), timeBuf);
+        } else if (rep >= 0) {
+            _fmtRepeatMeta(meta, sizeof(meta), timeBuf, rep);
+        } else if (isAcked || expAck == 0) {
+            // green tick for DM ACK; grey tick for channel (no ACK possible)
+            snprintf(meta, sizeof(meta), "%s " LV_SYMBOL_OK, timeBuf);
+        } else {
+            snprintf(meta, sizeof(meta), "%s", timeBuf);  // DM awaiting ACK
+        }
+    } else {
+        if (cfg.showRssi)
+            snprintf(meta, sizeof(meta), "%ddBm  %s", (int)rssi, timeBuf);
+        else
+            snprintf(meta, sizeof(meta), "%s", timeBuf);
+    }
+    bool metaFailed = sent && !isAcked && histIdx >= 0 && histIdx < HISTORY_MAX
+                      && s_history[histIdx].isFailed;
+    int metaRep = (sent && histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
+                  ? s_history[histIdx].repeats : -1;
+    lv_color_t metaCol = (sent && (isAcked || metaRep > 0)) ? theme::GREEN
+                       : metaFailed   ? theme::RED
+                       : metaRep == 0 ? theme::ORANGE : theme::TEXT_MUTED;
+
+#if OPS_CHAT_LITE
+    // Lite bubble: 3 objects (bubble, text, one info line) on shared styles,
+    // instead of row + header + name + spacer + menu button + hop row. A
+    // received bubble opens its menu on Enter (KeyNav highlights it); the
+    // padlock for DMs is in the title bar.
+    _initBubbleStyles();
+    lv_obj_t* bubble = lv_obj_create(_msgArea);
+    lv_obj_remove_style_all(bubble);
+    lv_obj_add_style(bubble, &s_stBubble, 0);
+    lv_obj_add_style(bubble, sent ? &s_stSent : &s_stRecv, 0);
+    lv_obj_add_style(bubble, &s_stFocus, LV_STATE_FOCUSED);
+    lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+    if (!sent) {
+        lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(bubble, _onBubbleClick, LV_EVENT_CLICKED, (void*)(intptr_t)histIdx);
+    } else if (histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId) {
+        lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(bubble, _onSentBubbleClick, LV_EVENT_CLICKED, (void*)(intptr_t)histIdx);
+    } else {
+        lv_obj_clear_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_group_remove_obj(bubble);
+
+    // Received: "name  12:34  2 hops AA>B1" above the text; sent: status below.
+    lv_obj_t* info = nullptr;
+    if (!sent) {
+        char hdrBuf[112];
+        int n = snprintf(hdrBuf, sizeof(hdrBuf), "%s  %s",
+                         (senderName && senderName[0]) ? senderName : "?", meta);
+        if (cfg.showHops && n > 0 && n < (int)sizeof(hdrBuf)) {
+            const bool hasPath = pathStr && pathStr[0];
+            if (hops == 0) snprintf(hdrBuf + n, sizeof(hdrBuf) - n, "  direct");
+            else snprintf(hdrBuf + n, sizeof(hdrBuf) - n, hasPath ? "  %uh %s" : "  %uh",
+                          (unsigned)hops, hasPath ? pathStr : "");
+        }
+        info = lv_label_create(bubble);
+        lv_obj_add_style(info, &s_stInfo, 0);
+        lv_obj_set_style_text_color(info, theme::ACCENT, 0);
+        lv_label_set_long_mode(info, LV_LABEL_LONG_DOT);
+        lv_label_set_text(info, hdrBuf);
+    }
+
+    lv_obj_t* msgLbl = lv_label_create(bubble);
+    lv_obj_add_style(msgLbl, &s_stText, 0);
+    lv_obj_set_style_text_color(msgLbl, sent ? theme::TEXT : theme::GREEN, 0);
+    lv_label_set_text(msgLbl, text ? text : "");
+
+    if (sent) {
+        info = lv_label_create(bubble);
+        lv_obj_add_style(info, &s_stInfo, 0);
+        lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(info, metaCol, 0);
+        lv_label_set_text(info, meta);
+        if (histIdx >= 0 && histIdx < HISTORY_MAX) s_metaLabels[histIdx] = info;
+    }
+    lv_obj_scroll_to_y(_msgArea, LV_COORD_MAX, LV_ANIM_OFF);
+#else
 
     lv_obj_t* row = lv_obj_create(_msgArea);
     lv_obj_set_width(row, LV_PCT(100));
@@ -607,43 +741,9 @@ void ScreenHome::_addBubble(int         histIdx,
     lv_obj_set_style_text_line_space(msgLbl, 3, 0);
     lv_obj_set_style_text_color(msgLbl, sent ? theme::TEXT : theme::GREEN, 0);
 
-    char timeBuf[8];
-    _fmtTime(timeBuf, sizeof(timeBuf), ts);
-
-    char meta[48] = {};
-    if (sent) {
-        uint32_t expAck = (histIdx >= 0 && histIdx < HISTORY_MAX)
-                          ? s_history[histIdx].expectedAck : 1;
-        bool failed = (histIdx >= 0 && histIdx < HISTORY_MAX) && s_history[histIdx].isFailed;
-        int rep = (histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
-                  ? s_history[histIdx].repeats : -1;
-        if (failed && !isAcked) {
-            _fmtFailedMeta(meta, sizeof(meta), timeBuf);
-        } else if (rep >= 0) {
-            _fmtRepeatMeta(meta, sizeof(meta), timeBuf, rep);
-        } else if (isAcked || expAck == 0) {
-            // green tick for DM ACK; grey tick for channel (no ACK possible)
-            snprintf(meta, sizeof(meta), "%s " LV_SYMBOL_OK, timeBuf);
-        } else {
-            snprintf(meta, sizeof(meta), "%s", timeBuf);  // DM awaiting ACK
-        }
-    } else {
-        if (cfg.showRssi)
-            snprintf(meta, sizeof(meta), "%ddBm  %s", (int)rssi, timeBuf);
-        else
-            snprintf(meta, sizeof(meta), "%s", timeBuf);
-    }
-
     lv_obj_t* metaLbl = lv_label_create(bubble);
     lv_obj_set_width(metaLbl, LV_PCT(100));
-    bool metaFailed = sent && !isAcked && histIdx >= 0 && histIdx < HISTORY_MAX
-                      && s_history[histIdx].isFailed;
-    int metaRep = (sent && histIdx >= 0 && histIdx < HISTORY_MAX && s_history[histIdx].floodId)
-                  ? s_history[histIdx].repeats : -1;
-    lv_obj_set_style_text_color(metaLbl,
-        (sent && (isAcked || metaRep > 0)) ? theme::GREEN
-        : metaFailed   ? theme::RED
-        : metaRep == 0 ? theme::ORANGE : theme::TEXT_MUTED, 0);
+    lv_obj_set_style_text_color(metaLbl, metaCol, 0);
     lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);  // needs LVGL symbol glyphs; don't use bodyFont here
     lv_label_set_text(metaLbl, meta);
     if (sent) lv_obj_set_style_text_align(metaLbl, LV_TEXT_ALIGN_RIGHT, 0);
@@ -683,6 +783,7 @@ void ScreenHome::_addBubble(int         histIdx,
     }
 
     lv_obj_scroll_to_y(_msgArea, LV_COORD_MAX, LV_ANIM_OFF);
+#endif
 }
 
 // ── _loadChannelHistory() ─────────────────────────────────────────────
@@ -700,8 +801,9 @@ void ScreenHome::_loadChannelHistory(const char* tag)
     }
 
     // Tail of the log — enough for CHANNEL_HISTORY_MAX lines even at the
-    // ~480-byte worst case per line.
-    constexpr size_t BUFSIZE = 12288;
+    // ~480-byte worst case per line (12 KB for 20, 6 KB for 10).
+    constexpr size_t BUFSIZE = CHANNEL_HISTORY_MAX * 600 + 256 < 12288
+                             ? CHANNEL_HISTORY_MAX * 600 + 256 : 12288;
     char* buf = (char*)ops::psram::alloc(BUFSIZE);
     if (!buf) { OPS_LOG("Chat", "ps_malloc failed for msg log"); return; }
 
@@ -1184,6 +1286,83 @@ void ScreenHome::_updateDMRowSummary(const char* sender, uint32_t ts)
     _setRowBlobCount(s_dmRowBlob, s_dmRowBlobLbl, s_dmUnreadCount);
 }
 
+// ── Screen lifetime (OPS_CHAT_LITE) ──────────────────────────────────
+
+void ScreenHome::_nullScreenPtrs()
+{
+    s_actionOverlay     = nullptr;
+    s_scopeOverlay      = nullptr;
+    s_scopeDd           = nullptr;
+    s_addOverlay        = nullptr;
+    s_addNameTa         = nullptr;
+    s_addPskTa          = nullptr;
+    s_addScopeDd        = nullptr;
+    s_dmPickerOverlay   = nullptr;
+    s_dmFilter.ta = s_dmFilter.list = nullptr;
+    s_addContactOverlay = nullptr;
+    s_iconOverlay       = nullptr;
+    s_iconInitialsTa    = nullptr;
+    s_iconEmojiOverlay  = nullptr;
+    s_iconEmojiGrid     = nullptr;
+    s_pathOverlay       = nullptr;
+    s_pathList          = nullptr;
+    s_listScreen = nullptr;
+    _screen      = nullptr;
+    _msgArea     = nullptr;
+    _textarea    = nullptr;
+    _sendBtn     = nullptr;
+    _emojiPanel  = nullptr;
+    s_emojiGrid  = nullptr;
+    s_emojiBtnCount = 0;
+    for (int i = 0; i < HISTORY_MAX; i++) s_metaLabels[i] = nullptr;
+    for (int i = 0; i < 10; i++) {
+        s_rowBlob[i]     = nullptr;
+        s_rowBlobLbl[i]  = nullptr;
+        s_rowSubtitle[i] = nullptr;
+    }
+    s_dmRowBlob     = nullptr;
+    s_dmRowBlobLbl  = nullptr;
+    s_dmRowSubtitle = nullptr;
+}
+
+#if OPS_CHAT_LITE
+// Deletes the old list/chat screens before the next one is built, so the two
+// never sit in the heap together; a blank screen stands in meanwhile (it is
+// replaced before the next frame is drawn).
+static void _freeOldScreens(lv_obj_t*& a, lv_obj_t*& b)
+{
+    static lv_obj_t* s_blank = nullptr;
+    if (!a && !b) return;
+    lv_obj_t* act = lv_scr_act();
+    if (act == a || act == b) {
+        if (!s_blank) {
+            s_blank = lv_obj_create(nullptr);
+            lv_obj_set_style_bg_color(s_blank, theme::BG, 0);
+        }
+        lv_scr_load(s_blank);
+    }
+    if (a) lv_obj_del(a);
+    if (b) lv_obj_del(b);
+    a = b = nullptr;
+}
+#endif
+
+void ScreenHome::release()
+{
+#if OPS_CHAT_LITE
+    lv_obj_t* act = lv_scr_act();
+    if (!_screen && !s_listScreen) return;
+    if (act == _screen || act == s_listScreen) return;
+    lv_obj_t* chat = _screen;
+    lv_obj_t* list = s_listScreen;
+    _nullScreenPtrs();
+    // May run from this screen's own Home/Esc handler.
+    if (chat) lv_obj_del_async(chat);
+    if (list) lv_obj_del_async(list);
+    OPS_LOG("UI", "Chat released");
+#endif
+}
+
 // ── _showList() ───────────────────────────────────────────────────────
 
 void ScreenHome::_showList()
@@ -1220,6 +1399,9 @@ void ScreenHome::_showList()
     s_dmRowBlob     = nullptr;
     s_dmRowBlobLbl  = nullptr;
     s_dmRowSubtitle = nullptr;
+#if OPS_CHAT_LITE
+    _freeOldScreens(oldChat, oldList);
+#endif
 
     s_listScreen = lv_obj_create(nullptr);
     lv_obj_set_size(s_listScreen, OPS_SCREEN_W, OPS_SCREEN_H);
@@ -1567,6 +1749,9 @@ void ScreenHome::_showChat()
     _textarea    = nullptr;
     _sendBtn     = nullptr;
     _emojiPanel  = nullptr;
+#if OPS_CHAT_LITE
+    _freeOldScreens(oldList, oldChat);
+#endif
 
     const auto& cfg = ops::config::get();
 
@@ -1628,6 +1813,11 @@ void ScreenHome::_showChat()
     lv_obj_set_width(titleLbl, OPS_SCREEN_W - 70);
     lv_obj_set_style_text_color(titleLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_12, 0);
+#if OPS_CHAT_LITE
+    // Lite bubbles carry no per-message padlock: a DM is verified as a whole
+    // (only that contact's key opens it), so the lock sits in the title.
+    if (s_sendMode == 10) _addLockIcon(hdr, theme::GREEN);
+#endif
 
     // ── Message area ──────────────────────────────────────────────────
     _msgArea = lv_obj_create(_screen);

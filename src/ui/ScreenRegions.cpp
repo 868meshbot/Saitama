@@ -591,6 +591,15 @@ void ScreenRegions::_build()
     lv_scr_load(_screen);
 }
 
+void ScreenRegions::release()
+{
+    if (!_screen || lv_scr_act() == _screen) return;
+    lv_obj_t* scr = _screen;
+    _screen = _body = _defaultLbl = _statusLbl = _repList = _chips = _discoverBtn = nullptr;
+    lv_obj_del_async(scr);   // may run from this screen's own Home/Esc handler
+    OPS_LOG("UI", "Regions released");
+}
+
 void ScreenRegions::show()
 {
     lv_obj_t* old = _screen;

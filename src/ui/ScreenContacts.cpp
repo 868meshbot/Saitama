@@ -127,6 +127,20 @@ static void fmtDistance(const Contact& c, char* buf, size_t len)
 }
 
 // ── show() ───────────────────────────────────────────────────────────
+void ScreenContacts::release()
+{
+    if (!_screen || lv_scr_act() == _screen) return;
+    lv_obj_t* scr = _screen;
+    _screen        = nullptr;
+    s_filter.ta    = nullptr;
+    s_filter.list  = nullptr;
+    s_pathInput    = nullptr;
+    s_hashSz1Btn   = nullptr;
+    s_hashSz2Btn   = nullptr;
+    lv_obj_del_async(scr);   // may run from this screen's own Home/Esc handler
+    OPS_LOG("UI", "Contacts released");
+}
+
 void ScreenContacts::show()
 {
     lv_obj_t* old = _screen;

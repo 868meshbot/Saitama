@@ -13,6 +13,9 @@ namespace ops { namespace ui {
 class ScreenContacts {
 public:
     static void show();
+    // Frees the screen while another one is shown (no-PSRAM boards); show()
+    // rebuilds it anyway.
+    static void release();
 
 private:
     static lv_obj_t* _screen;

@@ -22,10 +22,14 @@
 #define LV_STDLIB_FREE         vPortFree
 /* Override: use PSRAM for large allocations */
 #define LV_MEM_CUSTOM 1
-#define LV_MEM_CUSTOM_INCLUDE <Arduino.h>
 #ifdef OPS_BOARD_CARDPUTER
-#define LV_MEM_CUSTOM_ALLOC   malloc   /* no PSRAM on the Cardputer ADV */
+/* No PSRAM on the Cardputer ADV: malloc with a low-memory reserve
+   (src/utils/LvMem.cpp) so a failed allocation doesn't crash LVGL. */
+#define LV_MEM_CUSTOM_INCLUDE "ops_lv_alloc.h"
+#define LV_MEM_CUSTOM_ALLOC   ops_lv_malloc
+#define LV_MEM_CUSTOM_REALLOC ops_lv_realloc
 #else
+#define LV_MEM_CUSTOM_INCLUDE <Arduino.h>
 #define LV_MEM_CUSTOM_ALLOC   ps_malloc
 #endif
 #define LV_MEM_CUSTOM_FREE    free

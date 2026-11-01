@@ -13,6 +13,9 @@ namespace ops { namespace ui {
 class ScreenRepeaters {
 public:
     static void show();
+    // Frees the screen while another one is shown (no-PSRAM boards); show()
+    // rebuilds it anyway.
+    static void release();
 
     // Called from UIScreen::tick() every frame.
     // Polls MeshService::pollLoginResult() and handles a 15-second timeout.

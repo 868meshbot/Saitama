@@ -47,6 +47,16 @@ static void fmtTime(uint32_t ts, char *buf, size_t len) {
 }
 
 // ── show() ───────────────────────────────────────────────────────────
+void ScreenHeard::release() {
+  if (!_screen || lv_scr_act() == _screen)
+    return;
+  lv_obj_t *scr = _screen;
+  _screen = nullptr;
+  _isVisible = false;
+  lv_obj_del_async(scr); // may run from this screen's own Home/Esc handler
+  OPS_LOG("UI", "Heard released");
+}
+
 void ScreenHeard::show() {
   lv_obj_t *old = _screen;
   _screen = nullptr;

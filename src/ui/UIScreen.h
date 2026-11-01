@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "../features.h"
+
 namespace ops { namespace ui {
 
 void init();
@@ -43,9 +45,22 @@ void activateSaitamaScr();
 // Backspace/ESC cancels. Called from the /touch-cali terminal command.
 void startTouchCalibration();
 
-// Render the current LVGL screen to a PNG file on the SD card.
-// path should be an absolute SD path such as "/screenshot_001.png".
-// Returns true on success.
+// Render the current LVGL screen to an image file on the SD card: PNG with
+// PSRAM, an uncompressed 24-bit BMP without (the PNG encoder and its RGB copy
+// don't fit in internal RAM). path should be an absolute SD path such as
+// "/screenshot_001.png" — use SCREENSHOT_EXT. Returns true on success.
+#if OPS_HAS_PSRAM
+static constexpr const char* SCREENSHOT_EXT = ".png";
+#else
+static constexpr const char* SCREENSHOT_EXT = ".bmp";
+#endif
 bool takeScreenshot(const char* path);
+
+// No-PSRAM boards: frees the screens that are rebuilt on every visit
+// (Settings, Signal, Contacts, Repeaters, Heard, Regions, Chat) unless shown.
+void releaseHiddenScreens();
+
+// A short notice at the bottom of the screen, gone after 3 s.
+void showNotice(const char* text);
 
 }}  // namespace ops::ui

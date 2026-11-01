@@ -106,6 +106,24 @@ static lv_color_t _repAvatarColor(int idx)
 }
 
 // ── show() ───────────────────────────────────────────────────────────
+void ScreenRepeaters::release()
+{
+    if (!_screen || lv_scr_act() == _screen) return;
+    // A login wait or the admin panel still refers to the list screen.
+    if (s_waitOverlay || s_adminScreen) return;
+    lv_obj_t* scr = _screen;
+    _screen          = nullptr;
+    s_filter.ta      = nullptr;
+    s_filter.list    = nullptr;
+    s_adminPassInput = nullptr;
+    s_adminRememberCb = nullptr;
+    s_pathInput      = nullptr;
+    s_hashSz1Btn     = nullptr;
+    s_hashSz2Btn     = nullptr;
+    lv_obj_del_async(scr);   // may run from this screen's own Home/Esc handler
+    OPS_LOG("UI", "Repeaters released");
+}
+
 void ScreenRepeaters::show()
 {
     lv_obj_t* old = _screen;

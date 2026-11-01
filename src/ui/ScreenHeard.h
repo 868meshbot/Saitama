@@ -13,6 +13,9 @@ namespace ops { namespace ui {
 class ScreenHeard {
 public:
     static void show();
+    // Frees the screen while another one is shown (no-PSRAM boards); show()
+    // rebuilds it anyway.
+    static void release();
 
     // Called by UIScreen::tick when the peer list changes.
     // Rebuilds the screen immediately if it is currently visible.

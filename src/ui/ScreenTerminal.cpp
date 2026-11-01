@@ -51,6 +51,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <esp_heap_caps.h>
+#include "../utils/LvMem.h"
 #include <driver/rtc_io.h>
 #include <Wire.h>
 #include <LittleFS.h>
@@ -90,7 +91,7 @@ static const char* kCmdList[] = {
     "kbbl",
 #endif
     "list",
-    "local", "memory", "messages", "pathsize", "play", "power", "public",
+    "local", "mem", "memory", "messages", "pathsize", "play", "power", "public",
     "quiet", "reboot", "repadmin", "repeateradmin", "repeaters", "replist", "reset",
     "resetpath", "saitama-scr", "scope", "screenshot", "sd", "send", "set", "setchannel",
     "setpath", "shutdown", "siggen", "spectrum", "tbdebug", "time", "to",
@@ -264,11 +265,16 @@ static void _shutdownNow()
     esp_deep_sleep_start();
 }
 
+// True while a command typed on the serial console runs: its replies go
+// back to the console even with Settings > Serial Output off (that setting
+// silences the log, not the console).
+static bool s_serialCmd = false;
+
 // ── appendLine() ─────────────────────────────────────────────────────
 void ScreenTerminal::appendLine(const char* line) {
     // Echo to CDC serial so the serial console sees all responses
     // (unless Settings > Serial Output is off).
-    if (ops::log::g_serialOn) Serial.println(line);
+    if (ops::log::g_serialOn || s_serialCmd) Serial.println(line);
 
     if (!_logBuf) return;
     int remaining = LOG_BUF_SIZE - _logLen - 1;
@@ -883,14 +889,38 @@ void ScreenTerminal::_dispatch(const char* raw) {
     }
 
     // ── memory ────────────────────────────────────────────────────────
-    if (strcmp(cmd, "memory") == 0) {
+    // memory (or mem)  → heap figures; "memory free" also frees the hidden
+    // screens that are rebuilt on every visit (no-PSRAM boards).
+    if (strcmp(cmd, "memory") == 0 || strcmp(cmd, "mem") == 0) {
         char buf[64];
+#if !OPS_HAS_PSRAM
+        if (strcmp(args, "free") == 0) {
+            // The deletes are deferred to the next frame: run "mem" again to
+            // see the result.
+            ops::ui::releaseHiddenScreens();
+            appendLine("Hidden screens freed - run mem again to see the effect");
+        }
+#endif
         snprintf(buf, sizeof(buf), "Free heap:  %6lu B", (unsigned long)esp_get_free_heap_size());
         appendLine(buf);
         snprintf(buf, sizeof(buf), "Min heap:   %6lu B", (unsigned long)esp_get_minimum_free_heap_size());
         appendLine(buf);
+        snprintf(buf, sizeof(buf), "Internal:   %6lu B, largest block %lu B",
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        appendLine(buf);
+#if OPS_HAS_PSRAM
         snprintf(buf, sizeof(buf), "Free PSRAM: %6lu B", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         appendLine(buf);
+#else
+        snprintf(buf, sizeof(buf), "Reserve:    %s (%u KB), spent %u times",
+                 ops::lvmem::reserveHeld() ? "held" : "SPENT",
+                 (unsigned)(ops::lvmem::RESERVE_BYTES / 1024), (unsigned)ops::lvmem::hits());
+        appendLine(buf);
+        snprintf(buf, sizeof(buf), "Failed allocs: %u (last %u B)",
+                 (unsigned)ops::lvmem::failedAllocs(), (unsigned)ops::lvmem::lastFailedSize());
+        appendLine(buf);
+#endif
         return;
     }
 
@@ -2376,22 +2406,24 @@ void ScreenTerminal::_dispatch(const char* raw) {
 #endif
 
     // ── screenshot [filename] ─ hidden, not in help ──────────────────
-    // Saves a PNG of the current screen to the SD card root.
+    // Saves the current screen to the SD card root (.png, or .bmp on a
+    // board without PSRAM — see ops::ui::SCREENSHOT_EXT).
     // screenshot          → /screenshot_001.png (first unused slot)
     // screenshot foo      → /foo.png
     // screenshot foo.png  → /foo.png
     if (strcmp(cmd, "screenshot") == 0) {
         if (!ops::sdcard::isMounted()) { appendLine("[screenshot] SD not mounted"); return; }
+        const char* ext = ops::ui::SCREENSHOT_EXT;
         char path[48];
         if (args[0]) {
             const char* base = (args[0] == '/') ? args + 1 : args;
             const char* dot  = strrchr(base, '.');
-            bool hasPng = dot && (strcmp(dot, ".png") == 0 || strcmp(dot, ".PNG") == 0);
-            snprintf(path, sizeof(path), hasPng ? "/%s" : "/%s.png", base);
+            bool hasExt = dot && strcasecmp(dot, ext) == 0;
+            snprintf(path, sizeof(path), "/%s%s", base, hasExt ? "" : ext);
         } else {
             bool found = false;
             for (int n = 1; n <= 999 && !found; n++) {
-                snprintf(path, sizeof(path), "/screenshot_%03d.png", n);
+                snprintf(path, sizeof(path), "/screenshot_%03d%s", n, ext);
                 if (!ops::sdcard::hasFile(path)) found = true;
             }
             if (!found) { appendLine("[screenshot] no slot available (delete some screenshots)"); return; }
@@ -2434,9 +2466,11 @@ void ScreenTerminal::tickSerial() {
             _serialBuf[_serialLen] = '\0';
             Serial.print("\r\n> ");
             Serial.println(_serialBuf);        // echo the completed command
+            s_serialCmd = true;
             _dispatch(_serialBuf);
+            s_serialCmd = false;
             _serialLen = 0;
-            Serial.print("OMS> ");             // re-print prompt
+            Serial.print("OPS> ");             // re-print prompt (as at boot)
         } else if ((c == 8 || c == 127) && _serialLen > 0) {
             // Backspace / DEL — erase last character
             _serialLen--;

@@ -139,7 +139,7 @@ void ScreenSettings::release() {
     _list     = nullptr;
     s_listPtr = nullptr;
     lv_obj_remove_event_cb(scr, _onScreenChildDeleted);
-    lv_obj_del(scr);
+    lv_obj_del_async(scr);   // may run from this screen's own Home/Esc handler
     OPS_LOG("UI", "Settings released");
 }
 
@@ -600,6 +600,10 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     s_listPtr = _list;
 }
 
+#if !OPS_HAS_PSRAM
+static lv_obj_t* s_oldList = nullptr;   // list waiting for _finishRefresh()
+#endif
+
 // ── _refreshList() ───────────────────────────────────────────────────
 void ScreenSettings::_refreshList() {
     if (!_list) return;
@@ -615,10 +619,34 @@ void ScreenSettings::_refreshList() {
     lv_obj_add_flag(_list, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* oldList = _list;
     _list = nullptr;
+#if OPS_HAS_PSRAM
     _buildList(_screen);
     lv_obj_del_async(oldList);
     _restoreRowFocus();
+#else
+    // No PSRAM: two full lists don't fit in the heap at once. Free the old
+    // one first, outside the click handler, then build the new one.
+    // (A second call before then returns early: _list is null until rebuilt.)
+    s_listPtr = nullptr;
+    s_oldList = oldList;
+    lv_async_call(_finishRefresh, nullptr);
+#endif
 }
+
+#if !OPS_HAS_PSRAM
+// Second half of _refreshList(): the old list is deleted here, where no
+// event of its own is being dispatched, and only then the new one is built.
+void ScreenSettings::_finishRefresh(void* /*unused*/)
+{
+    if (s_oldList) {
+        if (lv_obj_is_valid(s_oldList)) lv_obj_del(s_oldList);
+        s_oldList = nullptr;
+    }
+    if (!_screen || _list) return;   // released, or built meanwhile
+    _buildList(_screen);
+    _restoreRowFocus();
+}
+#endif
 
 // ── _openNameDialog() ────────────────────────────────────────────────
 // Dialogs close from handlers on their own children (buttons, textareas).
@@ -5644,9 +5672,9 @@ void ScreenSettings::_onItemClick(lv_event_t* e) {
             return;
 
 #if !OPS_FEAT_ADVERT_APP
-        case 46:  // Advert → send now + auto interval (the T-Deck has an app)
+        case 46:  // Advert → auto-advert interval (the T-Deck has an app)
             openAdvertWindow();
-            break;
+            return;   // break would rebuild the list on top of the window
 #endif
         case 9:  // GPS — cycle Off → Intermittent → On
             cfg.gpsMode = (cfg.gpsMode + 1) % 3;

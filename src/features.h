@@ -43,6 +43,7 @@
 #define OPS_SAVER1_NAME       "Mesh rain"   // screensaver style 1
 #define OPS_DEFAULT_SAVER     1             // mesh rain unless set otherwise
 #define OPS_FEAT_ADVERT_APP   0   // adverts live in Settings > Advert
+#define OPS_AUTOADVERT_DEFAULT_H 12  // auto advert until set otherwise
 
 // SD card: own CS, SPI shared with the LoRa cap (SCK 40, MISO 39, MOSI 14).
 #define OPS_SD_CS    12
@@ -54,6 +55,8 @@
 #define OPS_CONTACTS_CAPACITY  100
 #define OPS_REPEATERS_CAPACITY 60
 #define OPS_CHAT_HISTORY       60    // messages held in RAM across all chats
+#define OPS_CHAT_PER_CONV      10    // messages kept (and shown) per channel/DM
+#define OPS_CHAT_LITE          1     // 3-object bubbles, chat freed when hidden
 
 // Layout (240x135)
 #define OPS_TOP_H        22   // screen title bar
@@ -94,6 +97,7 @@
 #define OPS_SAVER1_NAME       "Saitama"
 #define OPS_DEFAULT_SAVER     0             // clock
 #define OPS_FEAT_ADVERT_APP   1   // Advertise app on the launcher
+#define OPS_AUTOADVERT_DEFAULT_H 0   // auto advert off until set
 
 // SD card: CS 39 on the SPI bus shared with the TFT and LoRa.
 #define OPS_SD_CS    39
@@ -105,6 +109,8 @@
 #define OPS_CONTACTS_CAPACITY  250
 #define OPS_REPEATERS_CAPACITY 250
 #define OPS_CHAT_HISTORY       200
+#define OPS_CHAT_PER_CONV      20
+#define OPS_CHAT_LITE          0
 
 // Layout (320x240)
 #define OPS_TOP_H        28

@@ -13,6 +13,9 @@ namespace ops { namespace ui {
 class ScreenRegions {
 public:
     static void show();
+    // Frees the screen while another one is shown (no-PSRAM boards); show()
+    // rebuilds it anyway.
+    static void release();
 
     // Called from UIScreen::tick() each frame: collects discovery replies.
     static void tick();
