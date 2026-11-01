@@ -47,6 +47,7 @@ Saitama is a community project. Development tooling includes AI coding assistant
 ## Security
 
 - Mesh traffic is end-to-end encrypted by MeshCore.
+- **Direct messages are authenticated.** Each DM is encrypted and MAC'd with a key only the sender and recipient can derive (from one side's private key and the other's public key), so a DM can't be forged in a contact's name without their private key. Verified DMs show a green padlock beside the sender. The contact's key is trusted from the first advert you save, and the MAC is MeshCore's 2-byte one. Channel messages are not authenticated: anyone with the channel key can post under any name.
 - Secrets written to the SD card — channel keys, remembered repeater passwords and the node identity backup — are sealed with AES-256-GCM using a **storage password** (Settings > Storage Password). It starts as `changeme1`; **change it**, or a lifted SD card is as readable as that published default. See [docs/STORED_SECRETS.md](docs/STORED_SECRETS.md).
 - The Bluetooth pairing PIN is random per device (Settings > Bluetooth PIN). Changing it unpairs all phones.
 - Report vulnerabilities privately — see [docs/SECURITY.md](docs/SECURITY.md).
@@ -65,6 +66,10 @@ Saitama is a community project. Development tooling includes AI coding assistant
 The Cardputer ADV (240x135, keyboard only, ESP32-S3FN8 with no PSRAM) gets a
 smaller build from the same code, with the same identity, keys, routing,
 settings and `/ops/` SD backup as the T-Deck.
+
+| Carousel launcher | Channels | Mesh rain screensaver |
+|:---:|:---:|:---:|
+| ![Cardputer carousel launcher](screenshots/cardputer-carousel.png) | ![Cardputer channel list](screenshots/cardputer-channels.png) | ![Cardputer Mesh rain screensaver](screenshots/cardputer-rain.png) |
 
 - **Included:** Chat, Contacts, Repeaters (with admin tools), Heard, Finder,
   Regions, Signal, GPS status (text), Terminal, Settings. Adverts are in
