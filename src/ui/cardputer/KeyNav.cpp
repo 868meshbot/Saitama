@@ -524,7 +524,11 @@ static void _fitWidths(lv_obj_t* o, int depth)
         sum += w;
         vis++;
     }
-    if (vis > 1 && lv_obj_get_style_flex_flow(o, LV_PART_MAIN) == LV_FLEX_FLOW_ROW &&
+    // Only a real flex row can share out width: LV_FLEX_FLOW_ROW is 0, the
+    // default, so without the layout check any container (e.g. a hand-placed
+    // "Key: value" line) matched and its labels were cut to 1 px wide.
+    if (vis > 1 && lv_obj_get_style_layout(o, LV_PART_MAIN) == LV_LAYOUT_FLEX &&
+        lv_obj_get_style_flex_flow(o, LV_PART_MAIN) == LV_FLEX_FLOW_ROW &&
         sum + lv_obj_get_style_pad_column(o, LV_PART_MAIN) * (vis - 1) > avail) {
         for (uint32_t i = 0; i < cnt; i++) {
             lv_obj_t* c = lv_obj_get_child(o, i);

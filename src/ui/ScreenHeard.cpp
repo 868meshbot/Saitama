@@ -304,6 +304,15 @@ static void _onDialogDeleted(lv_event_t * /*e*/) {
   s_ownerLbl = nullptr;
 }
 
+// Details box: 280 px on the T-Deck; on a narrow screen (Cardputer, 240 px)
+// nearly the full width, with less padding and lower buttons.
+static constexpr bool       NARROW   = OPS_SCREEN_W < 300;
+static constexpr lv_coord_t BOX_W    = NARROW ? OPS_SCREEN_W - 6 : 280;
+static constexpr lv_coord_t BOX_PAD  = NARROW ? 5 : 8;
+static constexpr lv_coord_t KEY_W    = NARROW ? 50 : 56;   // "Identity:" column
+static constexpr lv_coord_t VAL_W    = NARROW ? BOX_W - 2 * BOX_PAD - 2 - KEY_W : 200;
+static constexpr lv_coord_t BTN_H    = NARROW ? 22 : 30;
+
 // One "Key:  value" line; returns the value label.
 static lv_obj_t *_addField(lv_obj_t *box, const char *key, const char *value,
                            lv_color_t col) {
@@ -323,9 +332,9 @@ static lv_obj_t *_addField(lv_obj_t *box, const char *key, const char *value,
   lv_obj_t *v = lv_label_create(row);
   lv_label_set_text(v, value);
   lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
-  // 200 px on the T-Deck; on a narrow screen the rest of the box width.
-  lv_obj_set_width(v, OPS_SCREEN_W < 300 ? OPS_SCREEN_W - 6 - 18 - 56 : 200);
-  lv_obj_set_pos(v, 56, 0);
+  // The rest of the box's inner width, beside the key column.
+  lv_obj_set_width(v, VAL_W);
+  lv_obj_set_pos(v, KEY_W, 0);
   lv_obj_set_style_text_color(v, col, 0);
   lv_obj_set_style_text_font(v, theme::bodyFont10(), 0);
   return v;
@@ -343,7 +352,7 @@ static void _buildPeerDialog(const PeerInfo &peer, bool isRepeater,
   lv_obj_add_event_cb(overlay, _onDialogDeleted, LV_EVENT_DELETE, nullptr);
 
   lv_obj_t *box = lv_obj_create(overlay);
-  lv_obj_set_width(box, 280);
+  lv_obj_set_width(box, BOX_W);
   lv_obj_set_height(box, LV_SIZE_CONTENT);
   lv_obj_set_style_max_height(box, OPS_SCREEN_H - 8, 0);
   lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
@@ -351,8 +360,8 @@ static void _buildPeerDialog(const PeerInfo &peer, bool isRepeater,
   lv_obj_set_style_border_color(box, theme::ACCENT, 0);
   lv_obj_set_style_border_width(box, 1, 0);
   lv_obj_set_style_radius(box, 6, 0);
-  lv_obj_set_style_pad_all(box, 8, 0);
-  lv_obj_set_style_pad_row(box, 5, 0);
+  lv_obj_set_style_pad_all(box, BOX_PAD, 0);
+  lv_obj_set_style_pad_row(box, NARROW ? 3 : 5, 0);
   lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(box, LV_DIR_VER);
 
@@ -398,7 +407,7 @@ static void _buildPeerDialog(const PeerInfo &peer, bool isRepeater,
 
   // Save/Update + Cancel, two columns (fat-finger popup style).
   lv_obj_t *btnRow = lv_obj_create(box);
-  lv_obj_set_size(btnRow, LV_PCT(100), 34);
+  lv_obj_set_size(btnRow, LV_PCT(100), BTN_H + 4);
   lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(btnRow, 0, 0);
   lv_obj_set_style_pad_all(btnRow, 0, 0);
@@ -411,7 +420,7 @@ static void _buildPeerDialog(const PeerInfo &peer, bool isRepeater,
                    lv_color_t border, lv_event_cb_t cb) {
     lv_obj_t *b = lv_btn_create(btnRow);
     lv_group_remove_obj(b);
-    lv_obj_set_height(b, 30);
+    lv_obj_set_height(b, BTN_H);
     lv_obj_set_flex_grow(b, 1);
     lv_obj_set_style_bg_color(b, bg, 0);
     lv_obj_set_style_bg_color(b, theme::ACCENT, LV_STATE_PRESSED);
