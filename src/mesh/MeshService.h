@@ -250,6 +250,11 @@ public:
     // Output is a null-terminated base64 string (24 chars + '\0') in psk_out.
     static void deriveChannelPsk(const char* name, char* psk_out, int psk_size);
 
+    // The base64 key config slot chIdx (0-9) is registered with: its saved
+    // PSK, else the public key for slot 0, else derived from the name.
+    // out must be at least 25 bytes; empty for an unused slot.
+    static void effectiveChannelPsk(int chIdx, char* out, int outSize);
+
     // Normalizes a user-supplied PSK to the base64 form MeshCore expects.
     // Accepts 32-char hex (share-link format) and converts it to 24-char base64.
     // Any other input is copied unchanged (assumed already base64).

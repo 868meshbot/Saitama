@@ -3371,6 +3371,19 @@ void MeshService::deriveChannelPsk(const char* name, char* psk_out, int psk_size
     psk_out[22] = '='; psk_out[23] = '='; psk_out[24] = '\0';
 }
 
+void MeshService::effectiveChannelPsk(int chIdx, char* out, int outSize)
+{
+    if (!out || outSize < 25) return;
+    out[0] = '\0';
+    if (chIdx < 0 || chIdx >= 10) return;
+    const auto& ch = ops::config::get().channels[chIdx];
+    if (chIdx != 0 && !ch.name[0]) return;
+    // Same order as the channel registration in init().
+    if (ch.psk[0])      normalizePsk(ch.psk, out, outSize);
+    else if (chIdx == 0) { strncpy(out, PUBLIC_GROUP_PSK, outSize - 1); out[outSize - 1] = '\0'; }
+    else                deriveChannelPsk(ch.name, out, outSize);
+}
+
 void MeshService::syncChannel(int chIdx) {
     if (_initialized) the_mesh.syncChannelSlot(chIdx);
 }

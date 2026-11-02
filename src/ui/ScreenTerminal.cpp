@@ -1053,9 +1053,16 @@ void ScreenTerminal::_dispatch(const char* raw) {
         const auto& cfg = ops::config::get();
         const auto& ch = cfg.channels[n - 1];
         char buf[48];
-        if (!ch.name[0]) { snprintf(buf, sizeof(buf), "CH%d: disabled", n); }
-        else              { snprintf(buf, sizeof(buf), "CH%d: #%s", n, ch.name); }
+        if (!ch.name[0] && n != 1) { snprintf(buf, sizeof(buf), "CH%d: disabled", n); }
+        else { snprintf(buf, sizeof(buf), "CH%d: #%s", n, ch.name[0] ? ch.name : "Public"); }
         appendLine(buf);
+        // The channel key (base64), as registered: share it to join others.
+        char psk[28];
+        MeshService::effectiveChannelPsk(n - 1, psk, sizeof(psk));
+        if (psk[0]) {
+            snprintf(buf, sizeof(buf), "Key: %s", psk);
+            appendLine(buf);
+        }
         return;
     }
 
