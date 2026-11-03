@@ -46,6 +46,19 @@ static void fmtTime(uint32_t ts, char *buf, size_t len) {
     snprintf(buf, len, "%d %s", lt.tm_mday, kMon[lt.tm_mon]);
 }
 
+// Row columns: badge | name | signal | last heard. The T-Deck widths add up
+// to 290 px; a narrow screen has no room for the time, so it is left out and
+// the name takes the space.
+static constexpr bool       ROW_NARROW = OPS_SCREEN_W < 300;
+static constexpr lv_coord_t ROW_PAD    = ROW_NARROW ? 4 : 6;
+static constexpr lv_coord_t ROW_GAP    = 4;   // narrow only
+static constexpr lv_coord_t TYPE_W     = ROW_NARROW ? 10 : 16;
+static constexpr lv_coord_t SIG_W      = ROW_NARROW ? 20 : 40;
+static constexpr lv_coord_t TIME_W     = 62;  // wide only
+static constexpr lv_coord_t NAME_W     = ROW_NARROW
+    ? OPS_SCREEN_W - 2 * ROW_PAD - TYPE_W - SIG_W - 2 * ROW_GAP
+    : 160;
+
 // ── show() ───────────────────────────────────────────────────────────
 void ScreenHeard::release() {
   if (!_screen || lv_scr_act() == _screen)
@@ -218,8 +231,9 @@ void ScreenHeard::_build() {
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_radius(row, 0, 0);
     lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_hor(row, 6, 0);
+    lv_obj_set_style_pad_hor(row, ROW_PAD, 0);
     lv_obj_set_style_pad_ver(row, 0, 0);
+    if (ROW_NARROW) lv_obj_set_style_pad_column(row, ROW_GAP, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
@@ -229,7 +243,7 @@ void ScreenHeard::_build() {
     // Type badge: "C" for Companion/Chat, "R" for Repeater
     lv_obj_t *typeLbl = lv_label_create(row);
     lv_label_set_text(typeLbl, isRepeater ? "R" : "C");
-    lv_obj_set_width(typeLbl, 16);
+    lv_obj_set_width(typeLbl, TYPE_W);
     lv_obj_set_style_text_color(typeLbl,
                                 isRepeater ? theme::GREEN : theme::ACCENT, 0);
     lv_obj_set_style_text_font(typeLbl, &lv_font_montserrat_10, 0);
@@ -238,26 +252,27 @@ void ScreenHeard::_build() {
     lv_obj_t *nameLbl = lv_label_create(row);
     lv_label_set_text(nameLbl, peer.name);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(nameLbl, 160);
+    lv_obj_set_width(nameLbl, NAME_W);
     lv_obj_set_style_text_color(nameLbl, theme::TEXT, 0);
     lv_obj_set_style_text_font(nameLbl, theme::bodyFont10(), 0);
 
     // Signal bars (last-heard RSSI), as in Contacts and Repeaters. A fixed
     // cell keeps the time column aligned; the bars sit at its right edge.
     lv_obj_t *sigCell = lv_obj_create(row);
-    lv_obj_set_size(sigCell, 40, 16);
+    lv_obj_set_size(sigCell, SIG_W, 16);
     lv_obj_set_style_bg_opa(sigCell, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(sigCell, 0, 0);
     lv_obj_set_style_pad_all(sigCell, 0, 0);
     lv_obj_clear_flag(sigCell, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     theme::addSignalBars(sigCell, peer.lastRssi);
 
-    // Time
+    // Time (wide screens only)
+    if (ROW_NARROW) continue;
     char timeBuf[10];
     fmtTime(peer.lastSeen, timeBuf, sizeof(timeBuf));
     lv_obj_t *timeLbl = lv_label_create(row);
     lv_label_set_text(timeLbl, timeBuf);
-    lv_obj_set_width(timeLbl, 62);
+    lv_obj_set_width(timeLbl, TIME_W);
     lv_obj_set_style_text_color(timeLbl, theme::TEXT_MUTED, 0);
     lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_align(timeLbl, LV_TEXT_ALIGN_RIGHT, 0);
