@@ -102,9 +102,11 @@ static bool _isCandidate(lv_obj_t* o, lv_obj_t* scope)
     if (lv_obj_has_state(o, LV_STATE_DISABLED)) return false;
     if (lv_obj_has_class(o, &lv_textarea_class)) return false;
     if (_isFullSize(o)) return false;              // a backdrop, not a button
-    // A drop-down needs no callback of its own to be useful (the dialog
-    // reads its value on Save): Enter opens it as a button list.
-    if (!_hasHandlers(o) && !lv_obj_has_class(o, &lv_dropdown_class)) return false;
+    // A drop-down or tickbox needs no callback of its own to be useful (the
+    // dialog reads its value on Save): Enter opens / toggles it.
+    if (!_hasHandlers(o) && !lv_obj_has_class(o, &lv_dropdown_class) &&
+        !lv_obj_has_flag(o, LV_OBJ_FLAG_CHECKABLE))
+        return false;
     return _reachable(o);
 }
 
@@ -455,6 +457,15 @@ bool handleEnter()
     lv_obj_t* o = s_hl;
     _setHl(nullptr);
     if (openDropdown(o)) return true;
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_CHECKABLE)) {
+        // LVGL toggles these on a pointer release, which a key never makes.
+        // As _activateFocused(): toggle before CLICKED (radio groups), and
+        // keep the highlight so it can be toggled back.
+        _setHl(o);
+        if (lv_obj_has_state(o, LV_STATE_CHECKED)) lv_obj_clear_state(o, LV_STATE_CHECKED);
+        else                                       lv_obj_add_state(o, LV_STATE_CHECKED);
+        if (lv_event_send(o, LV_EVENT_VALUE_CHANGED, nullptr) != LV_RES_OK) return true;
+    }
     lv_event_send(o, LV_EVENT_CLICKED, nullptr);
     return true;
 }
