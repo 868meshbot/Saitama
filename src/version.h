@@ -4,4 +4,4 @@
 #define OPS_VERSION_MINOR 6
 #define OPS_VERSION_PATCH 1
 #define OPS_VERSION_PRE   ""
-#define OPS_VERSION_STRING "1.6.1"
+#define OPS_VERSION_STRING "1.6.2"
