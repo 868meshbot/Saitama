@@ -59,7 +59,10 @@ static constexpr int   BEEP_MAX_SAMPLES = (SAMPLE_RATE * BEEP_MAX_MS) / 1000;
 // Chunks through a 256-sample stack buffer to avoid a heap allocation.
 static void _writeScaled(const int16_t* buf, int count)
 {
-    const float scale = (float)ops::config::get().speakerVolume / 100.0f;
+    // OPS_SPK_MAX_PCT: full slider = this much of full scale (the Cardputer
+    // reset from a battery brownout at 100 %).
+    const float scale = (float)ops::config::get().speakerVolume / 100.0f
+                      * (float)OPS_SPK_MAX_PCT / 100.0f;
     int16_t tmp[256];
     size_t written;
     while (count > 0) {
@@ -85,6 +88,27 @@ static int16_t* s_beepBuf   = nullptr;  // scratch for sound::playBeep()
 static bool     s_initialized = false;
 static uint32_t s_soundEndMs  = 0;  // millis() deadline while DMA is draining
 
+// Tone shapes. The Cardputer's ES8311 drives a tiny speaker that is quiet
+// below ~800 Hz and loses short transients: there Pluck, Clear and Whoosh
+// are an octave up, hold their level longer and the sweep starts at 600 Hz
+// (they were inaudible — only the steady Ping came through). Same lengths,
+// so they still fit the shared scratch buffer.
+#if OPS_SPK_ES8311
+static constexpr float PLUCK_HZ     = 1760.0f;   // A6
+static constexpr float PLUCK_DECAY  = 2.5f;      // gentle: audible for ~100 ms
+static constexpr float CLEAR_OCTAVE = 2.0f;      // C6 E6 G6 C7
+static constexpr float CLEAR_DECAY  = 2.0f;
+static constexpr float WHOOSH_F0    = 600.0f;
+static constexpr float WHOOSH_F1    = 3200.0f;
+#else
+static constexpr float PLUCK_HZ     = 880.0f;
+static constexpr float PLUCK_DECAY  = 7.0f;
+static constexpr float CLEAR_OCTAVE = 1.0f;
+static constexpr float CLEAR_DECAY  = 4.0f;
+static constexpr float WHOOSH_F0    = 80.0f;
+static constexpr float WHOOSH_F1    = 2400.0f;
+#endif
+
 static void _generatePing()
 {
     for (int i = 0; i < PING_SAMPLES; i++) {
@@ -102,8 +126,8 @@ static void _generatePluck()
         float t = (float)i / (float)SAMPLE_RATE;
         float env;
         if (i < 5) env = (float)i / 5.0f;
-        else env = expf(-7.0f * (float)(i - 5) / (float)(PLUCK_SAMPLES - 5));
-        s_pluckBuf[i] = (int16_t)(sinf(2.0f * M_PI * 880.0f * t) * env * 16000.0f);
+        else env = expf(-PLUCK_DECAY * (float)(i - 5) / (float)(PLUCK_SAMPLES - 5));
+        s_pluckBuf[i] = (int16_t)(sinf(2.0f * M_PI * PLUCK_HZ * t) * env * 16000.0f);
     }
 }
 
@@ -115,7 +139,7 @@ static void _generateClear()
     const int   lens[4]  = { 320, 320, 320, 640 };
     int pos = 0;
     for (int n = 0; n < 4; n++) {
-        const float freq = freqs[n];
+        const float freq = freqs[n] * CLEAR_OCTAVE;
         const int   len  = lens[n];
         const int   fade = 12;
         for (int i = 0; i < len; i++) {
@@ -129,7 +153,7 @@ static void _generateClear()
             } else {
                 // Final note: sharp attack then exponential decay
                 if (i < fade) env = (float)i / (float)fade;
-                else          env = expf(-4.0f * (float)(i - fade) / (float)(len - fade));
+                else          env = expf(-CLEAR_DECAY * (float)(i - fade) / (float)(len - fade));
             }
             s_clearBuf[pos++] = (int16_t)(sinf(2.0f * M_PI * freq * t) * env * 14000.0f);
         }
@@ -140,13 +164,16 @@ static void _generateWhoosh()
 {
     // Exponential sweep 80 Hz → 2400 Hz with bell amplitude — sounds like a swoosh.
     float phase = 0.0f;
-    const float f0 = 80.0f, f1 = 2400.0f;
+    const float f0 = WHOOSH_F0, f1 = WHOOSH_F1;
     for (int i = 0; i < WHOOSH_SAMPLES; i++) {
         float frac = (float)i / (float)(WHOOSH_SAMPLES - 1);
         float freq = f0 * powf(f1 / f0, frac);   // exponential sweep
         phase += 2.0f * M_PI * freq / (float)SAMPLE_RATE;
         if (phase > 2.0f * M_PI) phase -= 2.0f * M_PI;
         float env = sinf(M_PI * frac);             // bell: 0 → 1 → 0
+#if OPS_SPK_ES8311
+        env = sqrtf(env);                          // flatter bell: loud for longer
+#endif
         s_whooshBuf[i] = (int16_t)(sinf(phase) * env * 16000.0f);
     }
 }

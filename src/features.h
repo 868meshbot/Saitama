@@ -32,6 +32,7 @@
 #define OPS_SPK_WS            43
 #define OPS_SPK_DOUT          42
 #define OPS_SPK_ES8311        1   // codec at 0x18 on the internal I2C (8/9)
+#define OPS_SPK_MAX_PCT       75  // 100 % on the slider; louder browned out the battery
 #define OPS_FEAT_TOUCH        0   // GT911 touchscreen
 #define OPS_FEAT_KB_BACKLIGHT 0   // keyboard backlight
 #define OPS_FEAT_BLE          1   // BLE companion (the largest internal-RAM user)
@@ -87,6 +88,7 @@
 #define OPS_SPK_WS            5
 #define OPS_SPK_DOUT          6
 #define OPS_SPK_ES8311        0
+#define OPS_SPK_MAX_PCT       100
 #define OPS_FEAT_TOUCH        1
 #define OPS_FEAT_KB_BACKLIGHT 1
 #define OPS_FEAT_BLE          1
