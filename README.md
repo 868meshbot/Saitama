@@ -30,6 +30,10 @@ Saitama is a free, open-source firmware that turns affordable LoRa devices into 
 
 Saitama is a community project. Development tooling includes AI coding assistants — contributions are reviewed and tested by humans on real hardware.
 
+## User Guide
+
+New to Saitama or to mesh radio? The **[user guide](https://github.com/868meshbot/Saitama/wiki)** covers both devices, from why a mesh is useful to installing, setting up and using every app. It's also available as a **[PDF](docs/Saitama-User-Guide.pdf)**.
+
 ## Features
 
 - **Full touchscreen support**: every screen works by touch as well as by keyboard and trackball. Tap tiles, buttons and list rows, swipe between launcher pages, scroll lists and chats, and use dropdowns and sliders by finger. Popups use large two-column buttons sized for fingers. GT911 capacitive touch, with the controller address detected automatically at boot and a calibration routine (`touch-cali` in the Terminal).
@@ -272,7 +276,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.6.1** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
+Current version: **1.6.2** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
