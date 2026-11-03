@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <nvs.h>
+#include <esp_system.h>
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #include "version.h"
@@ -56,6 +57,17 @@ void setup() {
     delay(500);   // Short settle; ARDUINO_USB_CDC_ON_BOOT=1 means CDC is up at boot
 
     OPS_LOG("main", "Saitama v" OPS_VERSION_STRING " starting");
+    {
+        // Why the last run ended: a brownout (speaker at full volume on
+        // battery) or watchdog leaves no crash dump on USB, only this.
+        static const char* const kReason[] = {
+            "unknown", "power-on", "external pin", "software restart", "crash (panic)",
+            "interrupt watchdog", "task watchdog", "other watchdog", "deep sleep",
+            "BROWNOUT (supply voltage dipped)", "SDIO", "USB", "JTAG" };
+        int r = (int)esp_reset_reason();
+        OPS_LOG("main", "Last reset: %s (%d)",
+                r >= 0 && r < (int)(sizeof(kReason) / sizeof(kReason[0])) ? kReason[r] : "?", r);
+    }
 
     // 0) Kill WiFi modem — this build uses SX1262 LoRa, not ESP-NOW/WiFi.
     //    Without this, the WiFi radio idles powered-on and wastes ~1-2 mA.
