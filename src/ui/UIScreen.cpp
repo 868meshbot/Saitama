@@ -279,6 +279,38 @@ static void touch_read(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     s_lastActivityMs = millis();
 }
 
+#if !OPS_HAS_PSRAM
+// Screenshot without PSRAM: no room for a whole-screen snapshot (65 KB in one
+// block on the Cardputer), so takeScreenshot() redraws the screen and the
+// flush below writes each strip straight into a top-down BMP as it goes out.
+static File* s_shotFile  = nullptr;
+static int   s_shotNextY = 0;
+static bool  s_shotOk    = false;
+static constexpr uint32_t SHOT_ROW = ((uint32_t)OPS_SCREEN_W * 3 + 3) & ~3u;
+
+static void _shotWriteArea(const lv_area_t* area, const lv_color_t* px)
+{
+    // A full-screen redraw arrives as full-width strips, top to bottom.
+    if (!s_shotOk) return;
+    if (area->x1 != 0 || area->x2 != OPS_SCREEN_W - 1 || area->y1 != s_shotNextY) {
+        s_shotOk = false;
+        return;
+    }
+    static uint8_t row[SHOT_ROW];
+    for (int y = area->y1; y <= area->y2 && s_shotOk; y++) {
+        const lv_color_t* src = px + (size_t)(y - area->y1) * OPS_SCREEN_W;
+        for (int x = 0; x < OPS_SCREEN_W; x++) {
+            const lv_color_t c = src[x];
+            row[x * 3 + 0] = (uint8_t)((c.ch.blue  << 3) | (c.ch.blue  >> 2));
+            row[x * 3 + 1] = (uint8_t)((c.ch.green << 2) | (c.ch.green >> 4));
+            row[x * 3 + 2] = (uint8_t)((c.ch.red   << 3) | (c.ch.red   >> 2));
+        }
+        s_shotOk = s_shotFile->write(row, SHOT_ROW) == SHOT_ROW;
+    }
+    s_shotNextY = area->y2 + 1;
+}
+#endif
+
 // LVGL 8 flush callback
 static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
     uint32_t w = area->x2 - area->x1 + 1;
@@ -287,6 +319,9 @@ static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* colo
     tft.setAddrWindow(area->x1, area->y1, w, h);
     tft.pushPixels((uint16_t*)color_p, w * h);
     tft.endWrite();
+#if !OPS_HAS_PSRAM
+    if (s_shotFile) _shotWriteArea(area, color_p);   // display has its own bus
+#endif
     lv_disp_flush_ready(drv);
 }
 
@@ -1481,6 +1516,43 @@ bool takeScreenshot(const char* path)
     constexpr int W = OPS_SCREEN_W;  // 320 (Cardputer 240)
     constexpr int H = OPS_SCREEN_H;  // 240 (Cardputer 135)
 
+#if !OPS_HAS_PSRAM
+    // No PSRAM: a 24-bit top-down BMP written from the display strips by
+    // flush_cb() during a full redraw — only one row is held at a time.
+    constexpr uint32_t DATA = SHOT_ROW * H;
+    uint8_t hdr[54] = { 'B', 'M' };
+    auto put32 = [&hdr](int at, uint32_t v)
+    {
+        for (int b = 0; b < 4; b++) hdr[at + b] = (uint8_t)(v >> (8 * b));
+    };
+    put32(2, 54 + DATA);   // file size
+    put32(10, 54);         // pixel data offset
+    put32(14, 40);         // BITMAPINFOHEADER
+    put32(18, W);
+    put32(22, (uint32_t)-H);   // negative: top-down
+    hdr[26] = 1;           // planes
+    hdr[28] = 24;          // bits per pixel
+    put32(34, DATA);
+
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) { OPS_LOG("Screenshot", "open failed: %s", path); return false; }
+    bool ok = f.write(hdr, sizeof(hdr)) == sizeof(hdr);
+    if (ok) {
+        s_shotFile  = &f;
+        s_shotNextY = 0;
+        s_shotOk    = true;
+        lv_obj_invalidate(lv_scr_act());
+        lv_refr_now(s_disp);
+        s_shotFile = nullptr;
+        ok = s_shotOk && s_shotNextY == H;
+    }
+    f.close();
+    if (!ok) SD.remove(path);
+
+    if (ok) OPS_LOG("Screenshot", "saved %s (%u B)", path, (unsigned)(54 + DATA));
+    else    OPS_LOG("Screenshot", "write failed: %s", path);
+    return ok;
+#else
     // Render current screen into an off-screen LVGL buffer.
     const size_t snapBytes = (size_t)W * H * sizeof(lv_color_t);
     lv_color_t* snapBuf = (lv_color_t*)ops::psram::alloc(snapBytes);
@@ -1495,45 +1567,6 @@ bool takeScreenshot(const char* path)
         return false;
     }
 
-#if !OPS_HAS_PSRAM
-    // No PSRAM: a 24-bit BMP written a row at a time (bottom-up, BGR), so
-    // only the snapshot and one row are held — no RGB copy, no encoder.
-    constexpr uint32_t ROW  = ((uint32_t)W * 3 + 3) & ~3u;
-    constexpr uint32_t DATA = ROW * H;
-    uint8_t hdr[54] = { 'B', 'M' };
-    auto put32 = [&hdr](int at, uint32_t v)
-    {
-        for (int b = 0; b < 4; b++) hdr[at + b] = (uint8_t)(v >> (8 * b));
-    };
-    put32(2, 54 + DATA);   // file size
-    put32(10, 54);         // pixel data offset
-    put32(14, 40);         // BITMAPINFOHEADER
-    put32(18, W);
-    put32(22, H);          // positive: bottom-up
-    hdr[26] = 1;           // planes
-    hdr[28] = 24;          // bits per pixel
-    put32(34, DATA);
-
-    uint8_t row[ROW] = {};
-    File f = SD.open(path, FILE_WRITE);
-    bool ok = f && f.write(hdr, sizeof(hdr)) == sizeof(hdr);
-    for (int y = H - 1; ok && y >= 0; y--) {
-        const lv_color_t* src = snapBuf + (size_t)y * W;
-        for (int x = 0; x < W; x++) {
-            const lv_color_t c = src[x];
-            row[x * 3 + 0] = (uint8_t)((c.ch.blue  << 3) | (c.ch.blue  >> 2));
-            row[x * 3 + 1] = (uint8_t)((c.ch.green << 2) | (c.ch.green >> 4));
-            row[x * 3 + 2] = (uint8_t)((c.ch.red   << 3) | (c.ch.red   >> 2));
-        }
-        ok = f.write(row, ROW) == ROW;
-    }
-    if (f) f.close();
-    free(snapBuf);
-
-    if (ok) OPS_LOG("Screenshot", "saved %s (%u B)", path, (unsigned)(54 + DATA));
-    else    OPS_LOG("Screenshot", "write failed: %s", path);
-    return ok;
-#else
     // Convert RGB565 → RGB888 for LodePNG.
     const size_t rgbBytes = (size_t)W * H * 3;
     uint8_t* rgb = (uint8_t*)ops::psram::alloc(rgbBytes);
