@@ -399,7 +399,11 @@ static lv_theme_t s_fitTheme;
 
 static void _fitApply(lv_theme_t* /*th*/, lv_obj_t* obj)
 {
-    if (lv_obj_get_parent(obj)) lv_obj_add_style(obj, &s_fitStyle, 0);
+    lv_obj_t* parent = lv_obj_get_parent(obj);
+    // Not a text box's own label: a one-line box scrolls it sideways to
+    // follow the cursor, which needs it wider than the box.
+    if (parent && !lv_obj_has_class(parent, &lv_textarea_class))
+        lv_obj_add_style(obj, &s_fitStyle, 0);
 }
 #endif
 
