@@ -487,7 +487,7 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
         _addRow(_list, "\xF0\x9F\x8C\x99", "Night Mode", ntStr, 42,   // U+1F319 moon
                 cfg.nightMode ? ROW_ON : ROW_OFF);
     }
-#if OPS_FEAT_MAP
+#if OPS_FEAT_MAP && !OPS_MAP_LITE
     {
         static const char* kMapStyle[] = { "Day", "Night", "Auto" };
         _addRow(_list, LV_SYMBOL_IMAGE, "Map Style", kMapStyle[cfg.mapStyle < 3 ? cfg.mapStyle : 2], 43);

@@ -41,6 +41,7 @@
 #include "../Theme.h"
 #include "../Emoji.h"
 #include "ScreenGpsText.h"
+#include "../ScreenMap.h"
 #include "MeshRain.h"
 #include "../../hardware/Board.h"
 #include "../../utils/Config.h"
@@ -77,6 +78,7 @@ static const App kApps[] = {
     { LV_SYMBOL_DIRECTORY, "Regions",   [] { ScreenRegions::show(); } },
     { LV_SYMBOL_CHARGE,    "Signal",    [] { ScreenSignal::show(); } },
     { LV_SYMBOL_GPS,       "GPS",       [] { ScreenGpsText::show(); } },
+    { LV_SYMBOL_IMAGE,     "Map",       [] { ScreenMap::show(); } },
     { LV_SYMBOL_KEYBOARD,  "Terminal",  [] { ScreenTerminal::show(); } },
     { LV_SYMBOL_SETTINGS,  "Settings",  [] { ScreenSettings::show(); } },
 };
@@ -166,6 +168,8 @@ static void _subtitle(int i, char* buf, size_t n)
         if (config::get().gpsMode == 0)          snprintf(buf, n, "Off");
         else if (Board::instance().hasGPSFix())  snprintf(buf, n, "Fix");
         else                                     snprintf(buf, n, "No fix");
+    } else if (!strcmp(name, "Map")) {
+        snprintf(buf, n, "Offline map");
     } else if (!strcmp(name, "Terminal")) {
         snprintf(buf, n, "Commands and log");
     } else {

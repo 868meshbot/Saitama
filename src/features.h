@@ -13,7 +13,8 @@
 
 // Cardputer ADV: 240x135, keyboard only, no PSRAM (ESP32-S3FN8).
 #define OPS_BOARD_NAME "M5Stack Cardputer ADV"
-#define OPS_FEAT_MAP          0   // offline tile map (needs PSRAM tile cache)
+#define OPS_FEAT_MAP          1   // offline map: JPEG tiles drawn straight to the TFT
+#define OPS_MAP_LITE          1   // ui/cardputer/ScreenMapLite.cpp, not NavBoxLib
 #define OPS_FEAT_SKYPLOT      0   // GPS skyplot screen (text status instead)
 #define OPS_FEAT_RADIO_TOOLS  0   // spectrum/waterfall, channel scan, signal generator
 #define OPS_FEAT_TRACE        0   // hop-by-hop trace screen
@@ -70,6 +71,7 @@
 // T-Deck Plus: everything.
 #define OPS_BOARD_NAME "LilyGo T-Deck Plus"
 #define OPS_FEAT_MAP          1
+#define OPS_MAP_LITE          0   // NavBoxLib map (ScreenMap.cpp)
 #define OPS_FEAT_SKYPLOT      1
 #define OPS_FEAT_RADIO_TOOLS  1
 #define OPS_FEAT_TRACE        1

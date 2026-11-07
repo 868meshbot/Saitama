@@ -27,6 +27,9 @@
 #if OPS_FEAT_MAP
 #include "ScreenMap.h"
 #endif
+#if OPS_MAP_LITE
+#include "cardputer/MapLite.h"
+#endif
 #if OPS_FEAT_POWER
 #include "ScreenPower.h"
 #endif
@@ -321,6 +324,9 @@ static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* colo
     tft.endWrite();
 #if !OPS_HAS_PSRAM
     if (s_shotFile) _shotWriteArea(area, color_p);   // display has its own bus
+#endif
+#if OPS_MAP_LITE
+    ops::ui::maplite::noteLvglFlush();   // the map draws itself again
 #endif
     lv_disp_flush_ready(drv);
 }
@@ -1465,6 +1471,10 @@ void startTouchCalibration()
     s_calDismissAt   = 0;
     _calBuildOverlay(kCalTx1, kCalTy1, "Touch calibration\nTap the crosshair (1/2)");
 }
+
+#if OPS_MAP_LITE
+TFT_eSPI& directTft() { return tft; }   // the Cardputer map draws tiles itself
+#endif
 
 void releaseHiddenScreens()
 {
