@@ -420,17 +420,19 @@ void ScreenSettings::_buildList(lv_obj_t* parent) {
     static const char* kRadioShort[] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
         "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
-        "PT 868", "CH", "US/CA", "VN"
+        "PT 868", "CH", "US/CA", "VN", "JP"
     };
     const char* radioLabel = cfg.radioCustom
         ? "Custom"
-        : kRadioShort[cfg.radioProfile < 14 ? cfg.radioProfile : 2];
+        : kRadioShort[cfg.radioProfile < 15 ? cfg.radioProfile : 2];
     _addRow(_list, LV_SYMBOL_WIFI, lang::tr(lang::TR_RADIO), radioLabel, 6);
     char pwrBuf[10];
     // 0 = no override: the radio runs at the SX1262 default of 22 dBm,
     // so show that rather than "Off" (it never stops transmitting).
     bool pwrOn = (cfg.radioTX == 0 || (cfg.radioTX >= 10 && cfg.radioTX <= 22));
-    if (pwrOn) snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", cfg.radioTX ? cfg.radioTX : 22);
+    int8_t shownTx = cfg.radioTX ? cfg.radioTX : 22;
+    if (!cfg.radioCustom && cfg.radioProfile == 14 && shownTx > 13) shownTx = 13;  // Japan cap
+    if (pwrOn) snprintf(pwrBuf, sizeof(pwrBuf), "%d dBm", shownTx);
     else       snprintf(pwrBuf, sizeof(pwrBuf), "%s", off);
     _addRow(_list, LV_SYMBOL_CHARGE, lang::tr(lang::TR_POWER), pwrBuf, 25,
             pwrOn ? ROW_ON : ROW_OFF);
@@ -2953,7 +2955,8 @@ struct RadioProfile {
     const char* params;
 };
 
-static constexpr int kNumRadioProfiles = 15;
+static constexpr int kNumRadioProfiles = 16;
+static constexpr int kCustomRadioIdx   = 15;  // last row
 
 static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Australia",          "SF10 BW250 CR5" },  // 0  915.800 MHz
@@ -2970,7 +2973,8 @@ static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Switzerland",        "SF8 BW62 CR8"   },  // 11 869.618 MHz
     { "USA/Canada",         "SF7 BW62 CR5"   },  // 12 910.525 MHz
     { "Vietnam",            "SF11 BW250 CR5" },  // 13 920.250 MHz
-    { "Custom",             ""               },  // 14 user-defined
+    { "Japan",              "SF12 BW125 CR8" },  // 14 920.800 MHz, max 13 dBm
+    { "Custom",             ""               },  // 15 user-defined
 };
 
 static lv_obj_t* s_radioModal = nullptr;
@@ -2980,7 +2984,7 @@ static void _onRadioRowClick(lv_event_t* e) {
     lv_obj_t* modal = s_radioModal;
     s_radioModal = nullptr;
 
-    if (profIdx == 14) {
+    if (profIdx == kCustomRadioIdx) {
         lv_obj_del_async(modal);
         _openCustomRadioDialog();
         return;
@@ -3038,7 +3042,7 @@ static void _openRadioDialog() {
     lv_obj_set_style_text_color(title, theme::ACCENT, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
 
-    // Scrollable container for the 14 profile rows
+    // Scrollable container for the profile rows
     lv_obj_t* scroll = lv_obj_create(panel);
     lv_obj_set_size(scroll, 222, 144);
     lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
@@ -3055,10 +3059,10 @@ static void _openRadioDialog() {
     const auto& radioCfg = ops::config::get();
     uint8_t curProfile = radioCfg.radioProfile;
     bool isCustomMode  = radioCfg.radioCustom;
-    if (curProfile >= 14) curProfile = 2;
+    if (curProfile >= kCustomRadioIdx) curProfile = 2;
 
     for (int i = 0; i < kNumRadioProfiles; i++) {
-        bool isSelected = isCustomMode ? (i == 14) : (i == (int)curProfile);
+        bool isSelected = isCustomMode ? (i == kCustomRadioIdx) : (i == (int)curProfile);
 
         lv_obj_t* row = lv_btn_create(scroll);
         lv_obj_set_size(row, 218, 26);
@@ -3081,7 +3085,7 @@ static void _openRadioDialog() {
         lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_10, 0);
 
         lv_obj_t* parLbl = lv_label_create(row);
-        if (i == 14) {
+        if (i == kCustomRadioIdx) {
             if (radioCfg.radioCustom && radioCfg.freqMHz > 0.0f) {
                 static char s_customParBuf[32];
                 static const char* kBWStr[] = { "", "62.5", "125", "250" };
@@ -3135,7 +3139,7 @@ static void _openRadioDialog() {
         for (uint32_t ci = 0; ci < nRows; ci++)
             lv_group_add_obj(gR, lv_obj_get_child(scroll, (int32_t)ci));
         lv_group_add_obj(gR, exitBtn);
-        int32_t focusIdx = isCustomMode ? 14 : (int32_t)curProfile;
+        int32_t focusIdx = isCustomMode ? kCustomRadioIdx : (int32_t)curProfile;
         lv_obj_t* focusRow = lv_obj_get_child(scroll, focusIdx);
         lv_group_focus_obj(focusRow);
         lv_obj_scroll_to_view(focusRow, LV_ANIM_OFF);
@@ -4289,8 +4293,8 @@ static void _rmUpdateNote() {
                              (double)st.freqMHz);
                 } else {
                     snprintf(buf, sizeof(buf),
-                             "Unavailable: no hop plan for the\n"
-                             "433 MHz band. Use a 915 MHz\n"
+                             "Unavailable: no hop plan for this\n"
+                             "band. Use a 915 MHz\n"
                              "profile (US/AU/NZ) for FHSS.");
                 }
             } else if (!st.clockValid) {

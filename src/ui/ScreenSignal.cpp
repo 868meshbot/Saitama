@@ -355,14 +355,14 @@ void ScreenSignal::_refresh()
 
     // Radio config (profile can change in Settings while this screen is cached)
     {
-        static const char* kProfileNames[14] = {
+        static const char* kProfileNames[15] = {
             "Australia",     "Australia Vic.", "EU/UK Narrow",  "EU/UK Long Range",
             "EU/UK Medium",  "Czech Narrow",   "EU 433 LR",     "New Zealand",
             "NZ Narrow",     "Portugal 433",   "Portugal 868",  "Switzerland",
-            "USA/Canada",    "Vietnam",
+            "USA/Canada",    "Vietnam",        "Japan",
         };
         const auto& cfg = ops::config::get();
-        uint8_t p = (cfg.radioProfile < 14) ? cfg.radioProfile : 2;
+        uint8_t p = (cfg.radioProfile < 15) ? cfg.radioProfile : 2;
         snprintf(buf, sizeof(buf), "%.3f MHz", (double)MeshService::instance().getFreqMHz());
         lv_label_set_text(s_freqLbl, buf);
         if (cfg.radioCustom)

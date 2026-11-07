@@ -346,7 +346,7 @@ static bool _sanitize(Config& c) {
         c.launcherStyle = OPS_LAUNCHER_DEFAULT;
         fixed = true;
     }
-    if (c.radioProfile >= 14) {
+    if (c.radioProfile >= 15) {
         OPS_LOG("Config", "Radio profile %d out of range - reset to EU/UK Narrow",
                 c.radioProfile);
         c.radioProfile = 2;

@@ -224,6 +224,7 @@ Unavailable availability(uint8_t radioProfile)
     switch (radioProfile) {
         case 6:   // EU 433
         case 9:   // Portugal 433
+        case 14:  // Japan 920.8: AU915 hops would leave the ARIB band
             return Unavailable::NoPlanForBand;
         case 2:   // EU/UK Narrow         869.618
         case 3:   // EU/UK Long Range     869.525

@@ -751,12 +751,12 @@ static bool _extractJsonStr(const char* json, const char* key, char* out, int ou
 // Short name of a LoRa profile (MeshService::applyLoraProfile() order).
 static const char* _profileShort(uint8_t p)
 {
-    static const char* kNames[14] = {
+    static const char* kNames[15] = {
         "AU", "AU-Vic", "EU NAR", "EU LON", "EU MED",
         "CZ NAR", "EU 433", "NZ", "NZ NAR", "PT 433",
-        "PT 868", "CH", "US/CA", "VN"
+        "PT 868", "CH", "US/CA", "VN", "JP"
     };
-    return kNames[p < 14 ? p : 2];
+    return kNames[p < 15 ? p : 2];
 }
 
 // ── _dispatch() ──────────────────────────────────────────────────────

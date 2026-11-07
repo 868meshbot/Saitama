@@ -3462,13 +3462,13 @@ static float _fixedFreqMHz()
 {
     const auto& cfg = ops::config::get();
     if (cfg.radioCustom && cfg.freqMHz > 0.0f) return cfg.freqMHz;
-    static const float kFreqs[14] = {
+    static const float kFreqs[15] = {
         915.800f, 916.575f, 869.618f, 869.525f, 869.525f,
         869.525f, 433.650f, 917.375f, 917.375f, 433.375f,
-        869.618f, 869.618f, 910.525f, 920.250f,
+        869.618f, 869.618f, 910.525f, 920.250f, 920.800f,
     };
     uint8_t p = cfg.radioProfile;
-    return kFreqs[p < 14 ? p : 2];
+    return kFreqs[p < 15 ? p : 2];
 }
 
 // Hop-sequence key = SHA-256(public channel PSK). Mirrors the slot-0 PSK
@@ -3503,6 +3503,20 @@ static bool _fhssSyncKey()
 }
 
 // The TX power the user configured, before any FHSS clamp.
+// Japan (ARIB STD-T108, licence-free 920 MHz): at most 20 mW = 13 dBm.
+// Enforced while the Japan preset is selected; Custom is the user's call.
+static constexpr uint8_t kProfileJapan  = 14;
+static constexpr int8_t  kJapanMaxTxDbm = 13;
+static bool s_jpTxCapped = false;
+
+static int8_t _capTxForProfile(int8_t dbm)
+{
+    const auto& cfg = ops::config::get();
+    if (!cfg.radioCustom && cfg.radioProfile == kProfileJapan && dbm > kJapanMaxTxDbm)
+        return kJapanMaxTxDbm;
+    return dbm;
+}
+
 static int8_t _configuredTxDbm()
 {
     const auto& cfg = ops::config::get();
@@ -4077,7 +4091,7 @@ void MeshService::setCodingRate(uint8_t cr) {
 }
 
 void MeshService::setTxPower(int8_t dbm) {
-    if (_initialized) sx1262.setOutputPower(dbm);
+    if (_initialized) sx1262.setOutputPower(_capTxForProfile(dbm));
 }
 
 void MeshService::setRxBoost(bool boost) {
@@ -4116,7 +4130,7 @@ bool MeshService::setContactPath(const uint8_t* prefix4, const uint8_t* pathByte
 
 void MeshService::applyLoraProfile(uint8_t profile) {
     struct ProfileEntry { float freq; float bw; uint8_t sf; uint8_t cr; };
-    static const ProfileEntry kProfiles[14] = {
+    static const ProfileEntry kProfiles[15] = {
         { 915.800f, 250.0f, 10, 5 },  // 0  Australia
         { 916.575f,  62.5f,  7, 8 },  // 1  Australia Victoria
         { 869.618f,  62.5f,  8, 8 },  // 2  EU/UK Narrow (recommended)
@@ -4131,13 +4145,25 @@ void MeshService::applyLoraProfile(uint8_t profile) {
         { 869.618f,  62.5f,  8, 8 },  // 11 Switzerland
         { 910.525f,  62.5f,  7, 5 },  // 12 USA/Canada
         { 920.250f, 250.0f, 11, 5 },  // 13 Vietnam
+        { 920.800f, 125.0f, 12, 8 },  // 14 Japan (ARIB CH25, MeshCore #2079)
     };
-    if (profile >= 14) profile = 2;  // default EU/UK Narrow
+    if (profile >= 15) profile = 2;  // default EU/UK Narrow
     const ProfileEntry& p = kProfiles[profile];
     sx1262.setFrequency(p.freq);
     sx1262.setBandwidth(p.bw);
     sx1262.setSpreadingFactor(p.sf);
     sx1262.setCodingRate(p.cr);
+    // Japan caps TX power; leaving it restores the saved power.
+    const auto& cfg = ops::config::get();
+    int8_t want = cfg.radioTX ? cfg.radioTX : (int8_t)LORA_TX_POWER;
+    if (profile == kProfileJapan && want > kJapanMaxTxDbm) {
+        sx1262.setOutputPower(kJapanMaxTxDbm);
+        s_jpTxCapped = true;
+        OPS_LOG("Mesh", "Japan: TX capped %d -> %d dBm", want, kJapanMaxTxDbm);
+    } else if (profile != kProfileJapan && s_jpTxCapped) {
+        sx1262.setOutputPower(want);
+        s_jpTxCapped = false;
+    }
     OPS_LOG("Mesh", "Profile %d: %.3f MHz SF%d BW%.1f CR%d",
             profile, (double)p.freq, p.sf, (double)p.bw, p.cr);
 }
@@ -4239,6 +4265,7 @@ bool MeshService::sigGenStart(float freqMHz, int8_t powerDbm, bool loraMode)
     if (!_initialized || s_sigGenActive) return false;
     if (powerDbm < -9) powerDbm = -9;
     if (powerDbm > 22) powerDbm = 22;
+    powerDbm = _capTxForProfile(powerDbm);
     sx1262.standby();
     sx1262.setFrequency(freqMHz);
     sx1262.setOutputPower(powerDbm);
@@ -4261,7 +4288,7 @@ void MeshService::sigGenStop()
     if (!_initialized) return;
     s_sigGenActive = false;
     sx1262.standby();
-    sx1262.setOutputPower(LORA_TX_POWER);
+    sx1262.setOutputPower(_capTxForProfile(LORA_TX_POWER));
     sx1262.setFrequency(getFreqMHz());
     sx1262.startReceive();
     OPS_LOG("SigGen", "stopped");
