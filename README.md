@@ -276,7 +276,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.6.3** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
+Current version: **1.6.4** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`
