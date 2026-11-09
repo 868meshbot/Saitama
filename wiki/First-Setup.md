@@ -24,9 +24,13 @@ your local mesh uses:
 | Switzerland | SF8 BW62 CR8 | 869.618 MHz |
 | USA/Canada | SF7 BW62 CR5 | 910.525 MHz |
 | Vietnam | SF11 BW250 CR5 | 920.250 MHz |
+| Japan | SF12 BW125 CR8 | 920.800 MHz |
 | Custom | your own values | |
 
-Only use frequencies that are legal where you are.
+Only use frequencies that are legal where you are. **Japan** (ARIB STD-T108): transmit
+power is capped at 13 dBm (20 mW) while this preset is selected, and frequency hopping
+is not available. The rules there also require listen-before-talk and a 4 s limit
+per transmission, which Saitama does not enforce yet.
 
 ## 2. Set your name
 

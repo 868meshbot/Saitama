@@ -85,9 +85,10 @@ Trace shows which repeater on the way is struggling.
 
 ## Where am I?
 
-### Map (T-Deck)
+### Map (both)
 **What it is:** a proper map, stored on the SD card, so it works with no internet.
-People who share their location appear on it.
+People who share their location appear on it. The Cardputer uses its own JPEG
+tiles: see [Map and GPS](Map-and-GPS).
 
 **Why you'd use it:** to see where your friends and nearby repeaters are, or just to
 find your way when your phone has no signal.

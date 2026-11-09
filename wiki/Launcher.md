@@ -23,10 +23,10 @@ BT Foxhunt, Pic Viewer, Regions.
 
 ## Cardputer ADV
 
-The Cardputer has fewer apps (it has no PSRAM, so the map, radio tools, games and
-media apps are left out):
+The Cardputer has fewer apps (it has no PSRAM, so the radio tools, games and media
+apps are left out, and the map is a lighter version):
 
-**Chat, Contacts, Repeaters, Heard, Finder, Regions, Signal, GPS, Terminal, Settings.**
+**Chat, Contacts, Repeaters, Heard, Finder, Regions, Signal, GPS, Map, Terminal, Settings.**
 
 **Carousel** (the default): one big icon at a time, with its neighbours at the
 sides. Left and Right move round it, Enter opens the app. The line under the icon

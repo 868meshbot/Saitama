@@ -76,7 +76,7 @@ settings and `/ops/` SD backup as the T-Deck.
 | ![Cardputer carousel launcher](screenshots/cardputer-carousel.png) | ![Cardputer channel list](screenshots/cardputer-channels.png) | ![Cardputer Mesh rain screensaver](screenshots/cardputer-rain.png) |
 
 - **Included:** Chat, Contacts, Repeaters (with admin tools), Heard, Finder,
-  Regions, Signal, GPS status (text), Terminal, Settings. Adverts are in
+  Regions, Signal, GPS status (text), Map (JPEG tiles, see below), Terminal, Settings. Adverts are in
   Settings > Advert. Notification sounds play through the built-in speaker.
 - **Launcher:** a carousel, one big icon at a time with its neighbours and a
   live line under it (unread messages, contact and repeater counts, GPS
@@ -84,7 +84,7 @@ settings and `/ops/` SD backup as the T-Deck.
   list instead.
 - **Screensaver:** **Mesh rain** — channels, stations and the clock fall
   down the screen, joined by a line when a message arrives.
-- **Left out:** map, spectrum/waterfall, channel scan, signal generator,
+- **Left out:** spectrum/waterfall, channel scan, signal generator,
   trace, games, PCAP, BT foxhunt, MP3, picture viewer, file manager.
 - **Keys:** `;` `.` `,` `/` are up, down, left and right (in a text box, hold
   Fn). Enter (or the G0 button) selects. Fn + `` ` `` (Esc) or Backspace
@@ -162,6 +162,15 @@ python3 scripts/download_tiles.py \
 `--output` is the `maps/osm` folder; the script adds `day/` (or `night/` with `--style night`). See `scripts/download_tiles.py --help` for full options. Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — rate-limited to 2 req/s.
 
 Night tiles (`--style night`) come from Thunderforest and need an API key (`--apikey` or `THUNDERFOREST_API_KEY`). Thunderforest only permits bulk/offline downloading on its [Small Business or higher plans](https://www.thunderforest.com/pricing/), so the script also requires `--i-have-a-bulk-download-plan`. Without such a plan, rely on the inverted day tiles.
+
+**Cardputer ADV:** uses its own small baseline JPEG tiles at `/maps/osm/{z}/{x}/{y}.jpg`, made by `scripts/map_tiles_cardputer.py`. OpenStreetMap's server blocks bulk downloads, so you need a provider that allows offline use: we use [Thunderforest](https://www.thunderforest.com/), which needs an **API key** and a [Small Business or higher plan](https://www.thunderforest.com/pricing/) for bulk downloading:
+
+```bash
+python3 scripts/map_tiles_cardputer.py --lat 51.50 --lon -3.70 \
+    --url "https://tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey=YOUR_KEY"
+```
+
+`--bounds S W N E` downloads a box instead, `--dry-run` counts the tiles first, and `--from /Volumes/SD/maps/osm/day` converts existing T-Deck PNG tiles without downloading. Copy the resulting `sdcard/maps` folder to the root of the card. Full guide: [Map and GPS](wiki/Map-and-GPS.md).
 
 **Option 2 — GUI tool ([map-tiles-downloader](https://github.com/tekk/map-tiles-downloader)):**
 
@@ -276,7 +285,7 @@ Saitama follows [Semantic Versioning](https://semver.org/) with pre-release tags
 - **`-rc.N`** — release candidate. Final testing.
 - **(none)** — stable release.
 
-Current version: **1.6.4** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
+Current version: **1.6.5** (compiled and tested on LilyGo T-Deck Plus and M5Stack Cardputer ADV)
 
 Each release includes two firmware binaries:
 1. **App-only** (`saitama-X.Y.Z.bin`) — for OTA updates, flash at `0x10000`

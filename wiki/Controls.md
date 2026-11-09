@@ -36,6 +36,7 @@ highlighted item has an outline in the accent colour.
 | Move inside a text box | Hold **Fn** with the arrow keys |
 | Wake the screensaver | Backspace or Esc |
 | Wake a blank screen | Any key |
+| Map: move / zoom / centre on you | Arrows / `=` `-` / `c` |
 
 In a text box the arrow keys type their characters (`;` `.` `,` `/`). Press Tab or
 Enter to leave the box, or hold Fn to use them as arrows.
