@@ -153,6 +153,7 @@ void loop() {
     begin(MESH);      ops::MeshService::instance().tick();       end(MESH);
     begin(UI);        ops::ui::tick();                           end(UI);
     begin(SERIAL_IO); ops::ui::ScreenTerminal::tickSerial();     end(SERIAL_IO);
+    ops::sdcard::watchdogTick();
 
     // Yield one RTOS tick (1 ms) per pass. Everything above is polled and
     // finishes in well under a frame, so without this the loop spun at full

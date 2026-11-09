@@ -18,7 +18,13 @@ namespace sdcard {
     bool tryMount();
 
     // Flush and unmount the card safely (call before physical removal).
+    // The watchdog then leaves the card alone until tryMount() succeeds.
     void unmount();
+
+    // SD watchdog, call every loop: 1 min after boot and then hourly it
+    // writes and reads back /ops/.sdcheck; if that fails (or the card isn't
+    // mounted) it resets and remounts the card, retrying every 5 min.
+    void watchdogTick();
 
     // Binary file helpers (used for /ops/identity.enc).
     bool writeFile(const char* path, const uint8_t* data, size_t len);

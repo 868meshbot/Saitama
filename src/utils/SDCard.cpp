@@ -14,9 +14,31 @@ static constexpr int SD_CS = OPS_SD_CS;
 namespace ops {
 
 static bool     s_mounted = false;
+static bool     s_userUnmounted = false;   // unmount() asked for: the watchdog leaves it
 static SPIClass s_spi(FSPI);
 
 bool sdcard::isMounted() { return s_mounted; }
+
+// A card caught mid-command by a software reset or crash keeps its state
+// (it isn't powered off) and can refuse the next mount. 80+ clocks with CS
+// high is the SD spec's way to bring it back to a known state before CMD0.
+static void _wakeCard()
+{
+    digitalWrite(SD_CS, HIGH);
+    s_spi.beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+    for (int i = 0; i < 20; i++) s_spi.transfer(0xFF);
+    s_spi.endTransaction();
+}
+
+static bool _mount()
+{
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt) { SD.end(); delay(100); }
+        _wakeCard();
+        if (SD.begin(SD_CS, s_spi)) return true;
+    }
+    return false;
+}
 
 void sdcard::init() {
     // Runs before the LoRa (and T-Deck TFT) drivers drive their CS lines; left
@@ -28,12 +50,7 @@ void sdcard::init() {
     pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
     delay(10);
     s_spi.begin(OPS_SD_SCK, OPS_SD_MISO, OPS_SD_MOSI, -1);   // SCK, MISO, MOSI, SS (CS handled by SD lib)
-    bool ok = false;
-    for (int attempt = 0; attempt < 3 && !ok; attempt++) {
-        if (attempt) { SD.end(); delay(100); }
-        ok = SD.begin(SD_CS, s_spi);
-    }
-    if (!ok) {
+    if (!_mount()) {
         OPS_LOG("SD", "No card or mount failed");
         return;
     }
@@ -52,22 +69,73 @@ void sdcard::unmount() {
     if (!s_mounted) return;
     SD.end();
     s_mounted = false;
+    s_userUnmounted = true;
     OPS_LOG("SD", "Unmounted");
 }
 
 bool sdcard::tryMount()
 {
     if (s_mounted) return true;
-    if (!SD.begin(SD_CS, s_spi)) {
+    if (!_mount()) {
         OPS_LOG("SD", "Remount failed — no card?");
         return false;
     }
     s_mounted = true;
+    s_userUnmounted = false;
     if (!SD.exists("/ops")) SD.mkdir("/ops");
     if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
     uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
     OPS_LOG("SD", "Remounted, %llu MB free", (unsigned long long)free_mb);
     return true;
+}
+
+// Real I/O, not cached state: write a small file and read it back.
+static bool _cardWorks()
+{
+    static const char* kPath = "/ops/.sdcheck";
+    char out[16], in[16] = {};
+    int n = snprintf(out, sizeof(out), "%lu", (unsigned long)millis());
+    SD.remove(kPath);
+    File f = SD.open(kPath, FILE_WRITE);
+    if (!f) return false;
+    bool ok = f.write((const uint8_t*)out, n) == (size_t)n;
+    f.close();
+    if (!ok) return false;
+    f = SD.open(kPath, FILE_READ);
+    if (!f) return false;
+    ok = f.read((uint8_t*)in, n) == n && memcmp(in, out, n) == 0;
+    f.close();
+    return ok;
+}
+
+void sdcard::watchdogTick()
+{
+    static constexpr uint32_t kHealthyMs = 60UL * 60 * 1000;   // card fine: hourly
+    static constexpr uint32_t kMissingMs = 5UL * 60 * 1000;    // card not mounted: 5 min
+    static constexpr uint32_t kFirstMs   = 60UL * 1000;        // first check 1 min after boot
+    static uint32_t s_next = kFirstMs;
+    uint32_t now = millis();
+    if ((int32_t)(now - s_next) < 0) return;
+    if (s_userUnmounted) { s_next = now + kMissingMs; return; }
+
+    if (s_mounted) {
+        if (_cardWorks()) { s_next = now + kHealthyMs; return; }
+        OPS_LOG("SD", "Watchdog: card not responding, resetting it");
+        SD.end();
+        s_mounted = false;
+        delay(50);
+    }
+    if (_mount()) {
+        s_mounted = true;
+        if (!SD.exists("/ops")) SD.mkdir("/ops");
+        if (!SD.exists("/ops/msgs")) SD.mkdir("/ops/msgs");
+        bool ok = _cardWorks();
+        OPS_LOG("SD", "Watchdog: card remounted%s", ok ? "" : " but the test write failed");
+        s_next = now + (ok ? kHealthyMs : kMissingMs);
+    } else {
+        OPS_LOG("SD", "Watchdog: no card or mount failed, retrying in 5 min");
+        s_next = now + kMissingMs;
+    }
 }
 
 bool sdcard::writeFile(const char* path, const uint8_t* data, size_t len) {
