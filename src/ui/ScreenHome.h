@@ -122,6 +122,8 @@ private:
                                   const char* pathStr = nullptr);
     static void        _fmtTime(char* buf, size_t len, uint32_t ts);
     static void        _loadChannelHistory(const char* tag);
+    static bool        _historyHas(const char* tag, bool sent, const char* sender,
+                                   const char* text, uint32_t ts);
 
     // ── Screen builders ───────────────────────────────────────────────
     static void _showList();

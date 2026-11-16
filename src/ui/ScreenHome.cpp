@@ -788,6 +788,28 @@ void ScreenHome::_addBubble(int         histIdx,
 
 // ── _loadChannelHistory() ─────────────────────────────────────────────
 
+// True if this conversation already holds the same message (same direction,
+// sender, text and timestamp).
+bool ScreenHome::_historyHas(const char* tag, bool sent, const char* sender,
+                             const char* text, uint32_t ts)
+{
+    if (!s_history) return false;
+    // Stored entries are sanitised (_historyAdd): compare like with like.
+    char sn[32], tx[160];
+    strncpy(sn, sender ? sender : "", sizeof(sn) - 1); sn[sizeof(sn) - 1] = '\0';
+    strncpy(tx, text ? text : "", sizeof(tx) - 1);     tx[sizeof(tx) - 1] = '\0';
+    theme::sanitizeText(sn);
+    theme::sanitizeText(tx);
+    for (int i = 0; i < s_histCount; i++) {
+        const MsgEntry& e = s_history[i];
+        const char* t = e.channelTag[0] ? e.channelTag : "Public";
+        if (e.ts == ts && e.sent == sent && strcmp(t, tag) == 0
+                && strcmp(e.text, tx) == 0 && strcmp(e.senderName, sn) == 0)
+            return true;
+    }
+    return false;
+}
+
 void ScreenHome::_loadChannelHistory(const char* tag)
 {
     if (!ops::sdcard::isMounted()) return;
@@ -845,9 +867,13 @@ void ScreenHome::_loadChannelHistory(const char* tag)
             char name[32] = {}, text[160] = {};
             _jsonGetStr(line, "n", name, sizeof(name));
             _jsonGetStr(line, "t", text, sizeof(text));
-            _historyAdd(sent, name[0] ? name : nullptr, text,
-                        hops, ts, rssi, ack, tag);
-            loaded++;
+            if (_historyHas(tag, sent, name, text, ts)) {
+                // already in RAM (arrived before the log was read)
+            } else {
+                _historyAdd(sent, name[0] ? name : nullptr, text,
+                            hops, ts, rssi, ack, tag);
+                loaded++;
+            }
         }
         if (!end) break;
         line = end + 1;
@@ -973,6 +999,11 @@ void ScreenHome::appendMessage(const RxMessage& msg)
     } else {
         tag = "Public";
     }
+
+    // Load this conversation's SD log first: otherwise the message below is
+    // both kept in RAM and appended to the log, and opening the conversation
+    // later replays it from the log a second time (duplicate bubble).
+    _loadChannelHistory(tag);
 
     bool evicted = _historyAdd(false, msg.senderName, msg.text, msg.hops, msg.timestamp,
                                msg.rssi, 0, tag, msg.pathStr, msg.pubKeyPrefix);
