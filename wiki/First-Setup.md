@@ -24,13 +24,15 @@ your local mesh uses:
 | Switzerland | SF8 BW62 CR8 | 869.618 MHz |
 | USA/Canada | SF7 BW62 CR5 | 910.525 MHz |
 | Vietnam | SF11 BW250 CR5 | 920.250 MHz |
-| Japan | SF12 BW125 CR8 | 920.800 MHz |
+| Japan | SF10 BW125 CR6 | 921.000 MHz |
 | Custom | your own values | |
 
 Only use frequencies that are legal where you are. **Japan** (ARIB STD-T108): transmit
 power is capped at 13 dBm (20 mW) while this preset is selected, and frequency hopping
-is not available. The rules there also require listen-before-talk and a 4 s limit
-per transmission, which Saitama does not enforce yet.
+is not available. The preset matches the Japanese MeshCore community's settings, and
+even the largest packet (about 2.8 s) stays inside ARIB's 4 s limit per transmission.
+ARIB also requires listen-before-talk (5 ms carrier sense at -80 dBm, then a 50 ms
+pause), which Saitama does not do yet.
 
 ## 2. Set your name
 

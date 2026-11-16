@@ -2973,7 +2973,7 @@ static const RadioProfile kRadioProfiles[kNumRadioProfiles] = {
     { "Switzerland",        "SF8 BW62 CR8"   },  // 11 869.618 MHz
     { "USA/Canada",         "SF7 BW62 CR5"   },  // 12 910.525 MHz
     { "Vietnam",            "SF11 BW250 CR5" },  // 13 920.250 MHz
-    { "Japan",              "SF12 BW125 CR8" },  // 14 920.800 MHz, max 13 dBm
+    { "Japan",              "SF10 BW125 CR6" },  // 14 921.000 MHz, max 13 dBm
     { "Custom",             ""               },  // 15 user-defined
 };
 

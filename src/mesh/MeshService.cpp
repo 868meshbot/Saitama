@@ -3465,7 +3465,7 @@ static float _fixedFreqMHz()
     static const float kFreqs[15] = {
         915.800f, 916.575f, 869.618f, 869.525f, 869.525f,
         869.525f, 433.650f, 917.375f, 917.375f, 433.375f,
-        869.618f, 869.618f, 910.525f, 920.250f, 920.800f,
+        869.618f, 869.618f, 910.525f, 920.250f, 921.000f,
     };
     uint8_t p = cfg.radioProfile;
     return kFreqs[p < 15 ? p : 2];
@@ -4145,7 +4145,10 @@ void MeshService::applyLoraProfile(uint8_t profile) {
         { 869.618f,  62.5f,  8, 8 },  // 11 Switzerland
         { 910.525f,  62.5f,  7, 5 },  // 12 USA/Canada
         { 920.250f, 250.0f, 11, 5 },  // 13 Vietnam
-        { 920.800f, 125.0f, 12, 8 },  // 14 Japan (ARIB CH25, MeshCore #2079)
+        // 14 Japan: matches the Japanese MeshCore community (jirogit/MeshCore).
+        // A full 255 B packet takes ~2.8 s, inside ARIB STD-T108's 4 s per
+        // transmission (SF12 CR4/8 took up to ~14 s). Issue #12.
+        { 921.000f, 125.0f, 10, 6 },
     };
     if (profile >= 15) profile = 2;  // default EU/UK Narrow
     const ProfileEntry& p = kProfiles[profile];
