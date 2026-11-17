@@ -12,6 +12,13 @@ Your T-Deck, fully off-grid. Saitama is a standalone [MeshCore](https://github.c
 
 **A phone in your pocket, without the phone, and without the paywall.**
 
+- **Fully off-grid**: no phone, no internet, no subscription. Everything runs on the device.
+- **A real touchscreen UI** (T-Deck): tap, swipe and scroll like a phone, with the keyboard and trackball still there when you want them.
+- **Works with all the official MeshCore apps**: pair a phone over Bluetooth when you want to, and use it alongside the device.
+- **Flashable via [Pirata Launcher](https://bmorcelli.github.io/Launcher/catalog.html)**: install it straight from the Launcher catalog.
+- **Committed to low power**: built to stretch your battery life, with CPU scaling, screen-off with radio light sleep, and battery history with runtime estimates.
+- **Fully open source**: GPL-3.0, every line on GitHub. Tweak it, build it, make it yours.
+
 ---
 
 | Home | Apps | Chat | Channels |
@@ -135,6 +142,13 @@ esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 saitama-merged.bin
 `pio run -e cardputer-adv -t upload`, or flash
 `saitama-cardputer-adv-X.Y.Z-merged.bin` at `0x0` (8 MB flash). With
 M5Launcher on the card, install `saitama-cardputer-adv-X.Y.Z.bin` from it.
+
+**With the Launcher (no computer):** flash
+[Launcher](https://bmorcelli.github.io/Launcher/) once, then install Saitama from
+its menu: **OTA** from the [catalog](https://bmorcelli.github.io/Launcher/catalog.html)
+(T-Deck), or **SD** / **WUI** with the app-only `.bin` (either device). A merged
+image flashed over USB overwrites the Launcher. Full steps in the
+[user guide](https://github.com/868meshbot/Saitama/wiki/Installing-Saitama#installing-with-the-launcher).
 
 See [docs/VERSIONING.md](docs/VERSIONING.md) for firmware variant details.
 

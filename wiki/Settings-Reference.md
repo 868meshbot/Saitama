@@ -63,4 +63,4 @@ Cardputer only appear on that device.
 | **Show Hops** / **Show RSSI** | Show hop count and signal strength on received messages. |
 | **Backup & Restore** | Write contacts, repeaters and settings to the SD card, or read them back. |
 | **Storage Password** | The password that encrypts secrets on the SD card. Shows **Default** in red until changed. See [Backup and security](Backup-and-Security). |
-| **Return to Launcher** | Back to the launcher. |
+| **Return to Launcher** | Restarts into the [Launcher](Installing-Saitama#installing-with-the-launcher) boot menu, if it's installed. |
